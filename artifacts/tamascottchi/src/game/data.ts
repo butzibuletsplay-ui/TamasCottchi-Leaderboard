@@ -1,6 +1,7 @@
 import type { Mood } from './assets';
 import { hatUrl, neckUrl, outfitUrl, toyUrl } from './assets';
 import type { GameId } from './engine';
+import { absenceDecay, initialPersonality, type Personality } from './personality';
 
 export type Room = 'Wohnzimmer' | 'Küche' | 'Bad' | 'Schlafzimmer' | 'Spielzimmer';
 export type NeedKey = 'hunger' | 'glueck' | 'energie' | 'sauberkeit';
@@ -17,10 +18,18 @@ export type PetData = {
   settings: { sound: boolean; music: boolean; volume: number; lampOn: boolean };
   highscores: Partial<Record<GameId, number>>;
   challenges: Record<string, number>;
+  // ---- schema 3 (2.1), all additive ----
+  personality?: Personality;
+  visitedRooms?: Room[];
+  routine?: { greetedDate: string; surpriseDate: string; surprises: number; lastSeen: number };
+  stylesWorn?: string[];
 };
+export type FullPetData = PetData & Required<Pick<PetData, 'personality' | 'visitedRooms' | 'routine' | 'stylesWorn'>>;
 
 export const STORE_KEY = 'tamascottchi-save-v1';
 export const BACKUP_KEY = 'tamascottchi-save-v1-backup-before-2.0';
+export const BACKUP_KEY_21 = 'tamascottchi-save-v1-backup-before-2.1';
+export const SAVE_SCHEMA = 3;
 export const ROOM_LIST: Room[] = ['Wohnzimmer', 'Küche', 'Bad', 'Schlafzimmer', 'Spielzimmer'];
 export const ROOM_BG: Partial<Record<Room, 'livingroom' | 'bathroom' | 'bedroom' | 'playroom'>> = { Wohnzimmer: 'livingroom', Bad: 'bathroom', Schlafzimmer: 'bedroom', Spielzimmer: 'playroom' };
 
@@ -105,8 +114,8 @@ export const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
 export const levelFor = (xp: number) => Math.floor(xp / 100) + 1;
 export const today = () => new Date().toLocaleDateString('de-DE');
 
-export const initialData = (): PetData => ({
-  version: 1, saveSchema: 2, name: 'Wuschel', needs: { hunger: 78, glueck: 83, energie: 72, sauberkeit: 88 },
+export const initialData = (): FullPetData => ({
+  version: 1, saveSchema: SAVE_SCHEMA, name: 'Wuschel', needs: { hunger: 78, glueck: 83, energie: 72, sauberkeit: 88 },
   lastUpdated: Date.now(), coins: 55, xp: 0, inventory: { kibble: 2, soap: 1 }, owned: [], equipped: [],
   room: 'Wohnzimmer', roomItems: [], activeBackground: 'classic', records: [], sleepUntil: null,
   stats: { games: 0, catches: 0, taps: 0, care: 0, rooms: 0, purchases: 0, toys: 0 },
@@ -114,15 +123,18 @@ export const initialData = (): PetData => ({
   missions: {}, claimedAchievements: [], missionsDate: today(),
   settings: { sound: true, music: false, volume: 65, lampOn: true },
   highscores: {}, challenges: {},
+  personality: initialPersonality(), visitedRooms: ['Wohnzimmer'],
+  routine: { greetedDate: '', surpriseDate: today(), surprises: 0, lastSeen: Date.now() }, stylesWorn: [],
 });
 
 const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
 
 /** Migrates any v1 save (and v1 with schema 2) into the current shape without dropping purchases. */
-export function normalize(parsed: Partial<PetData>): PetData {
+export function normalize(parsed: Partial<PetData>): FullPetData {
   const d = initialData();
   const now = Date.now();
-  const decay = Math.floor(Math.max(0, now - num(parsed.lastUpdated, now)) / 240000);
+  const away = Math.max(0, now - num(parsed.lastUpdated, now));
+  const decay = (v: number) => absenceDecay(v, away);
   const sameDay = parsed.missionsDate === today();
   const records = Array.isArray(parsed.records) ? parsed.records.filter((r) => r && typeof r.score === 'number') : [];
   const highscores: PetData['highscores'] = { ...(parsed.highscores || {}) };
@@ -130,12 +142,12 @@ export function normalize(parsed: Partial<PetData>): PetData {
   const needs = parsed.needs || d.needs;
   return {
     ...d, ...parsed,
-    version: 1, saveSchema: 2,
+    version: 1, saveSchema: SAVE_SCHEMA,
     name: typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.slice(0, 18) : d.name,
     coins: Math.max(0, num(parsed.coins, d.coins)), xp: Math.max(0, num(parsed.xp, d.xp)),
     needs: {
-      hunger: clamp(num(needs.hunger, d.needs.hunger) - decay), glueck: clamp(num(needs.glueck, d.needs.glueck) - decay),
-      energie: clamp(num(needs.energie, d.needs.energie) - decay), sauberkeit: clamp(num(needs.sauberkeit, d.needs.sauberkeit) - decay),
+      hunger: clamp(decay(num(needs.hunger, d.needs.hunger))), glueck: clamp(decay(num(needs.glueck, d.needs.glueck))),
+      energie: clamp(decay(num(needs.energie, d.needs.energie))), sauberkeit: clamp(decay(num(needs.sauberkeit, d.needs.sauberkeit))),
     },
     inventory: { ...(parsed.inventory || d.inventory) },
     owned: Array.isArray(parsed.owned) ? [...new Set(parsed.owned)] : [],
@@ -150,25 +162,60 @@ export function normalize(parsed: Partial<PetData>): PetData {
     settings: { ...d.settings, ...parsed.settings },
     highscores, challenges: { ...(parsed.challenges || {}) },
     lastUpdated: now, missionsDate: today(),
+    personality: { ...d.personality, ...(parsed.personality || {}) },
+    visitedRooms: [...new Set([...(Array.isArray(parsed.visitedRooms) ? parsed.visitedRooms : []), ROOM_LIST.includes(parsed.room as Room) ? parsed.room as Room : d.room])].filter((r) => ROOM_LIST.includes(r)),
+    routine: { ...d.routine, ...(parsed.routine || {}), lastSeen: num(parsed.routine?.lastSeen, num(parsed.lastUpdated, now)) },
+    stylesWorn: Array.isArray(parsed.stylesWorn) ? parsed.stylesWorn : [],
   };
 }
 
-export function loadData(): PetData {
+/** Throws a readable error for anything that is not a recognisable tamascottchi save. */
+export function assertSave(v: unknown): asserts v is Partial<PetData> {
+  const p = v as Partial<PetData>;
+  const isObj = (o: unknown) => !!o && typeof o === 'object' && !Array.isArray(o);
+  if (!isObj(p)) throw new Error('Kein Objekt');
+  if (p.version !== 1) throw new Error('Unbekannte Version');
+  if (!isObj(p.needs) || !isObj(p.stats)) throw new Error('Bedürfnisse oder Statistik fehlen');
+  if (p.coins !== undefined && !Number.isFinite(p.coins)) throw new Error('Münzen ungültig');
+  if (p.xp !== undefined && !Number.isFinite(p.xp)) throw new Error('XP ungültig');
+  for (const k of ['owned', 'equipped', 'records', 'roomItems'] as const) if (p[k] !== undefined && !Array.isArray(p[k])) throw new Error(`${k} ungültig`);
+  if (p.inventory !== undefined && !isObj(p.inventory)) throw new Error('Inventar ungültig');
+}
+
+export class SaveLoadError extends Error { raw: string; constructor(message: string, raw: string, cause?: unknown) { super(message, { cause }); this.raw = raw; } }
+
+export function loadData(): FullPetData {
+  const raw = localStorage.getItem(STORE_KEY);
+  if (!raw) return initialData();
   try {
-    const raw = localStorage.getItem(STORE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<PetData>;
-      // keep an untouched copy of the pre-2.0 save once
-      if (!parsed.saveSchema && !localStorage.getItem(BACKUP_KEY)) localStorage.setItem(BACKUP_KEY, raw);
-      if (parsed.version === 1 && parsed.needs && parsed.stats) return normalize(parsed);
-      throw new Error('Unbekanntes Spielstandformat');
-    }
+    const parsed: unknown = JSON.parse(raw);
+    assertSave(parsed);
+    // untouched copies before each schema change, written once, never overwritten
+    if (!parsed.saveSchema && !localStorage.getItem(BACKUP_KEY)) localStorage.setItem(BACKUP_KEY, raw);
+    if ((parsed.saveSchema || 0) < SAVE_SCHEMA && !localStorage.getItem(BACKUP_KEY_21)) localStorage.setItem(BACKUP_KEY_21, raw);
+    return normalize(parsed);
   } catch (cause) {
     // Never replace an unreadable save with a new game through the autosave effect.
-    throw new Error('Dein gespeicherter Spielstand konnte nicht geladen werden. Er wurde nicht überschrieben. Bitte sichere die Browserdaten, bevor du etwas zurücksetzt.', { cause });
+    throw new SaveLoadError(`Dein gespeicherter Spielstand konnte nicht gelesen werden (${(cause as Error)?.message || 'unbekannter Fehler'}). Er wurde nicht überschrieben.`, raw, cause);
   }
-  return initialData();
 }
+
+// ---- 2.1 collections + style sets ----
+export const COLLECTIONS: { id: string; name: string; items: string[]; rewardCoins: number; rewardXp: number }[] = [
+  { id: 'col-hats', name: 'Hüte', items: ['baseballcap', 'beanie', 'party-hat', 'sleep-cap', 'bucket-hat', 'cowboy-hat'], rewardCoins: 40, rewardXp: 30 },
+  { id: 'col-clothes', name: 'Kleidung', items: ['hoodie', 'striped-shirt', 'raincoat', 'pajamas'], rewardCoins: 40, rewardXp: 30 },
+  { id: 'col-toys', name: 'Spielzeug', items: ['ball', 'bone-toy', 'duck', 'rope', 'frisbee', 'teddy', 'bowl', 'shampoo'], rewardCoins: 45, rewardXp: 35 },
+  { id: 'col-decor', name: 'Zimmerdekoration', items: ['plant', 'lamp', 'cushion', 'rug', 'plush', 'poster', 'forest', 'beach', 'night', 'fantasy'], rewardCoins: 50, rewardXp: 40 },
+  { id: 'col-rare', name: 'Seltene Accessoires', items: ['crown', 'wizard-hat', 'cape', 'tuxedo', 'scarf', 'collar', 'bow', 'sunglasses'], rewardCoins: 60, rewardXp: 50 },
+];
+export const STYLE_SETS: { id: string; name: string; items: string[] }[] = [
+  { id: 'regentag', name: 'Regentag', items: ['raincoat', 'bucket-hat', 'scarf'] },
+  { id: 'gute-nacht', name: 'Gute Nacht', items: ['pajamas', 'sleep-cap'] },
+  { id: 'gala', name: 'Gala', items: ['tuxedo', 'crown', 'bow'] },
+  { id: 'held', name: 'Held', items: ['cape', 'wizard-hat', 'collar'] },
+  { id: 'freizeit', name: 'Freizeit', items: ['hoodie', 'baseballcap', 'sunglasses'] },
+  { id: 'ringel', name: 'Ringel', items: ['striped-shirt', 'beanie', 'scarf'] },
+];
 
 /** Mood priority: sleeping > (excited unless critical) > lowest need under 30 > happy > default. */
 export function moodFor(needs: PetData['needs'], excited: boolean, sleeping: boolean): Mood {

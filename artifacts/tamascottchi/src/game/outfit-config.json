@@ -1,0 +1,526 @@
+{
+  "version": 1,
+  "about": "Checked-in clothing fit for Scottchi. Coordinates are percent of the character stage (0-100, independent of screen size). Item x/y are offsets from the anchor, scaleX is the item width in percent of the stage, scaleY multiplies the natural image height (1 = undistorted). Regenerate with the DEV outfit editor (?outfitEditor=1) and replace this file with the exported JSON.",
+  "anchors": {
+    "default": {
+      "headAnchor": {
+        "x": 33,
+        "y": 10,
+        "rotation": -6
+      },
+      "neckAnchor": {
+        "x": 37,
+        "y": 55,
+        "rotation": -4
+      },
+      "backAnchor": {
+        "x": 66,
+        "y": 44,
+        "rotation": -3
+      },
+      "chestAnchor": {
+        "x": 36,
+        "y": 64,
+        "rotation": 0
+      },
+      "frontLegAnchor": {
+        "x": 32,
+        "y": 84,
+        "rotation": 0
+      },
+      "rearBodyAnchor": {
+        "x": 84,
+        "y": 55,
+        "rotation": 0
+      },
+      "faceClip": "polygon(1% 0,61% 0,61% 30%,56% 46%,46% 55%,31% 59%,13% 53%,1% 40%)"
+    },
+    "happy": {
+      "headAnchor": {
+        "x": 33,
+        "y": 10,
+        "rotation": -6
+      },
+      "neckAnchor": {
+        "x": 37,
+        "y": 55,
+        "rotation": -4
+      },
+      "backAnchor": {
+        "x": 66,
+        "y": 44,
+        "rotation": -3
+      },
+      "chestAnchor": {
+        "x": 36,
+        "y": 64,
+        "rotation": 0
+      },
+      "frontLegAnchor": {
+        "x": 32,
+        "y": 84,
+        "rotation": 0
+      },
+      "rearBodyAnchor": {
+        "x": 84,
+        "y": 55,
+        "rotation": 0
+      },
+      "faceClip": "polygon(1% 0,61% 0,61% 30%,56% 46%,46% 55%,31% 59%,13% 53%,1% 40%)"
+    },
+    "hungry": {
+      "headAnchor": {
+        "x": 33,
+        "y": 11,
+        "rotation": -5
+      },
+      "neckAnchor": {
+        "x": 37,
+        "y": 56,
+        "rotation": -4
+      },
+      "backAnchor": {
+        "x": 66,
+        "y": 44,
+        "rotation": -3
+      },
+      "chestAnchor": {
+        "x": 36,
+        "y": 65,
+        "rotation": 0
+      },
+      "frontLegAnchor": {
+        "x": 32,
+        "y": 84,
+        "rotation": 0
+      },
+      "rearBodyAnchor": {
+        "x": 84,
+        "y": 55,
+        "rotation": 0
+      },
+      "faceClip": "polygon(1% 0,61% 0,61% 31%,57% 47%,47% 56%,31% 60%,13% 54%,1% 41%)"
+    },
+    "dirty": {
+      "headAnchor": {
+        "x": 32,
+        "y": 11,
+        "rotation": -4
+      },
+      "neckAnchor": {
+        "x": 36,
+        "y": 56,
+        "rotation": -3
+      },
+      "backAnchor": {
+        "x": 65,
+        "y": 44,
+        "rotation": -2
+      },
+      "chestAnchor": {
+        "x": 35,
+        "y": 65,
+        "rotation": 0
+      },
+      "frontLegAnchor": {
+        "x": 31,
+        "y": 84,
+        "rotation": 0
+      },
+      "rearBodyAnchor": {
+        "x": 83,
+        "y": 55,
+        "rotation": 0
+      },
+      "faceClip": "polygon(1% 0,60% 0,60% 31%,56% 47%,46% 56%,30% 60%,12% 54%,1% 41%)"
+    },
+    "sad": {
+      "headAnchor": {
+        "x": 29,
+        "y": 12,
+        "rotation": -2
+      },
+      "neckAnchor": {
+        "x": 32,
+        "y": 59,
+        "rotation": 0
+      },
+      "backAnchor": {
+        "x": 66,
+        "y": 45,
+        "rotation": -2
+      },
+      "chestAnchor": {
+        "x": 32,
+        "y": 66,
+        "rotation": 0
+      },
+      "frontLegAnchor": {
+        "x": 30,
+        "y": 85,
+        "rotation": 0
+      },
+      "rearBodyAnchor": {
+        "x": 84,
+        "y": 56,
+        "rotation": 0
+      },
+      "faceClip": "polygon(0 0,56% 0,56% 34%,51% 49%,42% 57%,27% 61%,10% 55%,0 42%)"
+    },
+    "tired": {
+      "headAnchor": {
+        "x": 31,
+        "y": 19,
+        "rotation": 4
+      },
+      "neckAnchor": {
+        "x": 36,
+        "y": 63,
+        "rotation": 4
+      },
+      "backAnchor": {
+        "x": 68,
+        "y": 46,
+        "rotation": -2
+      },
+      "chestAnchor": {
+        "x": 35,
+        "y": 69,
+        "rotation": 0
+      },
+      "frontLegAnchor": {
+        "x": 30,
+        "y": 86,
+        "rotation": 0
+      },
+      "rearBodyAnchor": {
+        "x": 85,
+        "y": 56,
+        "rotation": 0
+      },
+      "faceClip": "polygon(1% 6%,60% 6%,61% 38%,56% 53%,46% 62%,31% 65%,13% 59%,1% 46%)"
+    },
+    "excited": {
+      "headAnchor": {
+        "x": 29,
+        "y": 22,
+        "rotation": -2
+      },
+      "neckAnchor": {
+        "x": 35,
+        "y": 67,
+        "rotation": 6
+      },
+      "backAnchor": {
+        "x": 70,
+        "y": 47,
+        "rotation": -7
+      },
+      "chestAnchor": {
+        "x": 36,
+        "y": 72,
+        "rotation": 0
+      },
+      "frontLegAnchor": {
+        "x": 30,
+        "y": 86,
+        "rotation": 0
+      },
+      "rearBodyAnchor": {
+        "x": 86,
+        "y": 50,
+        "rotation": -6
+      },
+      "faceClip": "polygon(0 9%,56% 9%,57% 41%,50% 59%,40% 68%,24% 70%,8% 62%,0 48%)"
+    }
+  },
+  "items": {
+    "baseballcap": {
+      "anchor": "headAnchor",
+      "pivotX": 0.48,
+      "pivotY": 0.8,
+      "base": {
+        "x": 0,
+        "y": 2,
+        "scaleX": 40,
+        "scaleY": 1,
+        "rotation": -4,
+        "zIndex": 8
+      },
+      "moods": {
+        "excited": {
+          "y": 1
+        },
+        "tired": {
+          "rotation": 2
+        }
+      }
+    },
+    "beanie": {
+      "anchor": "headAnchor",
+      "pivotX": 0.5,
+      "pivotY": 0.86,
+      "base": {
+        "x": 0,
+        "y": 4,
+        "scaleX": 33,
+        "scaleY": 1,
+        "rotation": 0,
+        "zIndex": 8
+      },
+      "moods": {
+        "sad": {
+          "y": 5
+        }
+      }
+    },
+    "party-hat": {
+      "anchor": "headAnchor",
+      "pivotX": 0.5,
+      "pivotY": 0.9,
+      "base": {
+        "x": 1,
+        "y": 2,
+        "scaleX": 26,
+        "scaleY": 1,
+        "rotation": -4,
+        "zIndex": 8
+      },
+      "moods": {
+        "excited": {
+          "rotation": -10
+        }
+      }
+    },
+    "crown": {
+      "anchor": "headAnchor",
+      "pivotX": 0.5,
+      "pivotY": 0.9,
+      "base": {
+        "x": 0,
+        "y": 3,
+        "scaleX": 32,
+        "scaleY": 1,
+        "rotation": 0,
+        "zIndex": 8
+      },
+      "moods": {}
+    },
+    "wizard-hat": {
+      "anchor": "headAnchor",
+      "pivotX": 0.54,
+      "pivotY": 0.84,
+      "base": {
+        "x": 0,
+        "y": 3,
+        "scaleX": 42,
+        "scaleY": 1,
+        "rotation": -2,
+        "zIndex": 8
+      },
+      "moods": {}
+    },
+    "sleep-cap": {
+      "anchor": "headAnchor",
+      "pivotX": 0.4,
+      "pivotY": 0.56,
+      "base": {
+        "x": 3,
+        "y": 3,
+        "scaleX": 33,
+        "scaleY": 1,
+        "rotation": -16,
+        "zIndex": 8
+      },
+      "moods": {
+        "tired": {
+          "rotation": -10
+        }
+      }
+    },
+    "cowboy-hat": {
+      "anchor": "headAnchor",
+      "pivotX": 0.5,
+      "pivotY": 0.72,
+      "base": {
+        "x": 0,
+        "y": 2,
+        "scaleX": 48,
+        "scaleY": 1,
+        "rotation": 0,
+        "zIndex": 8
+      },
+      "moods": {}
+    },
+    "bucket-hat": {
+      "anchor": "headAnchor",
+      "pivotX": 0.5,
+      "pivotY": 0.8,
+      "base": {
+        "x": 0,
+        "y": 4,
+        "scaleX": 40,
+        "scaleY": 1,
+        "rotation": 0,
+        "zIndex": 8
+      },
+      "moods": {}
+    },
+    "hoodie": {
+      "anchor": "backAnchor",
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "base": {
+        "x": -7,
+        "y": 3,
+        "scaleX": 73,
+        "scaleY": 1,
+        "rotation": 0,
+        "zIndex": 4
+      },
+      "moods": {}
+    },
+    "striped-shirt": {
+      "anchor": "backAnchor",
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "base": {
+        "x": -6,
+        "y": 4,
+        "scaleX": 71,
+        "scaleY": 1.05,
+        "rotation": 0,
+        "zIndex": 4
+      },
+      "moods": {}
+    },
+    "raincoat": {
+      "anchor": "backAnchor",
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "base": {
+        "x": -7,
+        "y": 3,
+        "scaleX": 74,
+        "scaleY": 1,
+        "rotation": 0,
+        "zIndex": 4
+      },
+      "moods": {}
+    },
+    "pajamas": {
+      "anchor": "backAnchor",
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "base": {
+        "x": -6,
+        "y": 4,
+        "scaleX": 73,
+        "scaleY": 1.05,
+        "rotation": 0,
+        "zIndex": 4
+      },
+      "moods": {}
+    },
+    "tuxedo": {
+      "anchor": "backAnchor",
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "base": {
+        "x": -6,
+        "y": 4,
+        "scaleX": 73,
+        "scaleY": 1.05,
+        "rotation": 0,
+        "zIndex": 4
+      },
+      "moods": {}
+    },
+    "cape": {
+      "anchor": "backAnchor",
+      "pivotX": 0.32,
+      "pivotY": 0.3,
+      "base": {
+        "x": -6,
+        "y": -5,
+        "scaleX": 64,
+        "scaleY": 1,
+        "rotation": 4,
+        "zIndex": 4
+      },
+      "moods": {}
+    },
+    "scarf": {
+      "anchor": "neckAnchor",
+      "pivotX": 0.47,
+      "pivotY": 0.16,
+      "base": {
+        "x": 0,
+        "y": 1,
+        "scaleX": 38,
+        "scaleY": 1,
+        "rotation": 0,
+        "zIndex": 6
+      },
+      "moods": {
+        "excited": {
+          "y": 2
+        }
+      }
+    },
+    "collar": {
+      "anchor": "neckAnchor",
+      "pivotX": 0.5,
+      "pivotY": 0.24,
+      "base": {
+        "x": 0,
+        "y": 0,
+        "scaleX": 36,
+        "scaleY": 1,
+        "rotation": 0,
+        "zIndex": 6
+      },
+      "moods": {}
+    },
+    "bow": {
+      "anchor": "neckAnchor",
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "base": {
+        "x": 0,
+        "y": 2,
+        "scaleX": 20,
+        "scaleY": 1,
+        "rotation": 0,
+        "zIndex": 6
+      },
+      "moods": {}
+    },
+    "sunglasses": {
+      "anchor": "headAnchor",
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "base": {
+        "x": 0,
+        "y": 16,
+        "scaleX": 28,
+        "scaleY": 1,
+        "rotation": 0,
+        "zIndex": 7
+      },
+      "moods": {
+        "excited": {
+          "x": -3,
+          "y": 14
+        },
+        "sad": {
+          "x": 0,
+          "y": 17
+        },
+        "tired": {
+          "y": 14
+        }
+      }
+    }
+  }
+}

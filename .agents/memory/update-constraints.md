@@ -9,6 +9,12 @@ Bestehendes tamascottchi erweitern, keine neue Website erstellen. Vorhandene Fun
 
 **How to apply:** Speicheränderungen rückwärtskompatibel ausführen und vor Migration den alten Spielstand sichern.
 
+Das Spiel darf den Nutzer nicht bestrafen, wenn er mehrere Tage nicht online war.
+
+**Why:** Der Nutzer verlangt einen freundlichen Tagesablauf ohne Abwesenheitsstrafe.
+
+**How to apply:** Offline-Zeiten und inaktive Browser-Tabs dürfen bei mehrtägiger Abwesenheit keine nachträglichen Bedürfnisverluste verursachen.
+
 Multiplayer zunächst analysieren und nicht ohne Zustimmung vollständig implementieren. Vor kostenpflichtigen Diensten oder größerer Multiplayer-Infrastruktur Lösungen, Kosten und Einschränkungen erklären. Keine unmoderierten öffentlichen Chats; bevorzugt Freundescodes und feste Interaktionen.
 
 **Why:** Der Nutzer setzt diese Freigabe- und Sicherheitsgrenzen ausdrücklich.

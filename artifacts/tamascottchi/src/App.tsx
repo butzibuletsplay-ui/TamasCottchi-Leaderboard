@@ -2,18 +2,25 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, Award, Bath, Check, Coins, Download, Dumbbell, Gamepad2, Gift, Heart, Home, House,
   Medal, Moon, Play, Plus, Settings, Shirt, ShoppingBag, Sparkles, Star, Target, Trophy,
-  Utensils, Volume2, VolumeX, Wrench, X,
+  Utensils, Volume2, VolumeX, X, Sun, Sunset, Library, Shirt as ShirtIcon,
 } from 'lucide-react';
 import { BACKGROUNDS, CORE_SPRITES, preloadAll, preloadImage } from './game/assets';
 import type { GameId, GameResult, SoundFn } from './game/engine';
 import { GameStage, type RewardSummary } from './game/GameStage';
-import { PlacementTuner, SLOT_OF, Scottchi } from './game/Scottchi';
+import { SLOT_OF, Scottchi } from './game/Scottchi';
+import { OutfitLab } from './game/OutfitLab';
+import { AimLayer, FlyingToy, type Point, type Throw } from './game/ToyPlay';
 import {
-  CHALLENGES, GAMES, ITEMS, ROOM_BG, ROOM_LIST, STORE_KEY, clamp, initialData, itemById, levelFor, loadData,
-  moodFor, normalize, rewardFor, today, type DailyProgress, type GameRecord, type Item, type NeedKey, type PetData, type Room,
+  FAVORITE_TOY, FOOD_LINES, IDLE_CLASS, IDLE_LINES, PHASE_INFO, SURPRISES, TOY_LINES, TRAITS, absenceDecay, dayPhase, dominant, hasCharacter, nudge,
+  type Trait,
+} from './game/personality';
+import {
+  CHALLENGES, COLLECTIONS, GAMES, ITEMS, ROOM_BG, ROOM_LIST, STORE_KEY, STYLE_SETS, SaveLoadError, assertSave, clamp, initialData, itemById, levelFor, loadData,
+  moodFor, normalize, rewardFor, today, type DailyProgress, type FullPetData, type GameRecord, type Item, type NeedKey, type Room,
 } from './game/data';
+type PetData = FullPetData;
 
-type PetAction = 'idle' | 'happy' | 'eating' | 'washing' | 'petting' | 'sleeping' | 'spin' | 'wiggle';
+type PetAction = 'idle' | 'happy' | 'eating' | 'washing' | 'petting' | 'sleeping' | 'spin' | 'wiggle' | 'run' | 'chew' | 'wake' | 'yawn' | 'cuddle';
 const NEEDS: { id: NeedKey; name: string; icon: typeof Heart }[] = [
   { id: 'hunger', name: 'Sattheit', icon: Utensils }, { id: 'glueck', name: 'Laune', icon: Heart },
   { id: 'energie', name: 'Energie', icon: Activity }, { id: 'sauberkeit', name: 'Sauberkeit', icon: Sparkles },
@@ -27,12 +34,12 @@ const DAILY_GOALS: { id: keyof DailyProgress; title: string; detail: string; tar
 ];
 type ToyUse = { action: PetAction; line: string; fx: 'throw' | 'arc' | 'bounce' | 'shake'; need: Partial<Record<NeedKey, number>>; energy?: number; freq: number; slide?: number; room?: Room; cooldown: number };
 const TOY_USE: Record<string, ToyUse> = {
-  ball: { action: 'spin', line: 'Ball! Ball! BALL!', fx: 'throw', need: { glueck: 12, energie: -5 }, energy: 10, freq: 700, cooldown: 15 },
-  'bone-toy': { action: 'wiggle', line: 'Knusper. Meins.', fx: 'bounce', need: { glueck: 12, hunger: 3 }, freq: 520, cooldown: 20 },
+  ball: { action: 'run', line: 'Ball! Ball! BALL!', fx: 'throw', need: { glueck: 12, energie: -5 }, energy: 10, freq: 700, cooldown: 15 },
+  'bone-toy': { action: 'chew', line: 'Knusper. Meins.', fx: 'bounce', need: { glueck: 14, hunger: 3 }, freq: 520, cooldown: 20 },
   duck: { action: 'happy', line: 'Was war DAS?', fx: 'bounce', need: { glueck: 6 }, freq: 1300, slide: 700, cooldown: 6 },
   rope: { action: 'wiggle', line: 'Grrr, ich gewinne!', fx: 'shake', need: { glueck: 16, energie: -7 }, energy: 12, freq: 380, cooldown: 25 },
-  frisbee: { action: 'happy', line: 'Ich fliege fast mit!', fx: 'arc', need: { glueck: 14, energie: -6 }, energy: 12, freq: 820, slide: 1100, cooldown: 20 },
-  teddy: { action: 'petting', line: 'Mein bester Freund.', fx: 'bounce', need: { glueck: 9, energie: 2 }, freq: 460, cooldown: 20 },
+  frisbee: { action: 'run', line: 'Ich fliege fast mit!', fx: 'arc', need: { glueck: 14, energie: -6 }, energy: 12, freq: 820, slide: 1100, cooldown: 20 },
+  teddy: { action: 'cuddle', line: 'Mein bester Freund.', fx: 'bounce', need: { glueck: 9, energie: 2 }, freq: 460, cooldown: 20 },
   shampoo: { action: 'washing', line: 'Duftet nach Kokos!', fx: 'shake', need: { sauberkeit: 45, glueck: 3 }, freq: 760, room: 'Bad', cooldown: 90 },
 };
 
@@ -55,8 +62,50 @@ function ItemIcon({ item }: { item: Item }) {
   return <div className={`item-icon ${item.img ? 'has-img' : ''}`}>{item.img ? <img src={item.img} alt="" loading="lazy"/> : item.icon}</div>;
 }
 
+const TOY_TRAIT: Record<string, Trait> = { ball: 'verspielt', 'bone-toy': 'verspielt', duck: 'frech', rope: 'frech', frisbee: 'neugierig', teddy: 'anhaenglich', shampoo: 'anhaenglich' };
+const ownsAll = (owned: string[], ids: string[]) => ids.every((id) => owned.includes(id));
+
+function SaveError({ error }: { error: SaveLoadError }) {
+  const [confirm, setConfirm] = useState(false);
+  const download = () => {
+    const blob = new Blob([error.raw], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'tamascottchi-unlesbarer-spielstand.json'; a.click(); URL.revokeObjectURL(a.href);
+  };
+  const startFresh = () => {
+    localStorage.setItem(`tamascottchi-unreadable-save-${Date.now()}`, error.raw);
+    localStorage.removeItem(STORE_KEY);
+    window.location.reload();
+  };
+  return <div className="app-shell save-error" data-testid="save-error">
+    <div className="brand"><span className="brand-mark">t</span>tamascottchi</div>
+    <section className="dialog" style={{ margin: '40px auto' }}>
+      <h2>Spielstand nicht lesbar</h2>
+      <p data-testid="text-save-error">{error.message}</p>
+      <p>Nichts wurde gelöscht. Lade die Datei herunter, bevor du etwas anderes tust.</p>
+      <div className="dialog-actions">
+        <button className="button" onClick={download} data-testid="button-download-broken-save"><Download size={14}/> Rohdaten sichern</button>
+        <button className="button ghost" onClick={() => window.location.reload()} data-testid="button-retry-load">Erneut versuchen</button>
+        {confirm ? <button className="button orange" onClick={startFresh} data-testid="button-confirm-fresh">Ja, neu starten (Kopie bleibt im Browser)</button>
+          : <button className="button orange" onClick={() => setConfirm(true)} data-testid="button-start-fresh">Neu anfangen…</button>}
+      </div>
+    </section>
+  </div>;
+}
+
 function App() {
-  const [data, setData] = useState<PetData>(loadData);
+  const lab = import.meta.env.DEV ? new URLSearchParams(window.location.search) : null;
+  const [loaded] = useState<{ data?: PetData; error?: SaveLoadError }>(() => {
+    try { return { data: loadData() }; } catch (e) { return { error: e instanceof SaveLoadError ? e : new SaveLoadError(String(e), localStorage.getItem(STORE_KEY) || '') }; }
+  });
+  if (import.meta.env.DEV && lab && (lab.get('outfitEditor') === '1' || lab.get('outfitGallery') === '1')) {
+    return <OutfitLab initialMode={lab.get('outfitEditor') === '1' ? 'editor' : 'gallery'}/>;
+  }
+  if (loaded.error || !loaded.data) return <SaveError error={loaded.error!}/>;
+  return <Game initial={loaded.data}/>;
+}
+
+function Game({ initial }: { initial: PetData }) {
+  const [data, setData] = useState<PetData>(initial);
   const dataRef = useRef(data); dataRef.current = data;
   const [page, setPage] = useState('home');
   const [shopTab, setShopTab] = useState<Item['type']>('food');
@@ -71,8 +120,11 @@ function App() {
   const [memoryPairs, setMemoryPairs] = useState(6);
   const [cupLevel, setCupLevel] = useState(1);
   const [toyFx, setToyFx] = useState<{ id: string; fx: string; key: number } | null>(null);
-  const [tunerOpen, setTunerOpen] = useState(false);
-  const [tunerVersion, setTunerVersion] = useState(0);
+  const [aim, setAim] = useState<'ball' | 'frisbee' | null>(null);
+  const [flight, setFlight] = useState<Throw | null>(null);
+  const [run, setRun] = useState<{ dx: number; flip: boolean }>({ dx: 0, flip: false });
+  const [chewing, setChewing] = useState(false);
+  const roomRef = useRef<HTMLElement>(null);
   const [fileText, setFileText] = useState('');
   const [now, setNow] = useState(Date.now());
   const fileRef = useRef<HTMLInputElement>(null);
@@ -96,19 +148,36 @@ function App() {
   // need decay + daily reset + sleep regen in one interval
   useEffect(() => {
     const id = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
       setNow(Date.now());
       setData((old) => {
         let cur = old;
         if (cur.missionsDate !== today()) cur = { ...cur, daily: { feeds: 0, games: 0, baths: 0, pets: 0, coins: 0 }, missions: {}, missionsDate: today() };
         const elapsed = Date.now() - cur.lastUpdated;
         if (elapsed >= 240000) {
-          const decay = Math.floor(elapsed / 240000);
-          cur = { ...cur, lastUpdated: Date.now(), needs: Object.fromEntries(Object.entries(cur.needs).map(([k, v]) => [k, clamp(v - decay)])) as PetData['needs'] };
+          // Long gaps preserve needs; only active, short intervals cause decay.
+          const evening = ['abend', 'nacht'].includes(dayPhase());
+          const needs = Object.fromEntries(Object.entries(cur.needs).map(([k, v]) => [k, clamp(absenceDecay(v, elapsed * (evening && k === 'energie' && elapsed < 1200000 ? 1.5 : 1)))])) as PetData['needs'];
+          cur = { ...cur, lastUpdated: Date.now(), needs };
         }
         return cur;
       });
     }, 10000);
     return () => window.clearInterval(id);
+  }, []);
+  // hidden tab: freeze the clock while away, then apply the same capped absence rule on return
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState !== 'visible') { setData((old) => ({ ...old, routine: { ...old.routine, lastSeen: Date.now() } })); return; }
+      setNow(Date.now());
+      setData((old) => {
+        const away = Date.now() - old.lastUpdated;
+        if (away < 240000) return old;
+        return { ...old, lastUpdated: Date.now(), needs: Object.fromEntries(Object.entries(old.needs).map(([k, v]) => [k, clamp(absenceDecay(v, away))])) as PetData['needs'] };
+      });
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -178,11 +247,59 @@ function App() {
 
   const sleeping = !!data.sleepUntil && data.sleepUntil > now;
   const mood = moodFor(data.needs, excited, sleeping);
+  const phase = dayPhase(new Date(now));
+  const trait = dominant(data.personality);
+  const showsTrait = hasCharacter(data.personality);
+  const idleStyle = sleeping ? undefined : phase === 'abend' || phase === 'nacht' ? 'sway' : showsTrait ? IDLE_CLASS[trait] : undefined;
   function cheer(ms = 3500) { setExcited(true); later('excited', () => setExcited(false), ms); }
-  function showPetAction(action: PetAction, line: string) {
+  function showPetAction(action: PetAction, line: string, ms = 1800) {
     setPetAction(action); setPetSpeech(line);
-    if (action !== 'sleeping') later('pet', () => setPetAction('idle'), 1800);
+    if (action !== 'sleeping') later('pet', () => setPetAction('idle'), ms);
   }
+  const grow = (t: Trait, amount = 1) => setData((old) => ({ ...old, personality: nudge(old.personality, t, amount) }));
+
+  // ---------- daily routine: greeting once per local day, welcome back without penalty ----------
+  useEffect(() => {
+    const d = dataRef.current;
+    const awayH = (Date.now() - (d.routine.lastSeen || Date.now())) / 3600000;
+    const p = dayPhase();
+    if (d.routine.greetedDate !== today()) {
+      const line = p === 'morgen' ? `Guten Morgen! *streck* Neue Tagesaufgaben sind da.` : p === 'abend' ? 'Guten Abend! Schön, dass du da bist.' : p === 'nacht' ? 'Oh, du bist noch wach? Hallo!' : 'Hallo! Neuer Tag, neue Aufgaben.';
+      showPetAction('wake', awayH > 24 ? `Du warst weg, aber alles gut. ${line}` : line, 2600);
+      notify(p === 'morgen' ? 'Scottchi ist aufgewacht. Neue Tagesaufgaben!' : 'Neue Tagesaufgaben sind da.');
+      setData((old) => ({ ...old, routine: { ...old.routine, greetedDate: today(), lastSeen: Date.now() } }));
+    } else if (awayH > 6) {
+      showPetAction('happy', 'Da bist du ja wieder! Ich hab dich vermisst.', 2400);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    const id = window.setInterval(() => setData((old) => ({ ...old, routine: { ...old.routine, lastSeen: Date.now() } })), 60000);
+    return () => window.clearInterval(id);
+  }, []);
+  // ---------- personality idle chatter + small surprises (visible tab, home page, awake) ----------
+  const idleCtx = useRef({ page, sleeping, petAction, aim, flight: !!flight });
+  idleCtx.current = { page, sleeping, petAction, aim, flight: !!flight };
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const c = idleCtx.current; const d = dataRef.current;
+      if (document.visibilityState !== 'visible' || c.page !== 'home' || c.sleeping || c.petAction !== 'idle' || c.aim || c.flight) return;
+      const p = dayPhase(); const t = dominant(d.personality); const character = hasCharacter(d.personality);
+      const surprisesToday = d.routine.surpriseDate === today() ? d.routine.surprises : 0;
+      if (p !== 'nacht' && surprisesToday < 3 && Math.random() < 0.22) {
+        const pool = SURPRISES[character ? t : (['verspielt', 'neugierig', 'anhaenglich'] as Trait[])[Math.floor(Math.random() * 3)]];
+        const s = pool[Math.floor(Math.random() * pool.length)];
+        setData((old) => ({ ...old, coins: old.coins + s.coins, needs: applyNeeds(old.needs, s.need || {}), routine: { ...old.routine, surpriseDate: today(), surprises: (old.routine.surpriseDate === today() ? old.routine.surprises : 0) + 1 } }));
+        showPetAction('happy', 'Schau mal, was ich habe!', 2200); notify(`${s.line} +${s.coins} Münzen`);
+        return;
+      }
+      if ((p === 'abend' || p === 'nacht') && Math.random() < 0.5) { showPetAction('yawn', IDLE_LINES.verschlafen[Math.floor(Math.random() * 3)], 2400); return; }
+      const lines = character ? IDLE_LINES[t] : ['Was guckst du?', 'Ich bin eine Kreatur.', 'Was passiert hier eigentlich?'];
+      setPetSpeech(lines[Math.floor(Math.random() * lines.length)]);
+    }, 28000);
+    return () => window.clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ---------- games ----------
   const requestStart = useCallback(() => {
@@ -214,7 +331,7 @@ function App() {
         needs: applyNeeds(old.needs, { glueck: 6 }),
         stats: { ...old.stats, games: old.stats.games + 1, catches: old.stats.catches + (result.metrics.caught || 0), taps: old.stats.taps + (result.metrics.hits || 0) },
       };
-      next = advanceDaily(next, 'games');
+      next = advanceDaily({ ...next, personality: nudge(next.personality, 'verspielt', 0.8) }, 'games');
       return advanceDaily(next, 'coins', coins + bonusCoins);
     });
     sound(780, { dur: 0.25, slide: 1170 });
@@ -236,7 +353,8 @@ function App() {
         ...old, inventory: { ...old.inventory, [food.id]: Math.max(0, (old.inventory[food.id] || 0) - 1) },
         needs: { ...old.needs, hunger: clamp(old.needs.hunger + (food.amount || 12) * bowl) }, xp: old.xp + 9, stats: { ...old.stats, care: old.stats.care + 1 },
       }, 'feeds'));
-      showPetAction('eating', `Mmmh, ${food.name.toLowerCase()}!`);
+      showPetAction('eating', showsTrait ? FOOD_LINES[trait] : `Mmmh, ${food.name.toLowerCase()}!`, 2000);
+      if (showsTrait && trait === 'frech') grow('frech', 0.3);
       notify(`${food.name} für ${data.name}${bowl > 1 ? ' aus dem Napf' : ''}!`); sound(680); return;
     }
     if (id === 'sauberkeit') {
@@ -251,14 +369,15 @@ function App() {
     }
     if (data.needs.energie < 10) { notify('Scottchi braucht erst eine Pause.'); return; }
     setData((old) => ({ ...old, needs: { ...old.needs, glueck: clamp(old.needs.glueck + 12), energie: clamp(old.needs.energie - 4) }, xp: old.xp + 4, stats: { ...old.stats, care: old.stats.care + 1 } }));
-    showPetAction('happy', 'Wuff oder so!'); cheer(1800);
+    showPetAction('happy', 'Wuff oder so!'); cheer(1800); grow('frech', 0.8);
     notify('Scottchi macht einen Quatsch-Sprung.'); sound(720);
   }
   function pet() {
     if (sleeping) { showPetAction('sleeping', 'Zzz… nur noch fünf Minuten.'); return; }
     setData((old) => advanceDaily({ ...old, needs: { ...old.needs, glueck: clamp(old.needs.glueck + 8) }, xp: old.xp + 4, stats: { ...old.stats, care: old.stats.care + 1 } }, 'pets'));
     const lines = ['Das kitzelt!', 'Was guckst du?', 'Wuff oder so!', 'Ich bin eine Kreatur.', 'Was passiert hier eigentlich?', 'Ich habe existenzielle Fragen.'];
-    showPetAction('petting', lines[Math.floor(Math.random() * lines.length)]);
+    const pool = showsTrait ? [...lines.slice(0, 3), ...IDLE_LINES[trait]] : lines;
+    showPetAction('petting', pool[Math.floor(Math.random() * pool.length)]); grow('anhaenglich', 0.7);
     notify(`${data.name} freut sich.`); sound(650);
   }
   function playToy(id: string) {
@@ -268,17 +387,48 @@ function App() {
     if (sleeping) { notify('Psst, Scottchi schläft.'); return; }
     if (use.room && data.room !== use.room) { notify(`${item.name} funktioniert nur im ${use.room}.`); return; }
     if (use.energy && data.needs.energie < use.energy) { notify('Zu müde zum Toben. Erst schlafen.'); return; }
-    setToyFx({ id, fx: use.fx, key: Date.now() }); later('toy', () => setToyFx(null), 1300);
+    if ((id === 'ball' || id === 'frisbee') && page === 'home') { if (!flight) setAim(id); return; }
+    if (id === 'bone-toy') { setChewing(true); later('chew', () => setChewing(false), 2600); }
+    else if (id !== 'teddy') { setToyFx({ id, fx: use.fx, key: Date.now() }); later('toy', () => setToyFx(null), 1300); }
     sound(use.freq, { dur: id === 'duck' ? 0.18 : 0.2, slide: use.slide, type: id === 'duck' ? 'square' : 'triangle' });
-    showPetAction(use.action, use.line);
+    showPetAction(use.action, use.line, id === 'bone-toy' ? 2600 : 1800);
+    rewardToy(id);
+  }
+  function rewardToy(id: string) {
+    const use = TOY_USE[id];
+    const fav = showsTrait && FAVORITE_TOY[trait] === id;
+    if (fav) later('favline', () => setPetSpeech(TOY_LINES[trait]), 1300);
     const ready = (toyCooldown.current[id] || 0) <= Date.now();
     if (!ready) { notify('Lustig! Für Bonuspunkte kurz verschnaufen.'); return; }
     toyCooldown.current[id] = Date.now() + use.cooldown * 1000;
     if (use.action !== 'washing') cheer(2200);
     setData((old) => {
-      const next = { ...old, needs: applyNeeds(old.needs, use.need), xp: old.xp + 5, stats: { ...old.stats, toys: (old.stats.toys || 0) + 1, care: old.stats.care + 1 } };
+      const need = fav ? Object.fromEntries(Object.entries(use.need).map(([k, v]) => [k, k === 'glueck' ? v + 4 : v])) : use.need;
+      const next = { ...old, personality: nudge(old.personality, TOY_TRAIT[id] || 'verspielt', 0.9), needs: applyNeeds(old.needs, need), xp: old.xp + 5, stats: { ...old.stats, toys: (old.stats.toys || 0) + 1, care: old.stats.care + 1 } };
       return id === 'shampoo' ? advanceDaily(next, 'baths') : next;
     });
+  }
+  /** Ball/frisbee: toy flies to the aimed point, Scottchi runs there (flipping to face it), picks it up and trots back. */
+  function throwToy(id: 'ball' | 'frisbee', from: Point, to: Point) {
+    setAim(null);
+    const img = itemById(id)?.img; if (!img) return;
+    setFlight({ id, kind: id, img, from, to, key: Date.now() });
+    sound(TOY_USE[id].freq, { dur: 0.25, slide: TOY_USE[id].slide });
+    setPetSpeech(id === 'ball' ? 'Ball! Ball! BALL!' : to.x < from.x ? 'Links! Es fliegt nach links!' : 'Da rüber! Ich hab es!');
+  }
+  function toyLanded() {
+    const f = flight; const card = roomRef.current;
+    if (!f || !card) { setFlight(null); return; }
+    const dx = ((f.to.x - 50) / 100) * card.clientWidth;
+    const max = card.clientWidth * 0.3;
+    setRun({ dx: Math.max(-max, Math.min(max, dx)), flip: f.to.x > 52 });
+    showPetAction('run', TOY_USE[f.id].line, 2400);
+    later('fetch', () => {
+      setFlight(null); setRun((r) => ({ dx: 0, flip: r.flip }));
+      setPetSpeech(f.kind === 'ball' ? 'Hab ihn! Nochmal?' : 'Gefangen! Noch mal werfen?');
+      later('unflip', () => setRun({ dx: 0, flip: false }), 750);
+      cheer(2200); rewardToy(f.id);
+    }, 900);
   }
   function buy(item: Item) {
     if (item.unlockLevel && level < item.unlockLevel) { notify(`Ab Level ${item.unlockLevel} freigeschaltet.`); return; }
@@ -288,7 +438,7 @@ function App() {
       if (old.coins < item.price || (item.type !== 'food' && old.owned.includes(item.id))) return old;
       const stats = { ...old.stats, purchases: old.stats.purchases + 1 };
       if (item.type === 'food') return { ...old, coins: old.coins - item.price, inventory: { ...old.inventory, [item.id]: (old.inventory[item.id] || 0) + 1 }, stats };
-      return { ...old, coins: old.coins - item.price, owned: [...old.owned, item.id], stats };
+      return { ...old, coins: old.coins - item.price, owned: [...old.owned, item.id], stats, personality: nudge(old.personality, 'neugierig', 0.6) };
     });
     notify(`${item.name} gekauft.`); sound(760);
   }
@@ -301,11 +451,25 @@ function App() {
       if (old.equipped.includes(id)) return { ...old, equipped: old.equipped.filter((v) => v !== id) };
       const slot = SLOT_OF[id];
       // one item per slot: equipping a hat swaps the old hat, etc.
-      return { ...old, equipped: [...old.equipped.filter((v) => !slot || SLOT_OF[v] !== slot), id] };
+      return withStyles({ ...old, equipped: [...old.equipped.filter((v) => !slot || SLOT_OF[v] !== slot), id] });
     });
   }
+  function withStyles(d: PetData): PetData {
+    const worn = STYLE_SETS.filter((s) => ownsAll(d.equipped, s.items) && !d.stylesWorn.includes(s.id)).map((s) => s.id);
+    return worn.length ? { ...d, stylesWorn: [...d.stylesWorn, ...worn] } : d;
+  }
+  function wearStyle(items: string[]) {
+    setData((old) => {
+      if (!ownsAll(old.owned, items)) return old;
+      const slots = new Set(items.map((i) => SLOT_OF[i]));
+      return withStyles({ ...old, equipped: [...old.equipped.filter((v) => !slots.has(SLOT_OF[v])), ...items] });
+    });
+    notify('Kompletter Stil angezogen.'); sound(820);
+  }
   function changeRoom(room: Room) {
-    setData((old) => ({ ...old, room, sleepUntil: room === 'Schlafzimmer' ? old.sleepUntil : null, xp: old.xp + (old.missions.room ? 0 : 8), stats: { ...old.stats, rooms: old.stats.rooms + 1 }, missions: { ...old.missions, room: true } }));
+    setAim(null);
+    setData((old) => ({ ...old, room, sleepUntil: room === 'Schlafzimmer' ? old.sleepUntil : null, xp: old.xp + (old.missions.room ? 0 : 8), stats: { ...old.stats, rooms: old.stats.rooms + 1 }, missions: { ...old.missions, room: true },
+      visitedRooms: old.visitedRooms.includes(room) ? old.visitedRooms : [...old.visitedRooms, room], personality: old.room === room ? old.personality : nudge(old.personality, 'neugierig', 0.4) }));
     sound(520);
   }
   function sleep() {
@@ -314,7 +478,7 @@ function App() {
       setData((old) => ({ ...old, sleepUntil: null, settings: { ...old.settings, lampOn: true } }));
       showPetAction('idle', 'Morgen! Was gibt es?'); notify('Scottchi ist wieder wach.'); sound(500); return;
     }
-    setData((old) => ({ ...old, sleepUntil: Date.now() + 60000, settings: { ...old.settings, lampOn: false }, xp: old.xp + 2 }));
+    setData((old) => ({ ...old, sleepUntil: Date.now() + 60000, settings: { ...old.settings, lampOn: false }, xp: old.xp + 2, personality: nudge(old.personality, 'verschlafen', 1) }));
     setNow(Date.now() + 1);
     showPetAction('sleeping', 'Zzz…');
     notify(`${data.name} schläft jetzt eine Runde${data.owned.includes('teddy') ? ' mit dem Teddy' : ''}.`); sound(420);
@@ -325,8 +489,9 @@ function App() {
   }
   function importSave() {
     try {
-      const value = JSON.parse(fileText) as Partial<PetData>;
-      if (value.version !== 1 || !value.needs || !value.stats || !Number.isFinite(value.coins) || !Number.isFinite(value.xp)) throw new Error('invalid');
+      const value: unknown = JSON.parse(fileText);
+      assertSave(value);
+      if (!Number.isFinite(value.coins) || !Number.isFinite(value.xp)) throw new Error('invalid');
       setData(normalize(value)); setModal(null); setFileText(''); notify('Spielstand geladen.');
     } catch { notify('Datei ist kein gültiger tamascottchi-Spielstand.'); }
   }
@@ -337,6 +502,8 @@ function App() {
     { id: 'games', label: 'Spiele', icon: Gamepad2 }, { id: 'closet', label: 'Schrank', icon: Shirt },
     { id: 'leaderboard', label: 'Bestenliste', icon: Trophy }, { id: 'achievements', label: 'Erfolge', icon: Award },
   ];
+  const uniqueOwned = new Set(data.owned).size;
+  const stylesOwned = STYLE_SETS.filter((s) => ownsAll(data.owned, s.items)).length;
   const missions = DAILY_GOALS.map((goal) => ({ ...goal, progress: Math.min(data.daily[goal.id], goal.target), done: data.missions[goal.id] || false, reward: `+${goal.rewardCoins} Münzen · +${goal.rewardXp} XP` }));
   const achievements = [
     { id: 'first-game', title: 'Pfoten in Bewegung', detail: 'Schließe dein erstes Spiel ab', progress: data.stats.games, goal: 1, icon: '✦', rewardCoins: 12, rewardXp: 10 },
@@ -346,7 +513,19 @@ function App() {
     { id: 'room-hop', title: 'Zimmerreise', detail: 'Wechsle 5-mal den Raum', progress: data.stats.rooms, goal: 5, icon: '⌂', rewardCoins: 14, rewardXp: 12 },
     { id: 'snack', title: 'Snack-Spezialist', detail: 'Fang 25 Snacks', progress: data.stats.catches, goal: 25, icon: '●', rewardCoins: 22, rewardXp: 16 },
     { id: 'toybox', title: 'Spielkamerad', detail: 'Spiele 15-mal mit Spielzeug', progress: data.stats.toys || 0, goal: 15, icon: '◎', rewardCoins: 20, rewardXp: 15 },
+    { id: 'level-10', title: 'Großer Scottchi', detail: 'Bring Scottchi auf Level 10', progress: level, goal: 10, icon: '★', rewardCoins: 80, rewardXp: 0 },
+    { id: 'own-25', title: 'Schatzkammer', detail: 'Besitze 25 verschiedene Gegenstände', progress: uniqueOwned, goal: 25, icon: '◆', rewardCoins: 70, rewardXp: 40 },
+    { id: 'games-100', title: 'Arcade-Legende', detail: 'Schließe 100 Minispiele ab', progress: data.stats.games, goal: 100, icon: '▲', rewardCoins: 90, rewardXp: 60 },
+    { id: 'full-style', title: 'Stilsicher', detail: 'Sammle alle Teile eines Outfit-Stils', progress: stylesOwned > 0 ? 1 : 0, goal: 1, icon: '✧', rewardCoins: 35, rewardXp: 25 },
+    { id: 'all-rooms', title: 'Hausrundgang', detail: `Besuche alle ${ROOM_LIST.length} Räume`, progress: data.visitedRooms.length, goal: ROOM_LIST.length, icon: '⌂', rewardCoins: 20, rewardXp: 15 },
   ];
+  const collections = COLLECTIONS.map((c) => ({ ...c, have: c.items.filter((i) => data.owned.includes(i)).length }));
+  function claimCollection(id: string) {
+    const c = collections.find((x) => x.id === id);
+    if (!c || c.have < c.items.length || data.claimedAchievements.includes(id)) return;
+    setData((old) => old.claimedAchievements.includes(id) ? old : advanceDaily({ ...old, coins: old.coins + c.rewardCoins, xp: old.xp + c.rewardXp, claimedAchievements: [...old.claimedAchievements, id] }, 'coins', c.rewardCoins));
+    notify(`Sammlung ${c.name} komplett: +${c.rewardCoins} Münzen.`); sound(880);
+  }
   function claimAchievement(id: string) {
     const a = achievements.find((item) => item.id === id);
     if (!a || a.progress < a.goal || data.claimedAchievements.includes(id)) return;
@@ -358,11 +537,13 @@ function App() {
   const bgKey = data.activeBackground === 'classic' ? ROOM_BG[data.room] : undefined;
   const bg = bgKey ? BACKGROUNDS[bgKey] : null;
   const currentGame = GAMES.find((g) => g.id === activeGame);
-  const speech = sleeping ? 'Zzz…' : mood === 'hungry' ? 'Bro, ich hab Hunger.' : mood === 'tired' ? 'Ich bin so müde.' : mood === 'dirty' ? 'Ich rieche… interessant.' : mood === 'sad' ? 'Spielst du mit mir?' : petSpeech;
+  const teddyBeside = data.owned.includes('teddy') && data.room === 'Schlafzimmer';
+  const speech = sleeping ? (teddyBeside ? 'Zzz… *kuschelt den Teddy*' : 'Zzz…') : mood === 'hungry' ? 'Bro, ich hab Hunger.' : mood === 'tired' ? 'Ich bin so müde.' : mood === 'dirty' ? 'Ich rieche… interessant.' : mood === 'sad' ? 'Spielst du mit mir?' : petSpeech;
   const ownedOf = (type: Item['type']) => data.owned.filter((id) => itemById(id)?.type === type);
 
   const scene = <section
-    className={`room-card ${bg ? 'has-photo' : `room-${data.room.toLowerCase()} background-${data.activeBackground}`} ${data.room === 'Schlafzimmer' && !data.settings.lampOn ? 'room-dark' : ''}`}
+    ref={roomRef}
+    className={`room-card phase-${phase} ${bg ? 'has-photo' : `room-${data.room.toLowerCase()} background-${data.activeBackground}`} ${data.room === 'Schlafzimmer' && !data.settings.lampOn ? 'room-dark' : ''} ${data.room === 'Schlafzimmer' && (phase === 'abend' || phase === 'nacht') ? 'room-cozy' : ''}`}
     style={bg ? { ['--bg-pos' as string]: bg.pos, ['--bg-pos-m' as string]: bg.mobilePos } : undefined} data-testid="room-scene">
     {bg ? <picture key={bgKey} className="room-photo"><source srcSet={bg.src} type="image/webp"/><img src={bg.fallback} alt=""/></picture>
       : <div key={data.room + data.activeBackground} className="room-css"><div className="room-sky"/><div className="room-floor"/><div className="room-window"/><div className="room-art">W</div><div className="rug"/></div>}
@@ -371,13 +552,23 @@ function App() {
     <div className="room-badge">{data.room}</div>
     <div className="pet-speech" key={speech} data-testid="text-pet-speech">{speech}</div>
     {data.room === 'Schlafzimmer' && <button className="button small room-light" onClick={() => setData((old) => ({ ...old, settings: { ...old.settings, lampOn: !old.settings.lampOn } }))} data-testid="button-bedroom-light">{data.settings.lampOn ? 'Licht aus' : 'Licht an'}</button>}
+    <div className="room-phase" data-testid="status-day-phase">{phase === 'morgen' || phase === 'tag' ? <Sun size={13}/> : phase === 'abend' ? <Sunset size={13}/> : <Moon size={13}/>}{PHASE_INFO[phase].name}</div>
+    {teddyBeside && <img src={itemById('teddy')!.img} alt="Teddy am Schlafplatz" className={`scene-teddy ${sleeping ? 'is-snuggled' : ''}`} data-testid="img-teddy-bed"/>}
     <div className="pet-anchor">
-      <Scottchi mood={mood} equipped={data.equipped} action={petAction} sleeping={sleeping} onTap={pet} overrideVersion={tunerVersion}/>
-      {petAction === 'washing' && <div className="bubbles" aria-hidden><i/><i/><i/><i/><i/></div>}
-      {sleeping && <div className="zzz" aria-hidden><i>z</i><i>z</i><i>Z</i></div>}
+      <div className={`pet-runner ${run.flip ? 'flip' : ''}`} style={{ transform: `translateX(${run.dx}px)` }}>
+        <div className="pet-facing">
+          <Scottchi mood={mood} equipped={data.equipped} action={petAction} sleeping={sleeping} onTap={pet} idle={idleStyle}/>
+          {chewing && <img src={itemById('bone-toy')!.img} alt="" className="chew-bone" data-testid="img-chew-bone"/>}
+        </div>
+        {petAction === 'washing' && <div className="bubbles" aria-hidden><i/><i/><i/><i/><i/></div>}
+        {petAction === 'eating' && <div className="crumbs" aria-hidden><i/><i/><i/><i/></div>}
+        {sleeping && <div className="zzz" aria-hidden><i>z</i><i>z</i><i>Z</i></div>}
+      </div>
     </div>
     {toyFx && <img key={toyFx.key} src={itemById(toyFx.id)?.img} alt="" className={`toy-fx fx-${toyFx.fx}`}/>}
-    {ownedToys.length > 0 && <div className="toy-tray" aria-label="Spielzeug benutzen">{ownedToys.map((id) => { const it = itemById(id)!; const locked = !!TOY_USE[id].room && TOY_USE[id].room !== data.room; return <button key={id} className={`toy-btn ${locked ? 'locked' : ''}`} onClick={() => playToy(id)} title={it.name} data-testid={`button-toy-${id}`}><img src={it.img} alt={it.name}/></button>; })}</div>}
+    {flight && <FlyingToy key={flight.key} t={flight} duration={flight.kind === 'ball' ? 850 : 1000} onLand={toyLanded}/>}
+    {aim && <AimLayer kind={aim} onThrow={(f, t) => throwToy(aim, f, t)} onCancel={() => setAim(null)}/>}
+    {ownedToys.length > 0 && <div className="toy-tray" aria-label="Spielzeug benutzen">{ownedToys.map((id) => { const it = itemById(id)!; const locked = !!TOY_USE[id].room && TOY_USE[id].room !== data.room; return <button key={id} className={`toy-btn ${locked ? 'locked' : ''} ${aim === id ? 'aiming' : ''}`} onClick={() => playToy(id)} title={it.name} data-testid={`button-toy-${id}`}><img src={it.img} alt={it.name}/></button>; })}</div>}
     <div className="room-controls">{ROOM_LIST.map((room) => <button key={room} className={`room-chip ${data.room === room ? 'selected' : ''}`} onClick={() => changeRoom(room)} data-testid={`room-${room.toLowerCase()}`}>{room}</button>)}</div>
   </section>;
 
@@ -405,6 +596,7 @@ function App() {
             {scene}
             <section className="panel need-panel">
               <div className="panel-head"><h2 className="panel-title">{data.name}s Wohlgefühl</h2><span className={`mood-tag mood-${mood}`} data-testid="status-mood">{({ default: 'Entspannt', happy: 'Glücklich', hungry: 'Hungrig', tired: 'Müde', dirty: 'Schmutzig', sad: 'Traurig', excited: 'Aufgedreht' } as const)[mood]}</span></div>
+              <div className="routine-strip" data-testid="routine-strip"><strong>{PHASE_INFO[phase].name}</strong><span>{PHASE_INFO[phase].tip}</span></div>
               {NEEDS.map(({ id, name, icon: Icon }) => <div className="need-row" key={id} data-testid={`need-${id}`}>
                 <div className="need-icon"><Icon/></div><div><div className="need-label">{name}</div><div className="meter"><div className={`meter-fill ${data.needs[id] < 30 ? 'low' : data.needs[id] < 55 ? 'mid' : ''}`} style={{ transform: `scaleX(${data.needs[id] / 100})` }}/></div></div><div className="need-value">{data.needs[id]}%</div>
               </div>)}
@@ -419,6 +611,10 @@ function App() {
                 {data.room === 'Schlafzimmer' && <button className="action-button" onClick={sleep} data-testid="button-sleep"><Moon size={15}/>{sleeping ? 'Aufwachen' : 'Schlafen'}</button>}
               </div>
               {!ownedToys.length && <p className="subline">Spielzeug aus dem Laden erscheint direkt im Zimmer und lässt sich antippen.</p>}
+              <div className="traits" data-testid="panel-personality">
+                <div className="traits-head"><strong>Charakter</strong><span>{showsTrait ? `meist ${TRAITS.find((t) => t.id === trait)!.name.toLowerCase()}` : 'formt sich noch'}</span></div>
+                {TRAITS.map((t) => <div key={t.id} className={`trait-row ${showsTrait && t.id === trait ? 'lead' : ''}`} title={t.hint} data-testid={`trait-${t.id}`}><span>{t.name}</span><div className="trait-bar"><i style={{ transform: `scaleX(${data.personality[t.id] / 100})` }}/></div></div>)}
+              </div>
             </section>
           </div>
           <div className="section-grid">
@@ -445,9 +641,13 @@ function App() {
         </section>}
 
         {page === 'closet' && <div className="closet-grid">
-          <section className="panel closet-preview"><div className="panel-head"><h2 className="panel-title">Anprobe</h2>{import.meta.env.DEV && <button className="button small ghost" onClick={() => setTunerOpen((v) => !v)} data-testid="button-dev-tuner"><Wrench size={14}/> Passform</button>}</div>
-            <div className="preview-stage"><Scottchi mood={mood} equipped={data.equipped} overrideVersion={tunerVersion}/></div>
-            {tunerOpen && <PlacementTuner mood={mood} equipped={data.equipped} onChange={() => setTunerVersion((v) => v + 1)}/>}
+          <section className="panel closet-preview"><div className="panel-head"><h2 className="panel-title">Anprobe</h2></div>
+            <div className="preview-stage"><Scottchi mood={mood} equipped={data.equipped} idle={idleStyle}/></div>
+            <div className="style-sets"><div className="nav-label" style={{ padding: '12px 0 6px' }}>Outfit-Stile</div>
+              {STYLE_SETS.map((s) => { const have = s.items.filter((i) => data.owned.includes(i)).length; const full = have === s.items.length; return <div key={s.id} className={`style-row ${full ? 'full' : ''}`} data-testid={`style-${s.id}`}>
+                <ShirtIcon size={14}/><div className="item-info"><div className="mission-title">{s.name}{data.stylesWorn.includes(s.id) ? ' · getragen' : ''}</div><div className="mission-progress">{s.items.map((i) => itemById(i)?.name).join(' + ')} · {have}/{s.items.length}</div></div>
+                <button className="button small" disabled={!full} onClick={() => wearStyle(s.items)} data-testid={`button-wear-style-${s.id}`}>Anziehen</button></div>; })}
+            </div>
           </section>
           <div className="closet-lists">
             <section className="panel"><div className="panel-head"><h2 className="panel-title">Kleidung & Hüte</h2><Sparkles size={18}/></div>{ownedOf('accessory').length ? ownedOf('accessory').map((id) => { const item = itemById(id)!; return <div className="shop-item" key={id}><ItemIcon item={item}/><div className="item-info"><div className="item-title">{item.name}</div><div className="item-meta">{SLOT_OF[id] === 'hat' ? 'Kopf' : SLOT_OF[id] === 'outfit' ? 'Körper' : SLOT_OF[id] === 'face' ? 'Gesicht' : 'Hals'}</div></div><button className="button small" onClick={() => equip(id)} data-testid={`button-equip-${id}`}>{data.equipped.includes(id) ? 'Ablegen' : 'Anziehen'}</button></div>; }) : <div className="empty-state">Noch nichts im Schrank. Im Laden warten Hüte, Hoodies und mehr.</div>}</section>
@@ -464,6 +664,10 @@ function App() {
 
         {page === 'achievements' && <>
           <section className="panel"><div className="panel-head"><h2 className="panel-title">Herausforderungen</h2><Target size={18}/></div><p className="subline" style={{ marginTop: 0 }}>Werden automatisch beim Erreichen belohnt, jede genau einmal.</p><div className="page-grid">{CHALLENGES.map((c) => <div className={`achievement ${data.challenges[c.id] ? '' : 'locked'}`} key={c.id} data-testid={`challenge-${c.id}`}><div className="item-icon">{data.challenges[c.id] ? <Check size={18}/> : <Target size={18}/>}</div><div className="item-info"><div className="item-title">{c.title}</div><div className="item-meta">{GAMES.find((g) => g.id === c.game)?.name} · {c.coins} Münzen · {c.xp} XP</div></div>{data.challenges[c.id] ? <span className="reward">Geschafft</span> : <button className="button small" onClick={() => openGame(c.game)} data-testid={`button-try-${c.id}`}>Versuchen</button>}</div>)}</div></section>
+          <section className="panel" style={{ marginTop: 16 }} data-testid="panel-collections"><div className="panel-head"><h2 className="panel-title">Sammlungen</h2><Library size={18}/></div><p className="subline" style={{ marginTop: 0 }}>{uniqueOwned} verschiedene Gegenstände im Besitz. Komplette Sammlungen bringen eine einmalige Belohnung.</p><div className="page-grid">{collections.map((c) => <div className={`achievement ${c.have < c.items.length ? 'locked' : ''}`} key={c.id} data-testid={`collection-${c.id}`}>
+            <div className="collection-thumbs">{c.items.slice(0, 4).map((i) => { const it = itemById(i)!; return <span key={i} className={data.owned.includes(i) ? 'have' : ''}>{it.img ? <img src={it.img} alt=""/> : it.icon}</span>; })}</div>
+            <div className="item-info"><div className="item-title">{c.name}</div><div className="progress-track"><span style={{ width: `${c.have / c.items.length * 100}%` }}/></div><div className="item-meta">{c.have} / {c.items.length} · {c.rewardCoins} Münzen · {c.rewardXp} XP</div><div className="item-meta">{c.items.filter((i) => !data.owned.includes(i)).map((i) => itemById(i)?.name).join(', ') || 'Alles gesammelt'}</div></div>
+            {c.have >= c.items.length ? data.claimedAchievements.includes(c.id) ? <span className="reward">Abgeholt</span> : <button className="button small" onClick={() => claimCollection(c.id)} data-testid={`button-claim-${c.id}`}>Abholen</button> : null}</div>)}</div></section>
           <section className="panel" style={{ marginTop: 16 }}><div className="panel-head"><h2 className="panel-title">Kleine große Momente</h2><Award size={18}/></div><div className="page-grid">{achievements.map((item) => <div className={`achievement ${item.progress < item.goal ? 'locked' : ''}`} key={item.id} data-testid={`achievement-${item.id}`}><div className="item-icon">{item.progress >= item.goal ? item.icon : '·'}</div><div className="item-info"><div className="item-title">{item.title}</div><div className="item-meta">{item.detail}</div><div className="progress-track"><span style={{ width: `${Math.min(100, item.progress / item.goal * 100)}%` }}/></div><div className="item-meta">{Math.min(item.progress, item.goal)} / {item.goal} · Belohnung {item.rewardCoins} Münzen</div></div>{item.progress >= item.goal ? data.claimedAchievements.includes(item.id) ? <span className="reward">Abgeholt</span> : <button className="button small" onClick={() => claimAchievement(item.id)} data-testid={`button-claim-${item.id}`}>Abholen</button> : null}</div>)}</div></section>
         </>}
       </main>

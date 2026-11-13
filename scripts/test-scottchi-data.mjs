@@ -10,7 +10,7 @@ const compiled = await build({
   bundle: true, write: false, format: 'esm', platform: 'node',
   define: { 'import.meta.env.BASE_URL': '"/"' },
 });
-const { initialData, normalize, loadData, moodFor, rewardFor, STORE_KEY, BACKUP_KEY } =
+const { initialData, normalize, loadData, moodFor, rewardFor, STORE_KEY, BACKUP_KEY, BACKUP_KEY_21, SAVE_SCHEMA } =
   await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
 const storage = new Map();
 globalThis.localStorage = {
@@ -31,7 +31,7 @@ test('legacy possessions, currency, achievements and records survive normalizati
     assert.deepEqual(actual[key], legacy[key], key);
   }
   assert.equal(actual.highscores.catch, 321);
-  assert.equal(actual.saveSchema, 2);
+  assert.equal(actual.saveSchema, SAVE_SCHEMA);
 });
 test('legacy raw backup is exact and is never replaced on later loads', () => {
   storage.clear();
@@ -79,4 +79,21 @@ test('round rewards stay bounded and diminish after fifteen daily games', () => 
 test('best score survives even when older records are no longer in history', () => {
   const data = normalize({ ...initialData(), highscores: { catch: 900 }, records: [{ id: 'newer', game: 'catch', score: 10, date: Date.now() }] });
   assert.equal(data.highscores.catch, 900);
+});
+test('returning after several days does not penalize needs or possessions', () => {
+  const old = { ...initialData(), lastUpdated: Date.now() - 7 * 86400000 };
+  const next = normalize(old);
+  assert.deepEqual(next.needs, old.needs);
+  assert.equal(next.coins, old.coins);
+});
+test('version 2.0 gets a separate untouched 2.1 backup', () => {
+  storage.clear();
+  const old = { ...initialData(), saveSchema: 2 };
+  const raw = JSON.stringify(old);
+  storage.set(STORE_KEY, raw);
+  const next = loadData();
+  assert.equal(storage.get(BACKUP_KEY_21), raw);
+  assert.equal(next.saveSchema, SAVE_SCHEMA);
+  assert.ok(next.personality);
+  assert.ok(next.visitedRooms.includes(old.room));
 });
