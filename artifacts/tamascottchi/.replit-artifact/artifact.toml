@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "tamascottchi"
+description = "Ein spielbares, mobilfreundliches Hundemensch-Tamagotchi mit Wuschel, Räumen, Pflege, Minispielen, Shop, Speicherstand und Bestenliste."
+version = "1.0.0"
+id = "artifacts/tamascottchi"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25800
+
+[services.development]
+run = "pnpm --filter @workspace/tamascottchi run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/tamascottchi", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/tamascottchi/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25800"
+BASE_PATH = "/"
