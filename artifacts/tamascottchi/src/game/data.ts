@@ -18,18 +18,41 @@ export type PetData = {
   settings: { sound: boolean; music: boolean; volume: number; lampOn: boolean };
   highscores: Partial<Record<GameId, number>>;
   challenges: Record<string, number>;
-  // ---- schema 3 (2.1), all additive ----
+  // ---- additive save fields ----
   personality?: Personality;
   visitedRooms?: Room[];
   routine?: { greetedDate: string; surpriseDate: string; surprises: number; lastSeen: number };
   stylesWorn?: string[];
+  world?: {
+    discoveredLocations: string[];
+    completedQuests: string[];
+    discoveries: string[];
+    questProgress: Record<string, number>;
+    claimedRewards: string[];
+  };
+  collectionIds?: string[];
 };
-export type FullPetData = PetData & Required<Pick<PetData, 'personality' | 'visitedRooms' | 'routine' | 'stylesWorn'>>;
+export type FullPetData = PetData & Required<Pick<PetData, 'personality' | 'visitedRooms' | 'routine' | 'stylesWorn' | 'world' | 'collectionIds'>>;
 
 export const STORE_KEY = 'tamascottchi-save-v1';
 export const BACKUP_KEY = 'tamascottchi-save-v1-backup-before-2.0';
 export const BACKUP_KEY_21 = 'tamascottchi-save-v1-backup-before-2.1';
-export const SAVE_SCHEMA = 3;
+export const BACKUP_KEY_30 = 'tamascottchi-save-v1-backup-before-3.0';
+export const SAVE_SCHEMA = 4;
+export const LOCATIONS = [
+  { id: 'park', name: 'Scottchi Park', level: 1, point: { x: 25, y: 29 }, desc: 'Der erste Spaziergang: Wege, Wiesen und verlorene Knochen.' },
+  { id: 'city', name: 'Scottchi City', level: 3, point: { x: 45, y: 53 }, desc: 'Ein lebendiger Platz für kleine Besorgungen.' },
+  { id: 'forest', name: 'Scottchi Forest', level: 5, point: { x: 78, y: 20 }, desc: 'Lichter zwischen den Bäumen und versteckte Schätze.' },
+  { id: 'beach', name: 'Scottchi Beach', level: 8, point: { x: 79, y: 78 }, desc: 'Muscheln, warme Sonne und frische Seeluft.' },
+  { id: 'cave', name: 'Crystal Cave', level: 12, point: { x: 14, y: 81 }, desc: 'Eine geheimnisvolle Höhle mit seltenen Kristallen.' },
+  { id: 'mountain', name: 'Mystery Mountain', level: 20, point: { x: 50, y: 8 }, desc: 'Der höchste Weg wartet auf erfahrene Entdecker.' },
+] as const;
+export const WORLD_QUESTS = [
+  { id: 'park-bones', place: 'park', name: 'Die verlorenen Knochen', desc: 'Finde fünf Knochen im Park.', target: 5, coins: 50, xp: 30, discoveries: ['bone-cream'] },
+  { id: 'park-picnic', place: 'park', name: 'Picknick im Grünen', desc: 'Sammle vier Dinge für ein Picknick.', target: 4, coins: 35, xp: 24, discoveries: ['frisbee-red', 'duck'] },
+  { id: 'city-delivery', place: 'city', name: 'Paket für den Laden', desc: 'Finde die drei Pakete auf dem Platz.', target: 3, coins: 45, xp: 30, discoveries: ['key-gold','royal-cape','royal-armor','bell-trophy','scottchi-statue'] },
+  { id: 'city-lanterns', place: 'city', name: 'Lichterfest', desc: 'Entdecke fünf Laternen in der Stadt.', target: 5, coins: 40, xp: 28, discoveries: ['crystal-rainbow','egg-crystal','egg-lava','treasure-chest'] },
+] as const;
 export const ROOM_LIST: Room[] = ['Wohnzimmer', 'Küche', 'Bad', 'Schlafzimmer', 'Spielzimmer'];
 export const ROOM_BG: Partial<Record<Room, 'livingroom' | 'bathroom' | 'bedroom' | 'playroom'>> = { Wohnzimmer: 'livingroom', Bad: 'bathroom', Schlafzimmer: 'bedroom', Spielzimmer: 'playroom' };
 
@@ -125,6 +148,7 @@ export const initialData = (): FullPetData => ({
   highscores: {}, challenges: {},
   personality: initialPersonality(), visitedRooms: ['Wohnzimmer'],
   routine: { greetedDate: '', surpriseDate: today(), surprises: 0, lastSeen: Date.now() }, stylesWorn: [],
+  world: { discoveredLocations: [], completedQuests: [], discoveries: [], questProgress: {}, claimedRewards: [] }, collectionIds: [],
 });
 
 const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
@@ -166,6 +190,14 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
     visitedRooms: [...new Set([...(Array.isArray(parsed.visitedRooms) ? parsed.visitedRooms : []), ROOM_LIST.includes(parsed.room as Room) ? parsed.room as Room : d.room])].filter((r) => ROOM_LIST.includes(r)),
     routine: { ...d.routine, ...(parsed.routine || {}), lastSeen: num(parsed.routine?.lastSeen, num(parsed.lastUpdated, now)) },
     stylesWorn: Array.isArray(parsed.stylesWorn) ? parsed.stylesWorn : [],
+    world: {
+      discoveredLocations: [...new Set(parsed.world?.discoveredLocations || [])],
+      completedQuests: [...new Set(parsed.world?.completedQuests || [])],
+      discoveries: [...new Set(parsed.world?.discoveries || [])],
+      questProgress: { ...(parsed.world?.questProgress || {}) },
+      claimedRewards: [...new Set(parsed.world?.claimedRewards || [])],
+    },
+    collectionIds: [...new Set(parsed.collectionIds || [])],
   };
 }
 
@@ -192,7 +224,8 @@ export function loadData(): FullPetData {
     assertSave(parsed);
     // untouched copies before each schema change, written once, never overwritten
     if (!parsed.saveSchema && !localStorage.getItem(BACKUP_KEY)) localStorage.setItem(BACKUP_KEY, raw);
-    if ((parsed.saveSchema || 0) < SAVE_SCHEMA && !localStorage.getItem(BACKUP_KEY_21)) localStorage.setItem(BACKUP_KEY_21, raw);
+    if ((parsed.saveSchema || 0) < 3 && !localStorage.getItem(BACKUP_KEY_21)) localStorage.setItem(BACKUP_KEY_21, raw);
+    if ((parsed.saveSchema || 0) < SAVE_SCHEMA && !localStorage.getItem(BACKUP_KEY_30)) localStorage.setItem(BACKUP_KEY_30, raw);
     return normalize(parsed);
   } catch (cause) {
     // Never replace an unreadable save with a new game through the autosave effect.

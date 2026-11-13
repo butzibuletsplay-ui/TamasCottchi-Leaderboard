@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
+import { existsSync } from 'node:fs';
 
 const require = createRequire(resolve('artifacts/api-server/package.json'));
 const { build } = require('esbuild');
@@ -12,6 +13,14 @@ const compiled = await build({
 });
 const { initialData, normalize, loadData, moodFor, rewardFor, STORE_KEY, BACKUP_KEY, BACKUP_KEY_21, SAVE_SCHEMA } =
   await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
+const worldBuild = await build({
+  entryPoints: ['artifacts/tamascottchi/src/game/world.ts', 'artifacts/tamascottchi/src/game/data.ts'],
+  bundle: true, write: false, format: 'esm', platform: 'node', outdir: 'test-build',
+  define: { 'import.meta.env.BASE_URL': '"/"' },
+});
+const worldModule = await import(`data:text/javascript;base64,${Buffer.from(worldBuild.outputFiles.find((file) => file.path.includes('world.js')).text).toString('base64')}`);
+const dataModule = await import(`data:text/javascript;base64,${Buffer.from(worldBuild.outputFiles.find((file) => file.path.includes('data.js')).text).toString('base64')}`);
+const BACKUP_KEY_30 = dataModule.BACKUP_KEY_30;
 const storage = new Map();
 globalThis.localStorage = {
   getItem: (key) => storage.get(key) ?? null,
@@ -96,4 +105,31 @@ test('version 2.0 gets a separate untouched 2.1 backup', () => {
   assert.equal(next.saveSchema, SAVE_SCHEMA);
   assert.ok(next.personality);
   assert.ok(next.visitedRooms.includes(old.room));
+});
+test('schema 3 saves keep a raw 3.0 backup and preserve all old progress', () => {
+  storage.clear();
+  const old = { ...initialData(), saveSchema: 3, coins: 987, xp: 432, owned: ['ball','crown'] };
+  const raw = JSON.stringify(old);
+  storage.set(STORE_KEY, raw);
+  const next = loadData();
+  assert.equal(storage.get(BACKUP_KEY_30), raw);
+  assert.equal(next.saveSchema, 4);
+  assert.deepEqual(next.owned, old.owned);
+  assert.equal(next.coins, 987);
+  assert.equal(next.xp, 432);
+  assert.deepEqual(next.world.discoveries, []);
+});
+test('world and collection assets have unique IDs and complete starter quests', () => {
+  const { COLLECTION_ITEMS, COLLECTION_CATEGORIES, COLLECTION_REWARDS } = worldModule;
+  const { LOCATIONS, WORLD_QUESTS } = dataModule;
+  assert.equal(LOCATIONS.length, 6);
+  assert.deepEqual(LOCATIONS.map((place) => place.level), [1,3,5,8,12,20]);
+  assert.equal(WORLD_QUESTS.filter((quest) => quest.place === 'park').length, 2);
+  assert.equal(WORLD_QUESTS.filter((quest) => quest.place === 'city').length, 2);
+  assert.ok(WORLD_QUESTS.every((quest) => quest.target > 0 && quest.coins > 0 && quest.xp > 0));
+  assert.equal(COLLECTION_ITEMS.length, 70);
+  assert.equal(new Set(COLLECTION_ITEMS.map((item) => item.id)).size, 70);
+  assert.equal(COLLECTION_CATEGORIES.length, 8);
+  assert.ok(COLLECTION_ITEMS.every((item) => existsSync(`artifacts/tamascottchi/public/assets/collections/items/${item.id}.png`)));
+  assert.ok(COLLECTION_REWARDS.every((reward) => reward.items.every((id) => COLLECTION_ITEMS.some((item) => item.id === id))));
 });

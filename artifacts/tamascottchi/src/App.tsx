@@ -2,13 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, Award, Bath, Check, Coins, Download, Dumbbell, Gamepad2, Gift, Heart, Home, House,
   Medal, Moon, Play, Plus, Settings, Shirt, ShoppingBag, Sparkles, Star, Target, Trophy,
-  Utensils, Volume2, VolumeX, X, Sun, Sunset, Library, Shirt as ShirtIcon,
+  Utensils, Volume2, VolumeX, X, Sun, Sunset, Library, Shirt as ShirtIcon, Compass, Users,
 } from 'lucide-react';
 import { BACKGROUNDS, CORE_SPRITES, preloadAll, preloadImage } from './game/assets';
 import type { GameId, GameResult, SoundFn } from './game/engine';
 import { GameStage, type RewardSummary } from './game/GameStage';
 import { SLOT_OF, Scottchi } from './game/Scottchi';
 import { OutfitLab } from './game/OutfitLab';
+import { World } from './game/World';
+import { CollectionsPage } from './game/CollectionsPage';
 import { AimLayer, FlyingToy, type Point, type Throw } from './game/ToyPlay';
 import {
   FAVORITE_TOY, FOOD_LINES, IDLE_CLASS, IDLE_LINES, PHASE_INFO, SURPRISES, TOY_LINES, TRAITS, absenceDecay, dayPhase, dominant, hasCharacter, nudge,
@@ -498,9 +500,11 @@ function Game({ initial }: { initial: PetData }) {
   function resetGame() { localStorage.removeItem(STORE_KEY); setData(initialData()); setPage('home'); setActiveGame(null); setModal(null); notify('Neuer Spielstand gestartet.'); }
 
   const nav = [
-    { id: 'home', label: 'Zuhause', icon: Home }, { id: 'shop', label: 'Laden', icon: ShoppingBag },
-    { id: 'games', label: 'Spiele', icon: Gamepad2 }, { id: 'closet', label: 'Schrank', icon: Shirt },
-    { id: 'leaderboard', label: 'Bestenliste', icon: Trophy }, { id: 'achievements', label: 'Erfolge', icon: Award },
+    { id: 'home', label: 'Zuhause', icon: Home }, { id: 'world', label: 'World', icon: Compass },
+    { id: 'games', label: 'Spiele', icon: Gamepad2 }, { id: 'shop', label: 'Laden', icon: ShoppingBag },
+    { id: 'collections', label: 'Sammeln', icon: Library }, { id: 'online', label: 'Online', icon: Users },
+    { id: 'closet', label: 'Schrank', icon: Shirt }, { id: 'leaderboard', label: 'Besten', icon: Trophy },
+    { id: 'achievements', label: 'Erfolge', icon: Award },
   ];
   const uniqueOwned = new Set(data.owned).size;
   const stylesOwned = STYLE_SETS.filter((s) => ownsAll(data.owned, s.items)).length;
@@ -525,6 +529,14 @@ function Game({ initial }: { initial: PetData }) {
     if (!c || c.have < c.items.length || data.claimedAchievements.includes(id)) return;
     setData((old) => old.claimedAchievements.includes(id) ? old : advanceDaily({ ...old, coins: old.coins + c.rewardCoins, xp: old.xp + c.rewardXp, claimedAchievements: [...old.claimedAchievements, id] }, 'coins', c.rewardCoins));
     notify(`Sammlung ${c.name} komplett: +${c.rewardCoins} Münzen.`); sound(880);
+  }
+  function awardWorld(coins:number,xp:number) {
+    setData(old=>advanceDaily({...old,coins:old.coins+coins,xp:old.xp+xp},'coins',coins));
+    notify(`Weltaufgabe abgeschlossen: +${coins} Münzen und +${xp} XP.`);sound(940,{dur:.2,slide:1240});
+  }
+  function claimWorldReward(id:string,_name:string,coins:number,xp:number) {
+    setData(old=>old.world.claimedRewards.includes(id)?old:advanceDaily({...old,coins:old.coins+coins,xp:old.xp+xp,world:{...old.world,claimedRewards:[...old.world.claimedRewards,id]}},'coins',coins));
+    notify('Einmalige Sammlungsbelohnung abgeholt.');sound(880);
   }
   function claimAchievement(id: string) {
     const a = achievements.find((item) => item.id === id);
@@ -587,7 +599,7 @@ function Game({ initial }: { initial: PetData }) {
         <div className="side-note"><strong>Level {level} · Scottchi-Fan</strong><div className="progress-track"><span style={{ width: `${xpProgress}%` }}/></div><div style={{ marginTop: 7 }}>{xpProgress} / 100 XP bis zum nächsten Level</div></div>
       </aside>
       <main className="main">
-        {!activeGame && <div className="main-head"><div><div className="eyebrow">{page === 'home' ? 'DEIN ZUHAUSE' : 'TAMASCOTTCHI'}</div><h1>{page === 'home' ? `Hallo, ${data.name}.` : page === 'shop' ? 'Der kleine Laden' : page === 'games' ? 'Spielzeit!' : page === 'closet' ? 'Kleiderschrank' : page === 'leaderboard' ? 'Bestenliste' : 'Erfolge'}</h1><div className="subline">{page === 'home' ? 'Tippe Scottchi an, wirf Spielzeug, wechsle das Zimmer.' : page === 'leaderboard' ? 'Nur deine Ergebnisse auf diesem Gerät.' : 'Ein gemütlicher Ort für Scottchi und dich.'}</div></div>
+        {!activeGame && <div className="main-head"><div><div className="eyebrow">{page === 'home' ? 'DEIN ZUHAUSE' : 'TAMASCOTTCHI'}</div><h1>{page === 'home' ? `Hallo, ${data.name}.` : page === 'shop' ? 'Der kleine Laden' : page === 'world' ? 'Scottchi World' : page === 'collections' ? 'Scottchi Collections' : page === 'online' ? 'Scottchi Online' : page === 'games' ? 'Spielzeit!' : page === 'closet' ? 'Kleiderschrank' : page === 'leaderboard' ? 'Bestenliste' : 'Erfolge'}</h1><div className="subline">{page === 'home' ? 'Tippe Scottchi an, wirf Spielzeug, wechsle das Zimmer.' : page === 'leaderboard' ? 'Nur deine Ergebnisse auf diesem Gerät.' : 'Ein gemütlicher Ort für Scottchi und dich.'}</div></div>
           {page === 'home' && <button className="button small" onClick={() => { setNameDraft(data.name); setModal('name'); }} data-testid="button-rename">Name ändern</button>}
         </div>}
 
@@ -623,6 +635,9 @@ function Game({ initial }: { initial: PetData }) {
           </div>
         </>}
 
+        {page === 'world' && <World data={data} level={level} onChange={setData} award={awardWorld}/>}
+        {page === 'collections' && <CollectionsPage data={data} onClaim={claimWorldReward}/>}
+        {page === 'online' && <section className="panel online-preview" data-testid="online-preview"><div className="eyebrow">NICHT AKTIVIERT</div><h2 className="panel-title">Scottchi Online</h2><p>Die Freundesprofile, Codes und Besuche brauchen Anmeldung und sichere Serverberechtigungen. Hier gibt es noch keine Konten oder erfundenen Online-Spieler.</p><img src="/assets/online/friend-visit.webp" alt="Illustration zweier befreundeter Scottchis bei einem Besuch"/><div className="side-note"><strong>Für Phase 3 erst abstimmen</strong>Ein sicherer Start wäre Freundescodes und asynchrone Besuche über den vorhandenen Express- und PostgreSQL-Server. Vor Anmeldung oder größeren Backendänderungen klären wir Anbieter, Datenschutz und Kosten. Multiplayer ist nicht eingerichtet.</div></section>}
         {page === 'games' && (activeGame && currentGame
           ? <GameStage key={`${activeGame}-${memoryPairs}-${cupLevel}`} id={activeGame} name={currentGame.name} rules={currentGame.rules} best={data.highscores[activeGame] || 0}
               difficulty={activeGame === 'memory' ? memoryPairs : activeGame === 'bone' ? cupLevel : undefined} extras={data.owned}
