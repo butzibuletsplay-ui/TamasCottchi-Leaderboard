@@ -242,6 +242,8 @@
 .world-layout{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(230px,.7fr);gap:14px;margin-top:12px;align-items:start}
 .world-map-viewport{position:relative;overflow:hidden;aspect-ratio:1.5;border:2px solid var(--ink);border-radius:14px;background:#e5d1a5;touch-action:none;user-select:none}
 .world-map{position:absolute;inset:0;transform-origin:center;transition:transform .14s ease-out}.world-map>img{width:100%;height:100%;object-fit:contain;pointer-events:none}
+.city-vendors{display:grid;gap:7px;margin-top:14px;padding:12px;border:1px dashed #9b7657;border-radius:10px;background:#fff8e8}.city-vendors strong{font:600 15px 'Fredoka'}.city-vendors p{margin:0 0 3px}
+.world-pet{position:absolute;z-index:2;transform:translate(-50%,-50%);display:grid;justify-items:center;pointer-events:none;transition:left .38s cubic-bezier(.2,.75,.3,1),top .38s cubic-bezier(.2,.75,.3,1);filter:drop-shadow(0 2px 1px #2b1a1355)}.world-pet>img{width:clamp(36px,5vw,56px);height:clamp(36px,5vw,56px);object-fit:contain}.world-pet>span{font:800 9px/1 'Nunito',sans-serif;color:var(--ink);background:#fff4daed;padding:2px 5px;border-radius:6px;white-space:nowrap}
 .world-marker{position:absolute;transform:translate(-50%,-50%);display:grid;justify-items:center;gap:2px;border:0;background:transparent;color:var(--ink);cursor:pointer;filter:drop-shadow(0 2px 0 white);min-width:48px}.world-marker>span{display:grid;place-items:center;width:32px;height:32px;background:var(--lime);border:2px solid var(--ink);border-radius:50%;box-shadow:2px 3px 0 var(--ink);transition:transform .15s}.world-marker:hover>span,.world-marker.selected>span{transform:scale(1.18);background:#c9a6d8}.world-marker.locked>span{background:#d3c5ac}.world-marker small{font:800 clamp(7px,1vw,10px)/1.15 'Nunito',sans-serif;background:#fff4daed;padding:2px 4px;border-radius:4px;white-space:nowrap}
 .world-zoom{position:absolute;right:8px;bottom:28px;display:flex;gap:4px}.world-zoom button{border:1px solid var(--ink);border-radius:7px;background:var(--card);width:31px;height:31px;display:grid;place-items:center}
 .world-map-tip{position:absolute;left:7px;bottom:7px;background:#fff4daed;border-radius:5px;padding:3px 6px;font-size:9px}.world-place{padding:14px}.world-place h3{font:600 20px 'Fredoka';margin:6px 0}.world-place p{font-size:13px;line-height:1.5;color:var(--muted)}
@@ -254,3 +256,65 @@
 .collection-detail{position:relative;width:min(430px,100%);text-align:center;border:3px solid var(--rarity);box-shadow:0 0 22px color-mix(in srgb,var(--rarity),transparent 55%)}.collection-detail-img{width:min(250px,70%);aspect-ratio:1.3;object-fit:contain;border-radius:12px;background-image:conic-gradient(#ddd 25%,#fff 0 50%,#ddd 0 75%,#fff 0);background-size:18px 18px}.collection-close{position:absolute;top:8px;right:8px}.online-preview{max-width:800px}.online-preview>img{display:block;width:100%;max-height:360px;object-fit:cover;border-radius:12px;margin:12px 0;border:2px solid var(--ink)}.online-preview>p{line-height:1.6}
 @media(max-width:850px){.world-layout{grid-template-columns:1fr}.world-place{display:grid}.collection-reward-grid{grid-template-columns:1fr}}
 @media(max-width:600px){.world-marker small{font-size:7px}.world-marker>span{width:29px;height:29px}.world-map-tip{font-size:8px;max-width:68%}.world-zoom{flex-direction:column}.collection-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.collection-card{padding:5px 3px}.collection-filters select{min-width:130px;max-width:45vw}.quest-dialog{padding:12px}.quest-scene{aspect-ratio:1.1}}
+
+/* Scottchi 4.0: connected inventory, crafting, journal and touch-friendly placement */
+.version-pill{font:700 10px 'DM Mono';letter-spacing:0;background:#fff8e9;border:1px solid var(--ink);border-radius:99px;padding:4px 7px;vertical-align:middle}
+.inventory-filters{display:flex;gap:7px;overflow-x:auto;padding:4px 2px 10px;scrollbar-width:thin}
+.inventory-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(126px,1fr));gap:10px}
+.inventory-card{position:relative;min-height:128px;display:grid;justify-items:center;align-content:center;gap:5px;border:1.5px solid var(--ink);border-radius:11px;background:#fffdf6;padding:12px 8px;color:var(--ink);box-shadow:2px 2px 0 #0002;text-align:center;touch-action:manipulation}
+.inventory-card:active{transform:translateY(1px)}
+.inventory-card .item-icon,.inventory-detail-icon{width:56px;height:56px;font-size:28px}
+.inventory-card .item-icon img,.craft-result .item-icon img{max-width:90%;max-height:90%;object-fit:contain}
+.inventory-card strong{font:600 13px 'Fredoka'}
+.inventory-card small{font-size:10px;color:var(--muted)}
+.inventory-quantity{position:absolute;right:7px;top:7px;border:1px solid var(--ink);border-radius:99px;background:var(--lime);padding:2px 6px;font:700 10px 'DM Mono'}
+.inventory-detail{position:relative;width:min(470px,100%);max-height:90dvh;overflow:auto}
+.inventory-detail-icon{margin:0 auto 10px;display:grid;place-items:center;border:2px solid var(--ink);border-radius:14px;background:#f3e5c9;font-size:34px}
+.inventory-detail-icon img{max-width:90%;max-height:90%;object-fit:contain}
+.inventory-detail h3{font:600 24px 'Fredoka';margin:5px 0 9px}
+.inventory-detail>p{line-height:1.5;color:var(--muted)}
+.inventory-facts{display:grid;gap:7px;margin:15px 0}
+.inventory-facts div{display:grid;grid-template-columns:105px 1fr;gap:8px;border-bottom:1px solid #e6ddcb;padding:7px 0}
+.inventory-facts dt{font-size:11px;font-weight:900}.inventory-facts dd{margin:0;font-size:12px}
+.inventory-readonly{display:flex;align-items:center;gap:7px;margin-top:10px;font-size:11px;color:var(--muted)}
+.inventory-detail .dialog-actions{justify-content:center}
+.craft-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.craft-card{display:grid;gap:12px;border:1.5px solid #d8cdb5;border-radius:12px;background:#fffdf6;padding:14px}
+.craft-result{display:flex;align-items:center;gap:10px;min-width:0}
+.craft-result .item-icon{flex:none}
+.craft-result small{display:block;font-size:11px;color:var(--muted);line-height:1.4;margin-top:3px}
+.craft-ingredients{display:grid;gap:6px}
+.craft-ingredients span{display:flex;align-items:center;gap:6px;border-radius:7px;padding:6px 8px;background:#f2eade;font-size:11px}
+.craft-ingredients strong{margin-left:auto;font:700 10px 'DM Mono'}
+.craft-ingredients .enough{background:#e5efd9}.craft-ingredients .short{background:#f5e2d5;color:#815c4b}
+.craft-card>.button{min-height:42px}
+.journal-cover{display:flex;align-items:center;gap:10px;padding:13px;border:1.5px solid #9b7550;border-radius:10px;background:linear-gradient(110deg,#f4e4be,#fff5da);font:600 13px 'Fredoka';line-height:1.4}
+.journal-list{list-style:none;margin:18px 0 0;padding:0;display:grid;gap:0}
+.journal-list li{display:grid;grid-template-columns:44px 1fr;gap:10px;padding:13px 5px;border-bottom:1px dashed #cdbd9e}
+.journal-icon{width:38px;height:38px;display:grid;place-items:center;border:1.5px solid var(--ink);border-radius:50%;background:#fff6dd;font-size:19px}
+.journal-list strong{font:600 15px 'Fredoka'}.journal-list p{margin:4px 0;font-size:12px;line-height:1.45}.journal-list time{font:10px 'DM Mono';color:var(--muted)}
+.help-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.help-grid article{border:1px solid #ddd2be;border-radius:10px;background:#fffdf6;padding:14px}
+.help-grid article>svg{width:20px;color:#447d75}
+.help-grid h3{font:600 16px 'Fredoka';margin:8px 0 5px}
+.help-grid p,.tutorial-card p{font-size:12px;line-height:1.55;color:#5d5f55;margin:0}
+.help-online{margin-top:14px}.help-version{text-align:right;font:10px 'DM Mono';color:var(--muted)}
+.tutorial-card{margin-top:16px}.future-place{padding:12px;border:1px dashed #c9bda8;border-radius:9px;background:#f5eee0;color:#68675f;font-size:12px;line-height:1.5}
+.room-item{bottom:auto;z-index:1;transform:translate(-50%,-50%);min-width:40px;min-height:40px;display:grid;place-items:center;border:1.5px solid #6a472d;border-radius:12px;background:#fff0cddd;box-shadow:1px 2px 0 #30241966;font:700 25px 'Fredoka';touch-action:none;cursor:grab}
+.room-item:active{cursor:grabbing;scale:1.12}
+.room-item img{max-width:34px;max-height:34px;object-fit:contain}
+.room-item:focus-visible,.inventory-card:focus-visible{outline:3px solid #347e78;outline-offset:2px}
+.quest-pickup:disabled{opacity:.9;cursor:default}
+.world-quest{min-height:58px;cursor:pointer}.world-quest:disabled{opacity:.7}
+.riddle-point{font:700 18px 'DM Mono'}
+@media(max-width:680px){
+ .craft-grid,.help-grid{grid-template-columns:1fr}
+ .inventory-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+ .inventory-card{min-height:116px;padding:9px 4px}
+ .inventory-card .item-icon{width:48px;height:48px}
+ .inventory-card strong{font-size:11px}
+ .mobile-nav button{flex:0 0 auto;min-width:54px;min-height:48px}
+ .room-item{min-width:42px;min-height:42px}
+ .inventory-detail{padding:16px}
+}
+@media(prefers-reduced-motion:reduce){.inventory-card,.room-item{transition:none!important}}

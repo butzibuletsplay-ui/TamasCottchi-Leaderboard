@@ -21,6 +21,25 @@ const worldBuild = await build({
 const worldModule = await import(`data:text/javascript;base64,${Buffer.from(worldBuild.outputFiles.find((file) => file.path.includes('world.js')).text).toString('base64')}`);
 const dataModule = await import(`data:text/javascript;base64,${Buffer.from(worldBuild.outputFiles.find((file) => file.path.includes('data.js')).text).toString('base64')}`);
 const BACKUP_KEY_30 = dataModule.BACKUP_KEY_30;
+const BACKUP_KEY_40 = dataModule.BACKUP_KEY_40;
+const questBuild = await build({
+  entryPoints: ['artifacts/tamascottchi/src/game/questEngine.ts'],
+  bundle: true, write: false, format: 'esm', platform: 'node',
+  define: { 'import.meta.env.BASE_URL': '"/"' },
+});
+const questModule = await import(`data:text/javascript;base64,${Buffer.from(questBuild.outputFiles[0].text).toString('base64')}`);
+const craftBuild = await build({
+  entryPoints: ['artifacts/tamascottchi/src/game/crafting.ts'],
+  bundle: true, write: false, format: 'esm', platform: 'node',
+  define: { 'import.meta.env.BASE_URL': '"/"' },
+});
+const craftingModule = await import(`data:text/javascript;base64,${Buffer.from(craftBuild.outputFiles[0].text).toString('base64')}`);
+const outfitBuild = await build({
+  entryPoints: ['artifacts/tamascottchi/src/game/outfits.ts'],
+  bundle: true, write: false, format: 'esm', platform: 'node',
+  define: { 'import.meta.env.BASE_URL': '"/"', 'import.meta.env.DEV': 'false' },
+});
+const outfitModule = await import(`data:text/javascript;base64,${Buffer.from(outfitBuild.outputFiles[0].text).toString('base64')}`);
 const storage = new Map();
 globalThis.localStorage = {
   getItem: (key) => storage.get(key) ?? null,
@@ -113,23 +132,134 @@ test('schema 3 saves keep a raw 3.0 backup and preserve all old progress', () =>
   storage.set(STORE_KEY, raw);
   const next = loadData();
   assert.equal(storage.get(BACKUP_KEY_30), raw);
-  assert.equal(next.saveSchema, 4);
+  assert.equal(next.saveSchema, 5);
   assert.deepEqual(next.owned, old.owned);
   assert.equal(next.coins, 987);
   assert.equal(next.xp, 432);
   assert.deepEqual(next.world.discoveries, []);
+});
+test('schema 4 saves get an untouched 4.0 backup and migrate the new persistent systems', () => {
+  storage.clear();
+  const old = { ...initialData(), saveSchema: 4, coins: 321, owned: ['shampoo', 'ball'], roomItems: ['plant'] };
+  const raw = JSON.stringify(old);
+  storage.set(STORE_KEY, raw);
+  const next = loadData();
+  assert.equal(storage.get(BACKUP_KEY_40), raw);
+  assert.equal(next.saveSchema, 5);
+  assert.equal(next.coins, 321);
+  assert.equal(next.inventory.shampoo, 1);
+  assert.deepEqual(next.roomPlacements.plant, { x: 16, y: 67 });
+  assert.deepEqual(next.journal, []);
+  assert.deepEqual(next.world.activeQuests, []);
+  assert.deepEqual(next.world.petPosition, { x: 32, y: 38 });
+});
+test('malformed quantities are clamped without dropping valid possessions', () => {
+  const next = normalize({ ...initialData(), inventory: { wood: -5, cloth: 1.8, kibble: 'bad' }, owned: ['ball'] });
+  assert.equal(next.inventory.wood, 0);
+  assert.equal(next.inventory.cloth, 1);
+  assert.equal(next.inventory.kibble, 0);
+  assert.ok(next.owned.includes('ball'));
+  const initial = initialData();
+  const badPosition = normalize({ ...initial, world: { ...initial.world, petPosition: { x: 140, y: -20 } } });
+  assert.deepEqual(badPosition.world.petPosition, { x: 97, y: 3 });
+});
+test('quest rewards, material pickups and multi-step actions are saved and one-time', () => {
+  let data = normalize(initialData());
+  data = questModule.startQuest(data, 'park-bones');
+  for (let point = 0; point < 5; point++) {
+    const result = questModule.pickQuestPoint(data, 'park-bones', point);
+    data = result.data;
+    assert.equal(result.outcome, point === 4 ? 'completed' : 'found');
+  }
+  assert.equal(data.inventory['bone-scrap'], 5);
+  assert.ok(data.world.completedQuests.includes('park-bones'));
+  assert.ok(data.world.claimedRewards.includes('quest:park-bones'));
+  const coinsAfterReward = data.coins;
+  assert.equal(questModule.pickQuestPoint(data, 'park-bones', 0).outcome, 'already-completed');
+  assert.equal(data.coins, coinsAfterReward);
+
+  data = questModule.startQuest(data, 'park-lost-toy');
+  for (let point = 0; point < 3; point++) data = questModule.pickQuestPoint(data, 'park-lost-toy', point).data;
+  assert.equal(data.world.questStages['park-lost-toy'], 'awaiting-action');
+  assert.ok(data.owned.includes('ball'));
+  const finished = questModule.completeQuestAction(data, 'use:ball');
+  assert.equal(finished.outcome, 'completed');
+  assert.ok(finished.data.world.completedQuests.includes('park-lost-toy'));
+  assert.equal(questModule.completeQuestAction(finished.data, 'use:ball').outcome, 'invalid');
+});
+test('forest sequence requires its actual order and does not duplicate puzzle loot', () => {
+  let data = questModule.startQuest(normalize(initialData()), 'forest-riddle');
+  const wrong = questModule.pickQuestPoint(data, 'forest-riddle', 0);
+  assert.equal(wrong.outcome, 'wrong-order');
+  data = wrong.data;
+  assert.equal(data.inventory['gold-fragment'] || 0, 0);
+  for (const point of [2, 0, 3, 1]) data = questModule.pickQuestPoint(data, 'forest-riddle', point).data;
+  assert.equal(data.world.questProgress['forest-riddle'], 4);
+  assert.equal(data.inventory['gold-fragment'], 1);
+  assert.ok(data.world.completedQuests.includes('forest-riddle'));
+});
+test('beach treasure needs an explicit opening action and frisbee quests need a real throw', () => {
+  let data = questModule.startQuest(normalize(initialData()), 'beach-treasure');
+  for (const point of [0, 1, 2]) data = questModule.pickQuestPoint(data, 'beach-treasure', point).data;
+  assert.equal(data.world.questStages['beach-treasure'], 'awaiting-action');
+  assert.equal(data.inventory['rope-fiber'], 3);
+  assert.equal(data.inventory['gold-fragment'] || 0, 0);
+  const opened = questModule.completeQuestAction(data, 'open:treasure');
+  assert.equal(opened.outcome, 'completed');
+  assert.equal(opened.data.inventory['gold-fragment'], 1);
+  assert.ok(opened.data.world.completedQuests.includes('beach-treasure'));
+
+  data = questModule.startQuest(normalize(initialData()), 'beach-frisbee');
+  data = questModule.pickQuestPoint(data, 'beach-frisbee', 0).data;
+  assert.ok(data.owned.includes('frisbee'));
+  assert.equal(data.world.questStages['beach-frisbee'], 'awaiting-action');
+  const thrown = questModule.completeQuestAction(data, 'use:frisbee');
+  assert.equal(thrown.outcome, 'completed');
+  assert.ok(thrown.data.world.completedQuests.includes('beach-frisbee'));
+});
+test('crafting spends exact ingredients, stores output, and blocks a second unique craft', () => {
+  const base = normalize({ ...initialData(), inventory: { wood: 3, cloth: 2, kibble: 2 } });
+  const crafted = craftingModule.craftItem(base, 'forest-toy');
+  assert.equal(crafted.error, undefined);
+  assert.equal(crafted.data.inventory.wood, 0);
+  assert.equal(crafted.data.inventory.cloth, 0);
+  assert.ok(crafted.data.owned.includes('crafted-toy'));
+  assert.equal(craftingModule.craftItem(crafted.data, 'forest-toy').error, 'Wald-Wurfseil hast du bereits hergestellt.');
+  const denied = craftingModule.craftItem(base, 'shell-mobile');
+  assert.match(denied.error, /fehlen noch/);
+  assert.equal(denied.data.inventory.wood, 3);
 });
 test('world and collection assets have unique IDs and complete starter quests', () => {
   const { COLLECTION_ITEMS, COLLECTION_CATEGORIES, COLLECTION_REWARDS } = worldModule;
   const { LOCATIONS, WORLD_QUESTS } = dataModule;
   assert.equal(LOCATIONS.length, 6);
   assert.deepEqual(LOCATIONS.map((place) => place.level), [1,3,5,8,12,20]);
-  assert.equal(WORLD_QUESTS.filter((quest) => quest.place === 'park').length, 2);
+  assert.equal(WORLD_QUESTS.filter((quest) => quest.place === 'park').length, 3);
   assert.equal(WORLD_QUESTS.filter((quest) => quest.place === 'city').length, 2);
+  assert.ok(WORLD_QUESTS.some((quest) => quest.place === 'forest'));
+  assert.ok(WORLD_QUESTS.some((quest) => quest.place === 'beach'));
   assert.ok(WORLD_QUESTS.every((quest) => quest.target > 0 && quest.coins > 0 && quest.xp > 0));
+  for (const place of ['park', 'city', 'forest', 'beach']) assert.ok(WORLD_QUESTS.some((quest) => quest.place === place), `${place} needs playable content`);
+  assert.ok(WORLD_QUESTS.every((quest) => !quest.actionLoot || quest.actionLoot.quantity > 0 && dataModule.itemById(quest.actionLoot.id)));
+  assert.ok(craftingModule.CRAFT_RECIPES.every((recipe) => recipe.ingredients.every((ingredient) => dataModule.itemById(ingredient.id))));
+  assert.ok(craftingModule.CRAFT_RECIPES.every((recipe) => dataModule.itemById(recipe.result)));
   assert.equal(COLLECTION_ITEMS.length, 70);
   assert.equal(new Set(COLLECTION_ITEMS.map((item) => item.id)).size, 70);
   assert.equal(COLLECTION_CATEGORIES.length, 8);
   assert.ok(COLLECTION_ITEMS.every((item) => existsSync(`artifacts/tamascottchi/public/assets/collections/items/${item.id}.png`)));
   assert.ok(COLLECTION_REWARDS.every((reward) => reward.items.every((id) => COLLECTION_ITEMS.some((item) => item.id === id))));
+});
+test('all wearable layers have an anchor fit for every mood and valid image assets', () => {
+  const { WEARABLES, BASE_CONFIG, resolveFit, layerSrc } = outfitModule;
+  const moods = Object.keys(BASE_CONFIG.anchors);
+  assert.equal(WEARABLES.length, 18);
+  for (const id of WEARABLES) {
+    assert.ok(BASE_CONFIG.items[id], `missing outfit fit for ${id}`);
+    for (const mood of moods) {
+      const fit = resolveFit(id, mood, BASE_CONFIG);
+      assert.ok(fit && Number.isFinite(fit.left) && Number.isFinite(fit.top) && fit.scaleX > 0, `bad ${id} fit for ${mood}`);
+    }
+    const src = layerSrc(id);
+    if (src) assert.ok(existsSync(`artifacts/tamascottchi/public/${src.startsWith('/') ? src.slice(1) : src}`), `missing layer asset for ${id}`);
+  }
 });

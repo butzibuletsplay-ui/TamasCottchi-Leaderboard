@@ -6,8 +6,15 @@ import { absenceDecay, initialPersonality, type Personality } from './personalit
 export type Room = 'Wohnzimmer' | 'Küche' | 'Bad' | 'Schlafzimmer' | 'Spielzimmer';
 export type NeedKey = 'hunger' | 'glueck' | 'energie' | 'sauberkeit';
 export type GameRecord = { id: string; game: GameId; score: number; date: number };
-export type Item = { id: string; name: string; icon: string; price: number; type: 'food' | 'toy' | 'accessory' | 'room' | 'background'; effect?: NeedKey; amount?: number; unlockLevel?: number; img?: string; desc?: string };
+export type ItemType = 'food' | 'toy' | 'accessory' | 'room' | 'background' | 'material';
+export type Item = {
+  id: string; name: string; icon: string; price: number; type: ItemType; effect?: NeedKey; amount?: number;
+  effects?: Partial<Record<NeedKey, number>>; unlockLevel?: number; img?: string; desc?: string;
+  rarity?: 'Gewöhnlich' | 'Ungewöhnlich' | 'Selten' | 'Episch' | 'Legendär';
+  origin?: string; purpose?: string; stackable?: boolean; craftOnly?: boolean;
+};
 export type DailyProgress = { feeds: number; games: number; baths: number; pets: number; coins: number };
+export type JournalEntry = { id: string; date: number; icon: string; title: string; detail: string };
 export type PetData = {
   version: number; saveSchema?: number; name: string; needs: Record<NeedKey, number>; lastUpdated: number;
   coins: number; xp: number; inventory: Record<string, number>; owned: string[];
@@ -18,6 +25,9 @@ export type PetData = {
   settings: { sound: boolean; music: boolean; volume: number; lampOn: boolean };
   highscores: Partial<Record<GameId, number>>;
   challenges: Record<string, number>;
+  journal?: JournalEntry[];
+  roomPlacements?: Record<string, { x: number; y: number }>;
+  tutorialSeen?: boolean;
   // ---- additive save fields ----
   personality?: Personality;
   visitedRooms?: Room[];
@@ -29,16 +39,23 @@ export type PetData = {
     discoveries: string[];
     questProgress: Record<string, number>;
     claimedRewards: string[];
+    activeQuests?: string[];
+    questFinds?: Record<string, number[]>;
+    questStages?: Record<string, string>;
+    petPosition: { x: number; y: number };
   };
   collectionIds?: string[];
 };
-export type FullPetData = PetData & Required<Pick<PetData, 'personality' | 'visitedRooms' | 'routine' | 'stylesWorn' | 'world' | 'collectionIds'>>;
+export type FullPetData = PetData
+  & Required<Pick<PetData, 'personality' | 'visitedRooms' | 'routine' | 'stylesWorn' | 'world' | 'collectionIds' | 'journal' | 'roomPlacements' | 'tutorialSeen'>>
+  & { world: Required<NonNullable<PetData['world']>> };
 
 export const STORE_KEY = 'tamascottchi-save-v1';
 export const BACKUP_KEY = 'tamascottchi-save-v1-backup-before-2.0';
 export const BACKUP_KEY_21 = 'tamascottchi-save-v1-backup-before-2.1';
 export const BACKUP_KEY_30 = 'tamascottchi-save-v1-backup-before-3.0';
-export const SAVE_SCHEMA = 4;
+export const SAVE_SCHEMA = 5;
+export const BACKUP_KEY_40 = 'tamascottchi-save-v1-backup-before-4.0';
 export const LOCATIONS = [
   { id: 'park', name: 'Scottchi Park', level: 1, point: { x: 25, y: 29 }, desc: 'Der erste Spaziergang: Wege, Wiesen und verlorene Knochen.' },
   { id: 'city', name: 'Scottchi City', level: 3, point: { x: 45, y: 53 }, desc: 'Ein lebendiger Platz für kleine Besorgungen.' },
@@ -47,12 +64,23 @@ export const LOCATIONS = [
   { id: 'cave', name: 'Crystal Cave', level: 12, point: { x: 14, y: 81 }, desc: 'Eine geheimnisvolle Höhle mit seltenen Kristallen.' },
   { id: 'mountain', name: 'Mystery Mountain', level: 20, point: { x: 50, y: 8 }, desc: 'Der höchste Weg wartet auf erfahrene Entdecker.' },
 ] as const;
-export const WORLD_QUESTS = [
-  { id: 'park-bones', place: 'park', name: 'Die verlorenen Knochen', desc: 'Finde fünf Knochen im Park.', target: 5, coins: 50, xp: 30, discoveries: ['bone-cream'] },
-  { id: 'park-picnic', place: 'park', name: 'Picknick im Grünen', desc: 'Sammle vier Dinge für ein Picknick.', target: 4, coins: 35, xp: 24, discoveries: ['frisbee-red', 'duck'] },
-  { id: 'city-delivery', place: 'city', name: 'Paket für den Laden', desc: 'Finde die drei Pakete auf dem Platz.', target: 3, coins: 45, xp: 30, discoveries: ['key-gold','royal-cape','royal-armor','bell-trophy','scottchi-statue'] },
-  { id: 'city-lanterns', place: 'city', name: 'Lichterfest', desc: 'Entdecke fünf Laternen in der Stadt.', target: 5, coins: 40, xp: 28, discoveries: ['crystal-rainbow','egg-crystal','egg-lava','treasure-chest'] },
-] as const;
+export type WorldQuestDefinition = {
+  id: string; place: string; name: string; desc: string; target: number; coins: number; xp: number;
+  discoveries: string[]; loot: string; sequence?: number[]; requiresAction?: string; itemReward?: string;
+  actionLoot?: { id: string; quantity: number };
+};
+export const WORLD_QUESTS: WorldQuestDefinition[] = [
+  { id: 'park-bones', place: 'park', name: 'Die verlorenen Knochen', desc: 'Finde fünf versteckte Knochen im Park.', target: 5, coins: 50, xp: 30, discoveries: ['bone-cream'], loot: 'bone-scrap' },
+  { id: 'park-picnic', place: 'park', name: 'Picknick im Grünen', desc: 'Sammle vier Dinge für ein Picknick.', target: 4, coins: 35, xp: 24, discoveries: ['frisbee-red', 'duck'], loot: 'wood' },
+  { id: 'park-lost-toy', place: 'park', name: 'Das verschwundene Spielzeug', desc: 'Untersuche drei Hinweise und spiele danach im Zimmer mit dem gefundenen Ball.', target: 3, coins: 100, xp: 50, discoveries: ['tennisball-green'], loot: 'cloth', requiresAction: 'use:ball', itemReward: 'ball' },
+  { id: 'city-delivery', place: 'city', name: 'Paket für den Laden', desc: 'Finde drei Pakete auf dem Platz.', target: 3, coins: 45, xp: 30, discoveries: ['key-gold', 'royal-cape', 'royal-armor'], loot: 'cloth' },
+  { id: 'city-lanterns', place: 'city', name: 'Lichterfest', desc: 'Entdecke fünf Laternen in der Stadt.', target: 5, coins: 40, xp: 28, discoveries: ['crystal-rainbow', 'egg-crystal', 'egg-lava'], loot: 'crystal-shard' },
+  { id: 'forest-wood', place: 'forest', name: 'Holz für die Werkstatt', desc: 'Sammle fünf heruntergefallene Äste. Die Bäume bleiben unberührt.', target: 5, coins: 55, xp: 35, discoveries: ['clover', 'key-gold'], loot: 'wood' },
+  { id: 'forest-riddle', place: 'forest', name: 'Das Lichtzeichen', desc: 'Tippe die vier Lichtpunkte in der angezeigten Reihenfolge 3 → 1 → 4 → 2.', target: 4, coins: 65, xp: 40, discoveries: ['rope-red'], loot: 'gold-fragment', sequence: [2, 0, 3, 1] },
+  { id: 'beach-shells', place: 'beach', name: 'Muscheln am Ufer', desc: 'Sammle fünf Muscheln am Strand.', target: 5, coins: 55, xp: 35, discoveries: ['frisbee-red', 'duck'], loot: 'shell' },
+  { id: 'beach-treasure', place: 'beach', name: 'Die vergrabene Truhe', desc: 'Finde drei Hinweise, lege die Truhe frei und öffne sie für ihren Schatz.', target: 3, coins: 75, xp: 45, discoveries: ['treasure-chest'], loot: 'rope-fiber', requiresAction: 'open:treasure', actionLoot: { id: 'gold-fragment', quantity: 1 } },
+  { id: 'beach-frisbee', place: 'beach', name: 'Frisbee im Abendlicht', desc: 'Finde das Frisbee am Strand und wirf es danach im Spielzimmer.', target: 1, coins: 60, xp: 35, discoveries: ['frisbee-red'], loot: 'shell', requiresAction: 'use:frisbee', itemReward: 'frisbee' },
+];
 export const ROOM_LIST: Room[] = ['Wohnzimmer', 'Küche', 'Bad', 'Schlafzimmer', 'Spielzimmer'];
 export const ROOM_BG: Partial<Record<Room, 'livingroom' | 'bathroom' | 'bedroom' | 'playroom'>> = { Wohnzimmer: 'livingroom', Bad: 'bathroom', Schlafzimmer: 'bedroom', Spielzimmer: 'playroom' };
 
@@ -79,7 +107,7 @@ export const ITEMS: Item[] = [
   { id: 'frisbee', name: 'Frisbee', icon: '◎', price: 40, type: 'toy', img: toyUrl('frisbee'), desc: 'Werfen. Taucht auch in Snack Catch als x2-Bonus auf' },
   { id: 'teddy', name: 'Teddybär', icon: '●', price: 38, type: 'toy', img: toyUrl('teddy'), desc: 'Kuscheln. Im Schlafzimmer erholt sich Energie schneller' },
   { id: 'bowl', name: 'Futternapf', icon: '◡', price: 20, type: 'toy', img: toyUrl('bowl'), desc: 'Jede Mahlzeit sättigt 25 % mehr' },
-  { id: 'shampoo', name: 'Shampoo', icon: '◌', price: 30, type: 'toy', img: toyUrl('shampoo'), desc: 'Im Bad: gründliche Wäsche ohne Seife (Abklingzeit)' },
+  { id: 'shampoo', name: 'Shampoo', icon: '◌', price: 30, type: 'toy', img: toyUrl('shampoo'), desc: 'Einmal im Bad benutzen. Die Flasche wird dabei verbraucht.' },
   // clothing
   { id: 'baseballcap', name: 'Baseballcap', icon: '△', price: 28, type: 'accessory', img: hatUrl('baseballcap') },
   { id: 'beanie', name: 'Strickmütze', icon: '△', price: 26, type: 'accessory', img: hatUrl('beanie') },
@@ -110,6 +138,16 @@ export const ITEMS: Item[] = [
   { id: 'beach', name: 'Sonniger Strand', icon: '≈', price: 54, type: 'background' },
   { id: 'night', name: 'Dunkles Zimmer', icon: '☾', price: 48, type: 'background', unlockLevel: 2 },
   { id: 'fantasy', name: 'Fantasiewelt', icon: '✦', price: 68, type: 'background', unlockLevel: 3 },
+  { id: 'bone-scrap', name: 'Knochenfund', icon: '🦴', price: 0, type: 'material', rarity: 'Ungewöhnlich', origin: 'Scottchi Park', purpose: 'Werkstoff für Spielzeug', stackable: true },
+  { id: 'wood', name: 'Astholz', icon: '🪵', price: 0, type: 'material', rarity: 'Gewöhnlich', origin: 'Scottchi Park und Wald', purpose: 'Werkstoff für Spielzeug', stackable: true },
+  { id: 'cloth', name: 'Stoffstück', icon: '🧵', price: 0, type: 'material', rarity: 'Gewöhnlich', origin: 'Scottchi Park und Stadt', purpose: 'Werkstoff für Spielzeug', stackable: true },
+  { id: 'crystal-shard', name: 'Kristallsplitter', icon: '💎', price: 0, type: 'material', rarity: 'Selten', origin: 'Stadt und Erkundungsfunde', purpose: 'Seltenes Crafting-Material', stackable: true },
+  { id: 'gold-fragment', name: 'Goldstück', icon: '✨', price: 0, type: 'material', rarity: 'Selten', origin: 'Stadt und Waldrätsel', purpose: 'Seltenes Crafting-Material', stackable: true },
+  { id: 'shell', name: 'Muschel', icon: '🐚', price: 0, type: 'material', rarity: 'Gewöhnlich', origin: 'Scottchi Beach', purpose: 'Werkstoff für Stranddeko', stackable: true },
+  { id: 'rope-fiber', name: 'Seilfaser', icon: '🪢', price: 0, type: 'material', rarity: 'Ungewöhnlich', origin: 'Scottchi Beach', purpose: 'Werkstoff für Stranddeko', stackable: true },
+  { id: 'crafted-toy', name: 'Wald-Wurfseil', icon: '🪢', price: 0, type: 'toy', img: toyUrl('rope'), desc: 'Ein handgemachtes Zerrspielzeug aus Holz und Stoff.', rarity: 'Ungewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: false, craftOnly: true },
+  { id: 'shell-decor', name: 'Muschel-Mobile', icon: '🐚', price: 0, type: 'room', desc: 'Ein selbstgemachtes Mobile aus Strandfunden.', rarity: 'Selten', origin: 'Werkstatt · Crafting', purpose: 'Dekoration für dein Zimmer', stackable: false, craftOnly: true },
+  { id: 'magic-treat', name: 'Kristall-Leckerli', icon: '✨', price: 0, type: 'food', amount: 1, effects: { glueck: 18, energie: 8 }, desc: 'Ein glitzernder Snack, der Scottchi aufmuntert.', rarity: 'Episch', origin: 'Werkstatt · Crafting', purpose: 'Einmalig Laune und Energie auffüllen', stackable: true, craftOnly: true },
 ];
 export const itemById = (id: string) => ITEMS.find((i) => i.id === id);
 
@@ -148,7 +186,8 @@ export const initialData = (): FullPetData => ({
   highscores: {}, challenges: {},
   personality: initialPersonality(), visitedRooms: ['Wohnzimmer'],
   routine: { greetedDate: '', surpriseDate: today(), surprises: 0, lastSeen: Date.now() }, stylesWorn: [],
-  world: { discoveredLocations: [], completedQuests: [], discoveries: [], questProgress: {}, claimedRewards: [] }, collectionIds: [],
+   world: { discoveredLocations: [], completedQuests: [], discoveries: [], questProgress: {}, claimedRewards: [], activeQuests: [], questFinds: {}, questStages: {}, petPosition: { x: 32, y: 38 } },
+  journal: [], roomPlacements: {}, tutorialSeen: false, collectionIds: [],
 });
 
 const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
@@ -164,6 +203,14 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
   const highscores: PetData['highscores'] = { ...(parsed.highscores || {}) };
   for (const r of records) highscores[r.game] = Math.max(highscores[r.game] || 0, r.score);
   const needs = parsed.needs || d.needs;
+  const inventory = Object.fromEntries(Object.entries(parsed.inventory || d.inventory).map(([id, count]) => [id, Math.max(0, Math.floor(num(count, 0)))]));
+  // Older saves stored reusable shampoo as an owned toy. Give it one usable dose
+  // rather than deleting the purchase when migrating to the 4.0 consumable model.
+  if (parsed.owned?.includes('shampoo') && !inventory.shampoo) inventory.shampoo = 1;
+  const roomPlacements = { ...(parsed.roomPlacements || {}) };
+  for (const [index, id] of (parsed.roomItems || []).entries()) {
+    if (!roomPlacements[id]) roomPlacements[id] = { x: 16 + (index % 5) * 16, y: 67 + (Math.floor(index / 5) % 2) * 8 };
+  }
   return {
     ...d, ...parsed,
     version: 1, saveSchema: SAVE_SCHEMA,
@@ -173,7 +220,7 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
       hunger: clamp(decay(num(needs.hunger, d.needs.hunger))), glueck: clamp(decay(num(needs.glueck, d.needs.glueck))),
       energie: clamp(decay(num(needs.energie, d.needs.energie))), sauberkeit: clamp(decay(num(needs.sauberkeit, d.needs.sauberkeit))),
     },
-    inventory: { ...(parsed.inventory || d.inventory) },
+    inventory,
     owned: Array.isArray(parsed.owned) ? [...new Set(parsed.owned)] : [],
     equipped: Array.isArray(parsed.equipped) ? parsed.equipped : [],
     roomItems: Array.isArray(parsed.roomItems) ? parsed.roomItems : [],
@@ -196,8 +243,18 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
       discoveries: [...new Set(parsed.world?.discoveries || [])],
       questProgress: { ...(parsed.world?.questProgress || {}) },
       claimedRewards: [...new Set(parsed.world?.claimedRewards || [])],
+      activeQuests: [...new Set(parsed.world?.activeQuests || [])],
+      questFinds: Object.fromEntries(Object.entries(parsed.world?.questFinds || {}).map(([id, indexes]) => [id, Array.isArray(indexes) ? [...new Set(indexes.filter((n) => Number.isInteger(n) && n >= 0 && n < 10))] : []])),
+      questStages: { ...(parsed.world?.questStages || {}) },
+      petPosition: {
+        x: Math.max(3, Math.min(97, num(parsed.world?.petPosition?.x, d.world.petPosition.x))),
+        y: Math.max(3, Math.min(97, num(parsed.world?.petPosition?.y, d.world.petPosition.y))),
+      },
     },
     collectionIds: [...new Set(parsed.collectionIds || [])],
+    journal: Array.isArray(parsed.journal) ? parsed.journal.filter((entry) => entry && typeof entry.id === 'string' && typeof entry.icon === 'string' && typeof entry.title === 'string' && typeof entry.detail === 'string' && Number.isFinite(entry.date)).slice(-100) : [],
+    roomPlacements: Object.fromEntries(Object.entries(roomPlacements).filter(([, pos]) => pos && Number.isFinite(pos.x) && Number.isFinite(pos.y)).map(([id, pos]) => [id, { x: Math.max(4, Math.min(96, pos.x)), y: Math.max(42, Math.min(88, pos.y)) }])),
+    tutorialSeen: Boolean(parsed.tutorialSeen),
   };
 }
 
@@ -225,7 +282,8 @@ export function loadData(): FullPetData {
     // untouched copies before each schema change, written once, never overwritten
     if (!parsed.saveSchema && !localStorage.getItem(BACKUP_KEY)) localStorage.setItem(BACKUP_KEY, raw);
     if ((parsed.saveSchema || 0) < 3 && !localStorage.getItem(BACKUP_KEY_21)) localStorage.setItem(BACKUP_KEY_21, raw);
-    if ((parsed.saveSchema || 0) < SAVE_SCHEMA && !localStorage.getItem(BACKUP_KEY_30)) localStorage.setItem(BACKUP_KEY_30, raw);
+    if ((parsed.saveSchema || 0) < 4 && !localStorage.getItem(BACKUP_KEY_30)) localStorage.setItem(BACKUP_KEY_30, raw);
+    if ((parsed.saveSchema || 0) < SAVE_SCHEMA && !localStorage.getItem(BACKUP_KEY_40)) localStorage.setItem(BACKUP_KEY_40, raw);
     return normalize(parsed);
   } catch (cause) {
     // Never replace an unreadable save with a new game through the autosave effect.

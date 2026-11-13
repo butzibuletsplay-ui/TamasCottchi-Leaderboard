@@ -28,7 +28,7 @@ export function RunGame({ onEnd, sound }: GameProps) {
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  });
+  }, [sound]);
 
   useCanvasLoop(canvasRef, {
     step(dt, w, h) {

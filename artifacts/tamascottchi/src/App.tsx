@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity, Award, Bath, Check, Coins, Download, Dumbbell, Gamepad2, Gift, Heart, Home, House,
+  Activity, Award, Backpack, Bath, BookOpen, Check, CircleHelp, Coins, Download, Dumbbell, Gamepad2, Gift, Hammer, Heart, Home, House,
   Medal, Moon, Play, Plus, Settings, Shirt, ShoppingBag, Sparkles, Star, Target, Trophy,
   Utensils, Volume2, VolumeX, X, Sun, Sunset, Library, Shirt as ShirtIcon, Compass, Users,
 } from 'lucide-react';
@@ -20,6 +20,13 @@ import {
   CHALLENGES, COLLECTIONS, GAMES, ITEMS, ROOM_BG, ROOM_LIST, STORE_KEY, STYLE_SETS, SaveLoadError, assertSave, clamp, initialData, itemById, levelFor, loadData,
   moodFor, normalize, rewardFor, today, type DailyProgress, type FullPetData, type GameRecord, type Item, type NeedKey, type Room,
 } from './game/data';
+import { craftItem } from './game/crafting';
+import { CraftingPage } from './game/CraftingPage';
+import { HelpPage } from './game/HelpPage';
+import { InventoryPage } from './game/InventoryPage';
+import { JournalPage } from './game/JournalPage';
+import { recordJournal } from './game/journal';
+import { completeQuestAction } from './game/questEngine';
 type PetData = FullPetData;
 
 type PetAction = 'idle' | 'happy' | 'eating' | 'washing' | 'petting' | 'sleeping' | 'spin' | 'wiggle' | 'run' | 'chew' | 'wake' | 'yawn' | 'cuddle';
@@ -36,13 +43,14 @@ const DAILY_GOALS: { id: keyof DailyProgress; title: string; detail: string; tar
 ];
 type ToyUse = { action: PetAction; line: string; fx: 'throw' | 'arc' | 'bounce' | 'shake'; need: Partial<Record<NeedKey, number>>; energy?: number; freq: number; slide?: number; room?: Room; cooldown: number };
 const TOY_USE: Record<string, ToyUse> = {
-  ball: { action: 'run', line: 'Ball! Ball! BALL!', fx: 'throw', need: { glueck: 12, energie: -5 }, energy: 10, freq: 700, cooldown: 15 },
+  ball: { action: 'run', line: 'Ball! Ball! BALL!', fx: 'throw', need: { glueck: 12, energie: -5 }, energy: 10, freq: 700, cooldown: 15, room: 'Spielzimmer' },
   'bone-toy': { action: 'chew', line: 'Knusper. Meins.', fx: 'bounce', need: { glueck: 14, hunger: 3 }, freq: 520, cooldown: 20 },
   duck: { action: 'happy', line: 'Was war DAS?', fx: 'bounce', need: { glueck: 6 }, freq: 1300, slide: 700, cooldown: 6 },
   rope: { action: 'wiggle', line: 'Grrr, ich gewinne!', fx: 'shake', need: { glueck: 16, energie: -7 }, energy: 12, freq: 380, cooldown: 25 },
-  frisbee: { action: 'run', line: 'Ich fliege fast mit!', fx: 'arc', need: { glueck: 14, energie: -6 }, energy: 12, freq: 820, slide: 1100, cooldown: 20 },
+  frisbee: { action: 'run', line: 'Ich fliege fast mit!', fx: 'arc', need: { glueck: 14, energie: -6 }, energy: 12, freq: 820, slide: 1100, cooldown: 20, room: 'Spielzimmer' },
   teddy: { action: 'cuddle', line: 'Mein bester Freund.', fx: 'bounce', need: { glueck: 9, energie: 2 }, freq: 460, cooldown: 20 },
   shampoo: { action: 'washing', line: 'Duftet nach Kokos!', fx: 'shake', need: { sauberkeit: 45, glueck: 3 }, freq: 760, room: 'Bad', cooldown: 90 },
+  'crafted-toy': { action: 'wiggle', line: 'Das ist selbst gemacht! Noch eine Runde!', fx: 'shake', need: { glueck: 18, energie: -7 }, energy: 12, freq: 400, cooldown: 25 },
 };
 
 function advanceDaily(data: PetData, id: keyof DailyProgress, amount = 1): PetData {
@@ -126,7 +134,9 @@ function Game({ initial }: { initial: PetData }) {
   const [flight, setFlight] = useState<Throw | null>(null);
   const [run, setRun] = useState<{ dx: number; flip: boolean }>({ dx: 0, flip: false });
   const [chewing, setChewing] = useState(false);
+  const [dragPosition, setDragPosition] = useState<{ id: string; x: number; y: number } | null>(null);
   const roomRef = useRef<HTMLElement>(null);
+  const dragDecor = useRef<{ id: string; pointerId: number } | null>(null);
   const [fileText, setFileText] = useState('');
   const [now, setNow] = useState(Date.now());
   const fileRef = useRef<HTMLInputElement>(null);
@@ -202,7 +212,7 @@ function Game({ initial }: { initial: PetData }) {
     if (level > previousLevel.current) {
       const gained = level - previousLevel.current;
       previousLevel.current = level;
-      setData((old) => ({ ...old, coins: old.coins + gained * 20 }));
+      setData((old) => recordJournal({ ...old, coins: old.coins + gained * 20 }, `level-${level}`, '⭐', `Level ${level} erreicht`, `+${gained * 20} Münzen als Levelbelohnung.`));
       notify(`Level ${level}! ${gained * 20} Münzen warten auf dich.`);
     }
   }, [level, notify]);
@@ -333,6 +343,9 @@ function Game({ initial }: { initial: PetData }) {
         needs: applyNeeds(old.needs, { glueck: 6 }),
         stats: { ...old.stats, games: old.stats.games + 1, catches: old.stats.catches + (result.metrics.caught || 0), taps: old.stats.taps + (result.metrics.hits || 0) },
       };
+      if (result.score > (old.highscores[game] || 0)) {
+        next = recordJournal(next, `record-${sessionId}`, '🏅', `Neuer Bestwert: ${GAMES.find((g) => g.id === game)?.name || game}`, `${result.score} Punkte erreicht.`);
+      }
       next = advanceDaily({ ...next, personality: nudge(next.personality, 'verspielt', 0.8) }, 'games');
       return advanceDaily(next, 'coins', coins + bonusCoins);
     });
@@ -344,9 +357,9 @@ function Game({ initial }: { initial: PetData }) {
   function openGame(id: GameId) { setPage('games'); setActiveGame(id); }
 
   // ---------- care ----------
-  function performNeed(id: NeedKey) {
+  function performNeed(id: NeedKey, preferredId = selectedFood) {
     if (id === 'hunger') {
-      const preferred = ITEMS.find((item) => item.id === selectedFood && item.effect === 'hunger');
+      const preferred = ITEMS.find((item) => item.id === preferredId && item.effect === 'hunger');
       const food = (preferred && data.inventory[preferred.id] > 0 ? preferred : null) || ITEMS.find((item) => item.effect === 'hunger' && (data.inventory[item.id] || 0) > 0);
       if (!food) { notify('Der Vorrat ist leer. Im Laden gibt es Snacks.'); return; }
       if (data.needs.hunger >= 100) { notify('Scottchi ist schon pappsatt.'); return; }
@@ -388,8 +401,9 @@ function Game({ initial }: { initial: PetData }) {
     if (!use || !item || !data.owned.includes(id)) return;
     if (sleeping) { notify('Psst, Scottchi schläft.'); return; }
     if (use.room && data.room !== use.room) { notify(`${item.name} funktioniert nur im ${use.room}.`); return; }
+    if (id === 'shampoo' && (data.inventory.shampoo || 0) < 1) { notify('Das Shampoo ist aufgebraucht. Im Laden kannst du eine neue Flasche kaufen.'); return; }
     if (use.energy && data.needs.energie < use.energy) { notify('Zu müde zum Toben. Erst schlafen.'); return; }
-    if ((id === 'ball' || id === 'frisbee') && page === 'home') { if (!flight) setAim(id); return; }
+    if (id === 'ball' || id === 'frisbee') { if (!flight) setAim(id); return; }
     if (id === 'bone-toy') { setChewing(true); later('chew', () => setChewing(false), 2600); }
     else if (id !== 'teddy') { setToyFx({ id, fx: use.fx, key: Date.now() }); later('toy', () => setToyFx(null), 1300); }
     sound(use.freq, { dur: id === 'duck' ? 0.18 : 0.2, slide: use.slide, type: id === 'duck' ? 'square' : 'triangle' });
@@ -401,13 +415,17 @@ function Game({ initial }: { initial: PetData }) {
     const fav = showsTrait && FAVORITE_TOY[trait] === id;
     if (fav) later('favline', () => setPetSpeech(TOY_LINES[trait]), 1300);
     const ready = (toyCooldown.current[id] || 0) <= Date.now();
-    if (!ready) { notify('Lustig! Für Bonuspunkte kurz verschnaufen.'); return; }
-    toyCooldown.current[id] = Date.now() + use.cooldown * 1000;
+    if (!ready && id !== 'shampoo') { notify('Lustig! Für Bonuspunkte kurz verschnaufen.'); return; }
+    if (ready) toyCooldown.current[id] = Date.now() + use.cooldown * 1000;
     if (use.action !== 'washing') cheer(2200);
     setData((old) => {
       const need = fav ? Object.fromEntries(Object.entries(use.need).map(([k, v]) => [k, k === 'glueck' ? v + 4 : v])) : use.need;
-      const next = { ...old, personality: nudge(old.personality, TOY_TRAIT[id] || 'verspielt', 0.9), needs: applyNeeds(old.needs, need), xp: old.xp + 5, stats: { ...old.stats, toys: (old.stats.toys || 0) + 1, care: old.stats.care + 1 } };
-      return id === 'shampoo' ? advanceDaily(next, 'baths') : next;
+      const next: PetData = { ...old, personality: nudge(old.personality, TOY_TRAIT[id] || 'verspielt', 0.9), needs: applyNeeds(old.needs, need), xp: old.xp + 5, stats: { ...old.stats, toys: (old.stats.toys || 0) + 1, care: old.stats.care + 1 } };
+      if (id === 'shampoo') {
+        const remaining = Math.max(0, (old.inventory.shampoo || 0) - 1);
+        return advanceDaily({ ...next, inventory: { ...old.inventory, shampoo: remaining }, owned: remaining ? old.owned : old.owned.filter((ownedId) => ownedId !== 'shampoo') }, 'baths');
+      }
+      return next;
     });
   }
   /** Ball/frisbee: toy flies to the aimed point, Scottchi runs there (flipping to face it), picks it up and trots back. */
@@ -421,6 +439,11 @@ function Game({ initial }: { initial: PetData }) {
   function toyLanded() {
     const f = flight; const card = roomRef.current;
     if (!f || !card) { setFlight(null); return; }
+    const questAction = completeQuestAction(dataRef.current, `use:${f.id}`);
+    if (questAction.outcome === 'completed') {
+      changeWorld(questAction.data);
+      notify(f.id === 'ball' ? 'Der gefundene Ball ist zurück! Die Aufgabe ist geschafft.' : 'Das Strand-Frisbee wurde geworfen! Die Aufgabe ist geschafft.');
+    }
     const dx = ((f.to.x - 50) / 100) * card.clientWidth;
     const max = card.clientWidth * 0.3;
     setRun({ dx: Math.max(-max, Math.min(max, dx)), flip: f.to.x > 52 });
@@ -432,15 +455,45 @@ function Game({ initial }: { initial: PetData }) {
       cheer(2200); rewardToy(f.id);
     }, 900);
   }
+  function useInventoryItem(id: string) {
+    const item = itemById(id);
+    if (!item) return;
+    if (item.type === 'toy') { setPage('home'); playToy(id); return; }
+    if (item.type !== 'food') { notify('Dieser Gegenstand hat keine Benutzen-Aktion.'); return; }
+    if ((dataRef.current.inventory[id] || 0) < 1) { notify('Davon ist gerade nichts im Inventar.'); return; }
+    if (item.effect === 'hunger') { setPage('home'); setSelectedFood(id); performNeed('hunger', id); return; }
+    if (item.effect === 'sauberkeit') { setPage('home'); performNeed('sauberkeit'); return; }
+    const effects = item.effects || (item.effect ? { [item.effect]: item.amount || 0 } : {});
+    const actual = Object.entries(effects).filter(([, amount]) => amount && amount > 0) as [NeedKey, number][];
+    if (!actual.length) { notify('Für diesen Gegenstand ist keine Wirkung hinterlegt.'); return; }
+    const hasRoom = actual.some(([need, amount]) => dataRef.current.needs[need] < 100 && amount > 0);
+    if (!hasRoom) { notify('Scottchi braucht gerade keine Auffrischung.'); return; }
+    setData((old) => {
+      const next = {
+        ...old,
+        inventory: { ...old.inventory, [id]: Math.max(0, (old.inventory[id] || 0) - 1) },
+        needs: applyNeeds(old.needs, effects),
+        xp: old.xp + 5,
+        stats: { ...old.stats, care: old.stats.care + 1 },
+      };
+      return recordJournal(next, `use-${id}-${Date.now()}`, '🍪', `Benutzt: ${item.name}`, item.desc || 'Scottchi hat den Gegenstand verwendet.');
+    });
+    showPetAction('happy', `${item.name}! Das tut gut.`);
+    notify(`${item.name} benutzt.`); sound(720);
+  }
   function buy(item: Item) {
     if (item.unlockLevel && level < item.unlockLevel) { notify(`Ab Level ${item.unlockLevel} freigeschaltet.`); return; }
-    if (item.type !== 'food' && data.owned.includes(item.id)) { notify('Das gehört schon dir.'); return; }
+    const stackable = item.type === 'food' || item.id === 'shampoo' || item.stackable;
+    if (item.type !== 'food' && !stackable && data.owned.includes(item.id)) { notify('Das gehört schon dir.'); return; }
     if (data.coins < item.price) { notify('Noch nicht genug Münzen.'); return; }
     setData((old) => {
-      if (old.coins < item.price || (item.type !== 'food' && old.owned.includes(item.id))) return old;
+      if (old.coins < item.price || (item.type !== 'food' && !stackable && old.owned.includes(item.id))) return old;
       const stats = { ...old.stats, purchases: old.stats.purchases + 1 };
-      if (item.type === 'food') return { ...old, coins: old.coins - item.price, inventory: { ...old.inventory, [item.id]: (old.inventory[item.id] || 0) + 1 }, stats };
-      return { ...old, coins: old.coins - item.price, owned: [...old.owned, item.id], stats, personality: nudge(old.personality, 'neugierig', 0.6) };
+      let next: PetData = item.type === 'food' || item.id === 'shampoo'
+        ? { ...old, coins: old.coins - item.price, inventory: { ...old.inventory, [item.id]: (old.inventory[item.id] || 0) + 1 }, owned: item.id === 'shampoo' ? [...new Set([...old.owned, item.id])] : old.owned, stats }
+        : { ...old, coins: old.coins - item.price, owned: [...old.owned, item.id], stats, personality: nudge(old.personality, 'neugierig', 0.6) };
+      next = recordJournal(next, `buy-${item.id}-${Date.now()}`, '🛍️', `Gekauft: ${item.name}`, `${item.price} Münzen ausgegeben.`);
+      return next;
     });
     notify(`${item.name} gekauft.`); sound(760);
   }
@@ -448,13 +501,37 @@ function Game({ initial }: { initial: PetData }) {
     setData((old) => {
       const item = itemById(id);
       if (!item) return old;
-      if (item.type === 'room') return { ...old, roomItems: old.roomItems.includes(id) ? old.roomItems.filter((v) => v !== id) : [...old.roomItems, id] };
+      if (item.type === 'room') {
+        if (old.roomItems.includes(id)) return { ...old, roomItems: old.roomItems.filter((v) => v !== id) };
+        const index = old.roomItems.length;
+        return { ...old, roomItems: [...old.roomItems, id], roomPlacements: { ...old.roomPlacements, [id]: old.roomPlacements[id] || { x: 16 + (index % 5) * 16, y: 67 + (Math.floor(index / 5) % 2) * 8 } } };
+      }
       if (item.type === 'background') return { ...old, activeBackground: old.activeBackground === id ? 'classic' : id };
       if (old.equipped.includes(id)) return { ...old, equipped: old.equipped.filter((v) => v !== id) };
       const slot = SLOT_OF[id];
       // one item per slot: equipping a hat swaps the old hat, etc.
       return withStyles({ ...old, equipped: [...old.equipped.filter((v) => !slot || SLOT_OF[v] !== slot), id] });
     });
+  }
+  function moveDecor(event: React.PointerEvent<HTMLElement>) {
+    const drag = dragDecor.current;
+    const scene = roomRef.current;
+    if (!drag || !scene || event.pointerId !== drag.pointerId) return;
+    const bounds = scene.getBoundingClientRect();
+    const x = Math.max(5, Math.min(95, ((event.clientX - bounds.left) / bounds.width) * 100));
+    const y = Math.max(44, Math.min(88, ((event.clientY - bounds.top) / bounds.height) * 100));
+    setDragPosition({ id: drag.id, x, y });
+  }
+  function finishDecorDrag(event: React.PointerEvent<HTMLElement>) {
+    const drag = dragDecor.current;
+    const scene = roomRef.current;
+    if (!drag || !scene || event.pointerId !== drag.pointerId) return;
+    const bounds = scene.getBoundingClientRect();
+    const x = Math.max(5, Math.min(95, ((event.clientX - bounds.left) / bounds.width) * 100));
+    const y = Math.max(44, Math.min(88, ((event.clientY - bounds.top) / bounds.height) * 100));
+    setData((old) => ({ ...old, roomPlacements: { ...old.roomPlacements, [drag.id]: { x, y } } }));
+    dragDecor.current = null;
+    setDragPosition(null);
   }
   function withStyles(d: PetData): PetData {
     const worn = STYLE_SETS.filter((s) => ownsAll(d.equipped, s.items) && !d.stylesWorn.includes(s.id)).map((s) => s.id);
@@ -501,6 +578,8 @@ function Game({ initial }: { initial: PetData }) {
 
   const nav = [
     { id: 'home', label: 'Zuhause', icon: Home }, { id: 'world', label: 'World', icon: Compass },
+    { id: 'inventory', label: 'Inventar', icon: Backpack }, { id: 'crafting', label: 'Werkstatt', icon: Hammer },
+    { id: 'journal', label: 'Tagebuch', icon: BookOpen }, { id: 'help', label: 'Hilfe', icon: CircleHelp },
     { id: 'games', label: 'Spiele', icon: Gamepad2 }, { id: 'shop', label: 'Laden', icon: ShoppingBag },
     { id: 'collections', label: 'Sammeln', icon: Library }, { id: 'online', label: 'Online', icon: Users },
     { id: 'closet', label: 'Schrank', icon: Shirt }, { id: 'leaderboard', label: 'Besten', icon: Trophy },
@@ -530,9 +609,16 @@ function Game({ initial }: { initial: PetData }) {
     setData((old) => old.claimedAchievements.includes(id) ? old : advanceDaily({ ...old, coins: old.coins + c.rewardCoins, xp: old.xp + c.rewardXp, claimedAchievements: [...old.claimedAchievements, id] }, 'coins', c.rewardCoins));
     notify(`Sammlung ${c.name} komplett: +${c.rewardCoins} Münzen.`); sound(880);
   }
-  function awardWorld(coins:number,xp:number) {
-    setData(old=>advanceDaily({...old,coins:old.coins+coins,xp:old.xp+xp},'coins',coins));
-    notify(`Weltaufgabe abgeschlossen: +${coins} Münzen und +${xp} XP.`);sound(940,{dur:.2,slide:1240});
+  function changeWorld(next: FullPetData) {
+    setData((old) => advanceDaily(next, 'coins', Math.max(0, next.coins - old.coins)));
+  }
+  function craft(recipeId: string) {
+    const result = craftItem(dataRef.current, recipeId);
+    if (result.error) { notify(result.error); return; }
+    setData(result.data);
+    const entry = result.data.journal[result.data.journal.length - 1];
+    notify(entry?.title || 'Gegenstand hergestellt.');
+    sound(860, { dur: .22, slide: 1160 });
   }
   function claimWorldReward(id:string,_name:string,coins:number,xp:number) {
     setData(old=>old.world.claimedRewards.includes(id)?old:advanceDaily({...old,coins:old.coins+coins,xp:old.xp+xp,world:{...old.world,claimedRewards:[...old.world.claimedRewards,id]}},'coins',coins));
@@ -555,11 +641,17 @@ function Game({ initial }: { initial: PetData }) {
 
   const scene = <section
     ref={roomRef}
+    onPointerMove={moveDecor}
+    onPointerUp={finishDecorDrag}
+    onPointerCancel={finishDecorDrag}
     className={`room-card phase-${phase} ${bg ? 'has-photo' : `room-${data.room.toLowerCase()} background-${data.activeBackground}`} ${data.room === 'Schlafzimmer' && !data.settings.lampOn ? 'room-dark' : ''} ${data.room === 'Schlafzimmer' && (phase === 'abend' || phase === 'nacht') ? 'room-cozy' : ''}`}
     style={bg ? { ['--bg-pos' as string]: bg.pos, ['--bg-pos-m' as string]: bg.mobilePos } : undefined} data-testid="room-scene">
     {bg ? <picture key={bgKey} className="room-photo"><source srcSet={bg.src} type="image/webp"/><img src={bg.fallback} alt=""/></picture>
       : <div key={data.room + data.activeBackground} className="room-css"><div className="room-sky"/><div className="room-floor"/><div className="room-window"/><div className="room-art">W</div><div className="rug"/></div>}
-    {roomDecor.map((item, i) => <div className="room-item" key={item.id} style={{ left: `${8 + i * 15}%` }}>{item.icon}</div>)}
+    {roomDecor.map((item, i) => {
+      const pos = dragPosition?.id === item.id ? dragPosition : data.roomPlacements[item.id] || { x: 16 + (i % 5) * 16, y: 70 };
+      return <button className="room-item" key={item.id} style={{ left: `${pos.x}%`, top: `${pos.y}%` }} title={`${item.name} · zum Verschieben ziehen`} aria-label={`${item.name} verschieben`} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); dragDecor.current = { id: item.id, pointerId: event.pointerId }; }} onPointerUp={finishDecorDrag} onPointerCancel={finishDecorDrag} data-testid={`room-decor-${item.id}`}>{item.img ? <img src={item.img} alt=""/> : item.icon}</button>;
+    })}
     {data.owned.includes('bowl') && <img src={itemById('bowl')!.img} alt="Futternapf" className="scene-bowl"/>}
     <div className="room-badge">{data.room}</div>
     <div className="pet-speech" key={speech} data-testid="text-pet-speech">{speech}</div>
@@ -586,7 +678,7 @@ function Game({ initial }: { initial: PetData }) {
 
   return <div className={`app-shell ${activeGame ? 'in-game' : ''}`}>
     <header className="topbar">
-      <div className="brand"><span className="brand-mark">t</span>tamascottchi</div>
+      <div className="brand"><span className="brand-mark">t</span>tamascottchi <span className="version-pill">4.0</span></div>
       <div className="topstats">
         <div className="stat-pill" data-testid="status-coins"><Coins size={16}/>{data.coins}</div>
         <div className="stat-pill" data-testid="status-level"><Star size={15}/><span>Lv. {level}</span></div>
@@ -599,7 +691,7 @@ function Game({ initial }: { initial: PetData }) {
         <div className="side-note"><strong>Level {level} · Scottchi-Fan</strong><div className="progress-track"><span style={{ width: `${xpProgress}%` }}/></div><div style={{ marginTop: 7 }}>{xpProgress} / 100 XP bis zum nächsten Level</div></div>
       </aside>
       <main className="main">
-        {!activeGame && <div className="main-head"><div><div className="eyebrow">{page === 'home' ? 'DEIN ZUHAUSE' : 'TAMASCOTTCHI'}</div><h1>{page === 'home' ? `Hallo, ${data.name}.` : page === 'shop' ? 'Der kleine Laden' : page === 'world' ? 'Scottchi World' : page === 'collections' ? 'Scottchi Collections' : page === 'online' ? 'Scottchi Online' : page === 'games' ? 'Spielzeit!' : page === 'closet' ? 'Kleiderschrank' : page === 'leaderboard' ? 'Bestenliste' : 'Erfolge'}</h1><div className="subline">{page === 'home' ? 'Tippe Scottchi an, wirf Spielzeug, wechsle das Zimmer.' : page === 'leaderboard' ? 'Nur deine Ergebnisse auf diesem Gerät.' : 'Ein gemütlicher Ort für Scottchi und dich.'}</div></div>
+        {!activeGame && <div className="main-head"><div><div className="eyebrow">{page === 'home' ? 'DEIN ZUHAUSE' : 'TAMASCOTTCHI 4.0'}</div><h1>{page === 'home' ? `Hallo, ${data.name}.` : page === 'shop' ? 'Der kleine Laden' : page === 'world' ? 'Scottchi World' : page === 'collections' ? 'Scottchi Collections' : page === 'online' ? 'Scottchi Online' : page === 'games' ? 'Spielzeit!' : page === 'closet' ? 'Kleiderschrank' : page === 'leaderboard' ? 'Bestenliste' : page === 'inventory' ? 'Inventar' : page === 'crafting' ? 'Werkstatt' : page === 'journal' ? 'Scottchis Tagebuch' : page === 'help' ? 'Hilfe & Spielstart' : 'Erfolge'}</h1><div className="subline">{page === 'home' ? 'Tippe Scottchi an, wirf Spielzeug, wechsle das Zimmer.' : page === 'leaderboard' ? 'Nur deine Ergebnisse auf diesem Gerät.' : 'Ein gemütlicher Ort für Scottchi und dich.'}</div></div>
           {page === 'home' && <button className="button small" onClick={() => { setNameDraft(data.name); setModal('name'); }} data-testid="button-rename">Name ändern</button>}
         </div>}
 
@@ -633,10 +725,15 @@ function Game({ initial }: { initial: PetData }) {
             <section className="panel"><div className="panel-head"><h2 className="panel-title">Heute für euch</h2><Gift size={18}/></div><div className="mission-list">{missions.map((m) => <div className="mission" key={m.id} data-testid={`mission-${m.id}`}><div className={`mission-check ${m.done ? 'done' : ''}`}>{m.done && <Check/>}</div><div><div className="mission-title">{m.title}</div><div className="mission-progress">{m.done ? 'Für heute erledigt' : `${m.progress} / ${m.target} · ${m.detail}`}</div></div><span className="reward">{m.done ? 'Erledigt' : m.reward}</span></div>)}</div></section>
             <section className="panel"><div className="panel-head"><h2 className="panel-title">Eine Runde?</h2><button className="text-link" onClick={() => setPage('games')} data-testid="link-all-games">Alle Spiele</button></div><div className="game-list">{GAMES.slice(0, 4).map((g) => <button key={g.id} className="game-tile" onClick={() => openGame(g.id)} data-testid={`start-${g.id}`}><span className="game-name">{g.name}</span><span className="game-desc">{g.desc}</span><span className="game-best">Best {data.highscores[g.id] || 0}</span></button>)}</div></section>
           </div>
+          {!data.tutorialSeen && <section className="panel tutorial-card" data-testid="tutorial-card"><div className="panel-head"><div><div className="eyebrow">DEIN ERSTER TAG</div><h2 className="panel-title">So geht’s los</h2></div><Sparkles size={18}/></div><p>Versorge Scottchi, sammle Materialien bei den Weltaufgaben und stelle daraus in der Werkstatt neue Dinge her. Inventar und Tagebuch halten deine Funde fest.</p><div className="dialog-actions"><button className="button" onClick={() => { setPage('help'); setData((old) => ({ ...old, tutorialSeen: true })); }}>Kurze Hilfe öffnen</button><button className="button ghost" onClick={() => setData((old) => ({ ...old, tutorialSeen: true }))}>Verstanden</button></div></section>}
         </>}
 
-        {page === 'world' && <World data={data} level={level} onChange={setData} award={awardWorld}/>}
+        {page === 'world' && <World data={data} level={level} onChange={changeWorld} onNotice={notify} onStore={(tab) => { setShopTab(tab); setPage('shop'); }}/>}
         {page === 'collections' && <CollectionsPage data={data} onClaim={claimWorldReward}/>}
+        {page === 'inventory' && <InventoryPage data={data} onUse={useInventoryItem} onEquip={equip} onPlace={equip}/>}
+        {page === 'crafting' && <CraftingPage data={data} onCraft={craft}/>}
+        {page === 'journal' && <JournalPage data={data}/>}
+        {page === 'help' && <HelpPage/>}
         {page === 'online' && <section className="panel online-preview" data-testid="online-preview"><div className="eyebrow">NICHT AKTIVIERT</div><h2 className="panel-title">Scottchi Online</h2><p>Die Freundesprofile, Codes und Besuche brauchen Anmeldung und sichere Serverberechtigungen. Hier gibt es noch keine Konten oder erfundenen Online-Spieler.</p><img src="/assets/online/friend-visit.webp" alt="Illustration zweier befreundeter Scottchis bei einem Besuch"/><div className="side-note"><strong>Für Phase 3 erst abstimmen</strong>Ein sicherer Start wäre Freundescodes und asynchrone Besuche über den vorhandenen Express- und PostgreSQL-Server. Vor Anmeldung oder größeren Backendänderungen klären wir Anbieter, Datenschutz und Kosten. Multiplayer ist nicht eingerichtet.</div></section>}
         {page === 'games' && (activeGame && currentGame
           ? <GameStage key={`${activeGame}-${memoryPairs}-${cupLevel}`} id={activeGame} name={currentGame.name} rules={currentGame.rules} best={data.highscores[activeGame] || 0}
@@ -652,7 +749,7 @@ function Game({ initial }: { initial: PetData }) {
           </article>)}</section>)}
 
         {page === 'shop' && <section className="panel"><div className="panel-head"><h2 className="panel-title">Ein paar gute Dinge</h2><span className="stat-pill"><Coins size={14}/>{data.coins}</span></div><div className="room-controls" style={{ position: 'static', margin: '0 0 14px', flexWrap: 'wrap' }}>{(['food', 'toy', 'accessory', 'room', 'background'] as const).map((tab) => <button className={`room-chip ${shopTab === tab ? 'selected' : ''}`} key={tab} onClick={() => setShopTab(tab)} data-testid={`shop-tab-${tab}`}>{tab === 'food' ? 'Futter & Pflege' : tab === 'toy' ? 'Spielzeug' : tab === 'accessory' ? 'Kleidung & Hüte' : tab === 'room' ? 'Zimmer' : 'Hintergründe'}</button>)}</div>
-          <div className="page-grid">{ITEMS.filter((item) => item.type === shopTab).map((item) => <div className="shop-item" key={item.id} data-testid={`shop-item-${item.id}`}><ItemIcon item={item}/><div className="item-info"><div className="item-title">{item.name}</div><div className="item-meta">{item.unlockLevel && level < item.unlockLevel ? `Ab Level ${item.unlockLevel} freigeschaltet` : item.type === 'food' ? `${item.amount}% ${NEEDS.find((n) => n.id === item.effect)?.name.toLowerCase()} · Vorrat: ${data.inventory[item.id] || 0}` : item.type === 'room' ? 'Dekoration für dein Zuhause' : item.type === 'background' ? 'Ersetzt das Zimmerbild durch ein Motiv' : item.type === 'toy' ? item.desc : SLOT_OF[item.id] === 'hat' ? 'Kopfbedeckung' : SLOT_OF[item.id] === 'outfit' ? 'Kleidung' : 'Accessoire'}</div></div><button className="button small" onClick={() => buy(item)} disabled={(item.type !== 'food' && data.owned.includes(item.id)) || (!!item.unlockLevel && level < item.unlockLevel)} data-testid={`button-buy-${item.id}`}><Coins size={13}/>{item.type !== 'food' && data.owned.includes(item.id) ? 'Gekauft' : item.unlockLevel && level < item.unlockLevel ? `Level ${item.unlockLevel}` : item.price}</button></div>)}</div>
+          <div className="page-grid">{ITEMS.filter((item) => item.type === shopTab && !item.craftOnly).map((item) => <div className="shop-item" key={item.id} data-testid={`shop-item-${item.id}`}><ItemIcon item={item}/><div className="item-info"><div className="item-title">{item.name}</div><div className="item-meta">{item.unlockLevel && level < item.unlockLevel ? `Ab Level ${item.unlockLevel} freigeschaltet` : item.type === 'food' ? `${item.amount || 0}% ${NEEDS.find((n) => n.id === item.effect)?.name.toLowerCase() || 'Wirkung'} · Vorrat: ${data.inventory[item.id] || 0}` : item.type === 'room' ? 'Dekoration für dein Zuhause' : item.type === 'background' ? 'Ersetzt das Zimmerbild durch ein Motiv' : item.type === 'toy' ? item.desc : SLOT_OF[item.id] === 'hat' ? 'Kopfbedeckung' : SLOT_OF[item.id] === 'outfit' ? 'Kleidung' : 'Accessoire'}</div></div><button className="button small" onClick={() => buy(item)} disabled={(item.type !== 'food' && item.id !== 'shampoo' && data.owned.includes(item.id)) || (!!item.unlockLevel && level < item.unlockLevel)} data-testid={`button-buy-${item.id}`}><Coins size={13}/>{item.type !== 'food' && item.id !== 'shampoo' && data.owned.includes(item.id) ? 'Gekauft' : item.unlockLevel && level < item.unlockLevel ? `Level ${item.unlockLevel}` : item.price}</button></div>)}</div>
         </section>}
 
         {page === 'closet' && <div className="closet-grid">

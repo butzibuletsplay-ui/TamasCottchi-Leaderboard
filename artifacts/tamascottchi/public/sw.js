@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tamascottchi-shell-v2-2';
+const CACHE_NAME = 'tamascottchi-shell-v4';
 const CORE = [
   './', './manifest.webmanifest', './wuschel-mark.svg',
   './assets/characters/scottchi-default.png',
