@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: online
+    description: Authenticated account profiles and cloud saves
 paths:
   /healthz:
     get:
@@ -24,6 +26,155 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /online/profile:
+    get:
+      operationId: getOnlineProfile
+      tags: [online]
+      summary: Get the signed-in player's profile
+      responses:
+        "200":
+          description: Current profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnlineProfile"
+        "404":
+          description: Profile setup is not complete
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    post:
+      operationId: createOnlineProfile
+      tags: [online]
+      summary: Create the player's profile and friend code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OnlineProfileInput"
+      responses:
+        "201":
+          description: Profile created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnlineProfile"
+        "409":
+          description: A profile already exists or the code could not be allocated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    patch:
+      operationId: updateOnlineProfile
+      tags: [online]
+      summary: Update the player's public profile settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OnlineProfileUpdate"
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnlineProfile"
+        "400":
+          description: Invalid profile fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /online/save:
+    get:
+      operationId: getOnlineSave
+      tags: [online]
+      summary: Get the signed-in player's cloud save
+      responses:
+        "200":
+          description: Cloud save state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnlineCloudSave"
+    put:
+      operationId: updateOnlineSave
+      tags: [online]
+      summary: Update the cloud save with optimistic concurrency
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OnlineCloudSaveUpdate"
+      responses:
+        "200":
+          description: Saved cloud state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnlineCloudSaveResult"
+        "409":
+          description: The cloud save changed on another device
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /online/save/import:
+    post:
+      operationId: importOnlineSave
+      tags: [online]
+      summary: Import a local game save once
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OnlineCloudSaveImport"
+      responses:
+        "201":
+          description: Local save imported
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnlineCloudSaveResult"
+        "200":
+          description: Previously completed import retry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnlineCloudSaveResult"
+        "409":
+          description: Import already used or cloud save exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /online/account:
+    delete:
+      operationId: deleteOnlineAccount
+      tags: [online]
+      summary: Delete the signed-in account and associated game data
+      responses:
+        "204":
+          description: Account data deleted
+        "502":
+          description: Account provider deletion needs to be retried
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +184,105 @@ components:
           type: string
       required:
         - status
+    ApiError:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+    OnlineProfile:
+      type: object
+      properties:
+        playerName:
+          type: string
+        petName:
+          type: string
+        level:
+          type: integer
+        friendCode:
+          type: string
+        publicProfile:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+      required: [playerName, petName, level, friendCode, publicProfile, createdAt]
+    OnlineProfileInput:
+      type: object
+      properties:
+        playerName:
+          type: string
+          minLength: 2
+          maxLength: 24
+        petName:
+          type: string
+          minLength: 1
+          maxLength: 18
+      required: [playerName, petName]
+    OnlineProfileUpdate:
+      type: object
+      properties:
+        playerName:
+          type: string
+          minLength: 2
+          maxLength: 24
+        petName:
+          type: string
+          minLength: 1
+          maxLength: 18
+        publicProfile:
+          type: boolean
+    SaveData:
+      type: object
+      additionalProperties: true
+    OnlineCloudSave:
+      type: object
+      properties:
+        saveData:
+          anyOf:
+            - $ref: "#/components/schemas/SaveData"
+            - type: "null"
+        revision:
+          type: integer
+        imported:
+          type: boolean
+        updatedAt:
+          type: ["string", "null"]
+          format: date-time
+      required: [saveData, revision, imported, updatedAt]
+    OnlineCloudSaveUpdate:
+      type: object
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 0
+        saveData:
+          $ref: "#/components/schemas/SaveData"
+      required: [expectedRevision, saveData]
+    OnlineCloudSaveImport:
+      type: object
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 0
+        requestId:
+          type: string
+          minLength: 16
+          maxLength: 64
+        saveData:
+          $ref: "#/components/schemas/SaveData"
+      required: [expectedRevision, requestId, saveData]
+    OnlineCloudSaveResult:
+      type: object
+      properties:
+        revision:
+          type: integer
+        imported:
+          type: boolean
+        duplicate:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+      required: [revision, imported, duplicate, updatedAt]
 

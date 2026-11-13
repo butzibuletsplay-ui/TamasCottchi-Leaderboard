@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAuth, useUser } from '@clerk/react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   Activity, Award, Backpack, Bath, BookOpen, Check, CircleHelp, Coins, Download, Dumbbell, Gamepad2, Gift, Hammer, Heart, Home, House,
   Medal, Moon, Play, Plus, Settings, Shirt, ShoppingBag, Sparkles, Star, Target, Trophy,
@@ -27,9 +29,13 @@ import { InventoryPage } from './game/InventoryPage';
 import { JournalPage } from './game/JournalPage';
 import { recordJournal } from './game/journal';
 import { completeQuestAction } from './game/questEngine';
+import { getGetOnlineProfileQueryKey, getGetOnlineSaveQueryKey, useGetOnlineProfile, useGetOnlineSave, useUpdateOnlineSave } from '@workspace/api-client-react';
+import { OnlinePage } from './game/OnlinePage';
 type PetData = FullPetData;
 
 type PetAction = 'idle' | 'happy' | 'eating' | 'washing' | 'petting' | 'sleeping' | 'spin' | 'wiggle' | 'run' | 'chew' | 'wake' | 'yawn' | 'cuddle';
+type CloudLink = { userId: string; revision: number; fingerprint: string };
+type CloudSyncStatus = 'offline' | 'checking' | 'unlinked' | 'syncing' | 'synced' | 'conflict' | 'error';
 const NEEDS: { id: NeedKey; name: string; icon: typeof Heart }[] = [
   { id: 'hunger', name: 'Sattheit', icon: Utensils }, { id: 'glueck', name: 'Laune', icon: Heart },
   { id: 'energie', name: 'Energie', icon: Activity }, { id: 'sauberkeit', name: 'Sauberkeit', icon: Sparkles },
@@ -62,6 +68,17 @@ function advanceDaily(data: PetData, id: keyof DailyProgress, amount = 1): PetDa
   }
   return next;
 }
+
+function saveFingerprint(data: PetData): string {
+  const serialized = JSON.stringify(data);
+  let hash = 2166136261;
+  for (let index = 0; index < serialized.length; index += 1) {
+    hash ^= serialized.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16);
+}
+
 function applyNeeds(needs: PetData['needs'], delta: Partial<Record<NeedKey, number>>) {
   const out = { ...needs };
   for (const [k, v] of Object.entries(delta) as [NeedKey, number][]) out[k] = clamp(out[k] + v);
@@ -117,6 +134,20 @@ function App() {
 function Game({ initial }: { initial: PetData }) {
   const [data, setData] = useState<PetData>(initial);
   const dataRef = useRef(data); dataRef.current = data;
+  const { isSignedIn } = useAuth();
+  const { user } = useUser();
+  const queryClient = useQueryClient();
+  const onlineUserId = isSignedIn ? user?.id ?? null : null;
+  const onlineProfileQuery = useGetOnlineProfile({
+    query: { enabled: !!onlineUserId, queryKey: getGetOnlineProfileQueryKey(), retry: false },
+  });
+  const onlineSaveQuery = useGetOnlineSave({
+    query: { enabled: !!onlineUserId && !!onlineProfileQuery.data, queryKey: getGetOnlineSaveQueryKey(), refetchOnWindowFocus: true },
+  });
+  const updateOnlineSave = useUpdateOnlineSave();
+  const [cloudLink, setCloudLink] = useState<CloudLink | null>(null);
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>('offline');
+  const cloudSyncBusy = useRef(false);
   const [page, setPage] = useState('home');
   const [shopTab, setShopTab] = useState<Item['type']>('food');
   const [selectedFood, setSelectedFood] = useState('kibble');
@@ -144,6 +175,119 @@ function Game({ initial }: { initial: PetData }) {
   const timers = useRef<Record<string, number | undefined>>({});
   const toyCooldown = useRef<Record<string, number>>({});
   const rewardedSessions = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!onlineUserId) {
+      setCloudLink(null);
+      setCloudSyncStatus('offline');
+      return;
+    }
+    setCloudLink(null);
+    setCloudSyncStatus('checking');
+  }, [onlineUserId]);
+
+  useEffect(() => {
+    if (!onlineUserId || !onlineProfileQuery.data || !onlineSaveQuery.data) return;
+    const remote = onlineSaveQuery.data;
+    if (!remote.saveData) {
+      setCloudLink(null);
+      setCloudSyncStatus('unlinked');
+      return;
+    }
+
+    const stored = localStorage.getItem(`tamascottchi-cloud-link:${onlineUserId}`);
+    let marker: CloudLink | null = null;
+    try {
+      const parsed = stored ? JSON.parse(stored) as Partial<CloudLink> : null;
+      if (parsed && parsed.userId === onlineUserId && Number.isInteger(parsed.revision) && typeof parsed.fingerprint === 'string') {
+        marker = parsed as CloudLink;
+      }
+    } catch {
+      marker = null;
+    }
+
+    if (cloudLink?.userId === onlineUserId && cloudLink.revision > remote.revision) return;
+    if (cloudLink?.userId === onlineUserId && remote.revision > cloudLink.revision) {
+      setCloudLink(null);
+      setCloudSyncStatus('conflict');
+      return;
+    }
+    if (marker && marker.revision === remote.revision) {
+      setCloudLink(marker);
+      setCloudSyncStatus('synced');
+    } else {
+      setCloudLink(null);
+      setCloudSyncStatus(marker ? 'conflict' : 'unlinked');
+    }
+  }, [onlineUserId, onlineProfileQuery.data, onlineSaveQuery.data, cloudLink]);
+
+  const linkCloudToCurrentSave = (revision: number, snapshot: PetData = data) => {
+    if (!onlineUserId) return;
+    const link = { userId: onlineUserId, revision, fingerprint: saveFingerprint(snapshot) };
+    localStorage.setItem(`tamascottchi-cloud-link:${onlineUserId}`, JSON.stringify(link));
+    setCloudLink(link);
+    setCloudSyncStatus('synced');
+  };
+
+  const restoreCloudSave = (saveData: Record<string, unknown>, revision: number) => {
+    try {
+      const restored = normalize(saveData as Partial<PetData>);
+      assertSave(restored);
+      setData(restored);
+      linkCloudToCurrentSave(revision, restored);
+      setToast('Cloud-Spielstand wurde auf diesem Gerät wiederhergestellt.');
+    } catch {
+      setToast('Die Cloud-Sicherung passt nicht zu dieser Spielversion. Dein lokaler Spielstand bleibt erhalten.');
+    }
+  };
+
+  useEffect(() => {
+    if (!onlineUserId || !onlineProfileQuery.data || !onlineSaveQuery.data?.saveData || cloudLink?.userId !== onlineUserId) return;
+    const snapshot = data;
+    const fingerprint = saveFingerprint(snapshot);
+    if (fingerprint === cloudLink.fingerprint) return;
+    const timer = window.setTimeout(() => {
+      if (cloudSyncBusy.current) return;
+      cloudSyncBusy.current = true;
+      setCloudSyncStatus('syncing');
+      void updateOnlineSave.mutateAsync({
+        data: { expectedRevision: cloudLink.revision, saveData: snapshot },
+      }).then((result) => {
+        const nextLink = { userId: onlineUserId, revision: result.revision, fingerprint };
+        localStorage.setItem(`tamascottchi-cloud-link:${onlineUserId}`, JSON.stringify(nextLink));
+        setCloudLink(nextLink);
+        setCloudSyncStatus('synced');
+        queryClient.setQueryData(getGetOnlineSaveQueryKey(), (current) => current
+          ? { ...current, saveData: snapshot, revision: result.revision, updatedAt: result.updatedAt }
+          : current);
+        queryClient.setQueryData(getGetOnlineProfileQueryKey(), (current) => current
+          ? { ...current, petName: snapshot.name, level: levelFor(snapshot.xp) }
+          : current);
+      }).catch((error: unknown) => {
+        const status = typeof error === 'object' && error !== null && 'status' in error
+          ? (error as { status?: number }).status
+          : undefined;
+        if (status === 409) {
+          setCloudLink(null);
+          setCloudSyncStatus('conflict');
+          void onlineSaveQuery.refetch();
+        } else {
+          setCloudSyncStatus('error');
+        }
+      }).finally(() => {
+        cloudSyncBusy.current = false;
+      });
+    }, 1800);
+    return () => window.clearTimeout(timer);
+  }, [data, onlineUserId, onlineProfileQuery.data, onlineSaveQuery.data, cloudLink, updateOnlineSave.mutateAsync, queryClient]);
+
+  useEffect(() => {
+    const onOnline = () => {
+      if (onlineUserId) void onlineSaveQuery.refetch();
+    };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, [onlineUserId, onlineSaveQuery.refetch]);
 
   const later = useCallback((key: string, fn: () => void, ms: number) => {
     window.clearTimeout(timers.current[key]);
@@ -574,7 +718,17 @@ function Game({ initial }: { initial: PetData }) {
       setData(normalize(value)); setModal(null); setFileText(''); notify('Spielstand geladen.');
     } catch { notify('Datei ist kein gültiger tamascottchi-Spielstand.'); }
   }
-  function resetGame() { localStorage.removeItem(STORE_KEY); setData(initialData()); setPage('home'); setActiveGame(null); setModal(null); notify('Neuer Spielstand gestartet.'); }
+  function resetGame() {
+    localStorage.removeItem(STORE_KEY);
+    if (onlineUserId) localStorage.removeItem(`tamascottchi-cloud-link:${onlineUserId}`);
+    setCloudLink(null);
+    setCloudSyncStatus(onlineUserId ? 'unlinked' : 'offline');
+    setData(initialData());
+    setPage('home');
+    setActiveGame(null);
+    setModal(null);
+    notify(onlineUserId ? 'Neuer lokaler Spielstand gestartet. Die Cloud-Sicherung bleibt unverändert.' : 'Neuer Spielstand gestartet.');
+  }
 
   const nav = [
     { id: 'home', label: 'Zuhause', icon: Home }, { id: 'world', label: 'World', icon: Compass },
@@ -678,7 +832,7 @@ function Game({ initial }: { initial: PetData }) {
 
   return <div className={`app-shell ${activeGame ? 'in-game' : ''}`}>
     <header className="topbar">
-      <div className="brand"><span className="brand-mark">t</span>tamascottchi <span className="version-pill">4.0</span></div>
+      <div className="brand"><span className="brand-mark">t</span>tamascottchi <span className="version-pill">5.0</span></div>
       <div className="topstats">
         <div className="stat-pill" data-testid="status-coins"><Coins size={16}/>{data.coins}</div>
         <div className="stat-pill" data-testid="status-level"><Star size={15}/><span>Lv. {level}</span></div>
@@ -691,7 +845,7 @@ function Game({ initial }: { initial: PetData }) {
         <div className="side-note"><strong>Level {level} · Scottchi-Fan</strong><div className="progress-track"><span style={{ width: `${xpProgress}%` }}/></div><div style={{ marginTop: 7 }}>{xpProgress} / 100 XP bis zum nächsten Level</div></div>
       </aside>
       <main className="main">
-        {!activeGame && <div className="main-head"><div><div className="eyebrow">{page === 'home' ? 'DEIN ZUHAUSE' : 'TAMASCOTTCHI 4.0'}</div><h1>{page === 'home' ? `Hallo, ${data.name}.` : page === 'shop' ? 'Der kleine Laden' : page === 'world' ? 'Scottchi World' : page === 'collections' ? 'Scottchi Collections' : page === 'online' ? 'Scottchi Online' : page === 'games' ? 'Spielzeit!' : page === 'closet' ? 'Kleiderschrank' : page === 'leaderboard' ? 'Bestenliste' : page === 'inventory' ? 'Inventar' : page === 'crafting' ? 'Werkstatt' : page === 'journal' ? 'Scottchis Tagebuch' : page === 'help' ? 'Hilfe & Spielstart' : 'Erfolge'}</h1><div className="subline">{page === 'home' ? 'Tippe Scottchi an, wirf Spielzeug, wechsle das Zimmer.' : page === 'leaderboard' ? 'Nur deine Ergebnisse auf diesem Gerät.' : 'Ein gemütlicher Ort für Scottchi und dich.'}</div></div>
+        {!activeGame && page !== 'online' && <div className="main-head"><div><div className="eyebrow">{page === 'home' ? 'DEIN ZUHAUSE' : 'TAMASCOTTCHI 5.0'}</div><h1>{page === 'home' ? `Hallo, ${data.name}.` : page === 'shop' ? 'Der kleine Laden' : page === 'world' ? 'Scottchi World' : page === 'collections' ? 'Scottchi Collections' : page === 'games' ? 'Spielzeit!' : page === 'closet' ? 'Kleiderschrank' : page === 'leaderboard' ? 'Bestenliste' : page === 'inventory' ? 'Inventar' : page === 'crafting' ? 'Werkstatt' : page === 'journal' ? 'Scottchis Tagebuch' : page === 'help' ? 'Hilfe & Spielstart' : 'Erfolge'}</h1><div className="subline">{page === 'home' ? 'Tippe Scottchi an, wirf Spielzeug, wechsle das Zimmer.' : page === 'leaderboard' ? 'Nur deine Ergebnisse auf diesem Gerät.' : 'Ein gemütlicher Ort für Scottchi und dich.'}</div></div>
           {page === 'home' && <button className="button small" onClick={() => { setNameDraft(data.name); setModal('name'); }} data-testid="button-rename">Name ändern</button>}
         </div>}
 
@@ -734,7 +888,7 @@ function Game({ initial }: { initial: PetData }) {
         {page === 'crafting' && <CraftingPage data={data} onCraft={craft}/>}
         {page === 'journal' && <JournalPage data={data}/>}
         {page === 'help' && <HelpPage/>}
-        {page === 'online' && <section className="panel online-preview" data-testid="online-preview"><div className="eyebrow">NICHT AKTIVIERT</div><h2 className="panel-title">Scottchi Online</h2><p>Die Freundesprofile, Codes und Besuche brauchen Anmeldung und sichere Serverberechtigungen. Hier gibt es noch keine Konten oder erfundenen Online-Spieler.</p><img src="/assets/online/friend-visit.webp" alt="Illustration zweier befreundeter Scottchis bei einem Besuch"/><div className="side-note"><strong>Für Phase 3 erst abstimmen</strong>Ein sicherer Start wäre Freundescodes und asynchrone Besuche über den vorhandenen Express- und PostgreSQL-Server. Vor Anmeldung oder größeren Backendänderungen klären wir Anbieter, Datenschutz und Kosten. Multiplayer ist nicht eingerichtet.</div></section>}
+        {page === 'online' && <OnlinePage localSave={data} onRestoreCloud={restoreCloudSave} onCloudLinked={linkCloudToCurrentSave} syncStatus={cloudSyncStatus}/>}
         {page === 'games' && (activeGame && currentGame
           ? <GameStage key={`${activeGame}-${memoryPairs}-${cupLevel}`} id={activeGame} name={currentGame.name} rules={currentGame.rules} best={data.highscores[activeGame] || 0}
               difficulty={activeGame === 'memory' ? memoryPairs : activeGame === 'bone' ? cupLevel : undefined} extras={data.owned}
