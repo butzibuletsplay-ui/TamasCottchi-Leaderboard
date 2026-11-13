@@ -1,0 +1,1 @@
+- [Update-Grenzen](update-constraints.md) — Spielstände und Käufe erhalten; Multiplayer und kostenpflichtige Infrastruktur nur nach Zustimmung.

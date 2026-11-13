@@ -1,0 +1,16 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "at_oO-WjGIuCxZjKBLLC6"
+uri = "file://generated-artifacts/tamascottchi-multiplayer.html"
+type = "html"
+title = "Multiplayer: Architektur, Kosten und Empfehlung"
+description = "Konkreter Vorschlag für Freundescodes und Scottchi-Besuche, mit Kostenannahmen, Sicherheitsgrenzen und Erweiterungsplan. Noch nicht implementiert."
+logical_id = "b06f5e0b-76f7-4ffa-84e9-99af76a98ae7"
+content_hash = "sha256:c50a9fd6486d16b2f484fbbb5a6b79778943e3fa09e862b77a9981dcd1b3dc00"
+size = 8773
+mtime_ms = 1794589290731
+storage_uri = "gcs://replit-rams-assets-kira/rams/assets/repl:67a7099c-06b1-4e53-a421-d8ba6e47aafd/b06f5e0b-76f7-4ffa-84e9-99af76a98ae7/e6157aa8-07e9-4846-83a1-973f7f939125"
+storage_version_token = "1794589645666910"
+content_type = "text/html"

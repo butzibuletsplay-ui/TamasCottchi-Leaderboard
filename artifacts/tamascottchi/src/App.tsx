@@ -1,139 +1,63 @@
-import { type PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity, Award, Bath, Check, ChevronLeft, Coins, Download, Dumbbell,
-  Footprints, Gamepad2, Gift, Heart, Home, House, Medal, Moon, PawPrint, Play,
-  Plus, RotateCcw, Settings, ShoppingBag, Sparkles, Star, Trophy,
-  Utensils, Volume2, VolumeX, X, Zap,
+  Activity, Award, Bath, Check, Coins, Download, Dumbbell, Gamepad2, Gift, Heart, Home, House,
+  Medal, Moon, Play, Plus, Settings, Shirt, ShoppingBag, Sparkles, Star, Target, Trophy,
+  Utensils, Volume2, VolumeX, Wrench, X,
 } from 'lucide-react';
-import Wuschel from '../../../attached_assets/EE81EE3F-4258-400F-B280-756A65D348D6_1794580180683.png';
+import { BACKGROUNDS, CORE_SPRITES, preloadAll, preloadImage } from './game/assets';
+import type { GameId, GameResult, SoundFn } from './game/engine';
+import { GameStage, type RewardSummary } from './game/GameStage';
+import { PlacementTuner, SLOT_OF, Scottchi } from './game/Scottchi';
+import {
+  CHALLENGES, GAMES, ITEMS, ROOM_BG, ROOM_LIST, STORE_KEY, clamp, initialData, itemById, levelFor, loadData,
+  moodFor, normalize, rewardFor, today, type DailyProgress, type GameRecord, type Item, type NeedKey, type PetData, type Room,
+} from './game/data';
 
-type Room = 'Wohnzimmer' | 'Küche' | 'Bad' | 'Schlafzimmer' | 'Spielzimmer';
-type NeedKey = 'hunger' | 'glueck' | 'energie' | 'sauberkeit';
-type GameId = 'catch' | 'memory' | 'turbo' | 'bone' | 'run';
-type GameRecord = { id: string; game: GameId; score: number; date: number };
-type Item = { id: string; name: string; icon: string; price: number; type: 'food' | 'toy' | 'accessory' | 'room' | 'background'; effect?: NeedKey; amount?: number; unlockLevel?: number };
-type DailyProgress = { feeds: number; games: number; baths: number; pets: number; coins: number };
-type PetData = {
-  version: number; name: string; needs: Record<NeedKey, number>; lastUpdated: number;
-  coins: number; xp: number; inventory: Record<string, number>; owned: string[];
-  equipped: string[]; room: Room; roomItems: string[]; activeBackground: string; records: GameRecord[];
-  sleepUntil: number | null;
-  stats: { games: number; catches: number; taps: number; care: number; rooms: number; purchases: number };
-  daily: DailyProgress; missions: Record<string, boolean>; claimedAchievements: string[]; missionsDate: string;
-  settings: { sound: boolean; music: boolean; volume: number; lampOn: boolean };
-};
-type GameState = { id: GameId; phase: 'intro' | 'playing' | 'done'; score: number; time: number; best?: number; message?: string };
-type FallingItem = { id: number; x: number; y: number; good: boolean };
-type PetAction = 'idle' | 'happy' | 'eating' | 'washing' | 'petting' | 'sleeping';
-
-const STORE_KEY = 'tamascottchi-save-v1';
-const ROOM_LIST: Room[] = ['Wohnzimmer', 'Küche', 'Bad', 'Schlafzimmer', 'Spielzimmer'];
+type PetAction = 'idle' | 'happy' | 'eating' | 'washing' | 'petting' | 'sleeping' | 'spin' | 'wiggle';
 const NEEDS: { id: NeedKey; name: string; icon: typeof Heart }[] = [
   { id: 'hunger', name: 'Sattheit', icon: Utensils }, { id: 'glueck', name: 'Laune', icon: Heart },
-  { id: 'energie', name: 'Energie', icon: Zap }, { id: 'sauberkeit', name: 'Sauberkeit', icon: Sparkles },
+  { id: 'energie', name: 'Energie', icon: Activity }, { id: 'sauberkeit', name: 'Sauberkeit', icon: Sparkles },
 ];
-const GAMES: { id: GameId; name: string; desc: string; icon: string }[] = [
-  { id: 'catch', name: 'Snack Catch', desc: 'Schnapp dir die Snacks, bevor sie weg sind.', icon: '●' },
-  { id: 'memory', name: 'Memory', desc: 'Finde alle Wuschel-Paare.', icon: '▦' },
-  { id: 'turbo', name: 'Turbo Tap', desc: 'Wie viele Pfoten-Taps schaffst du?', icon: '↗' },
-  { id: 'bone', name: 'Glücksknochen', desc: 'Erwisch den Knochen. Weiche dem Keks aus.', icon: '⌁' },
-  { id: 'run', name: 'Wuschel Run', desc: 'Spring über die Hindernisse!', icon: '→' },
-];
-const ITEMS: Item[] = [
-  { id: 'kibble', name: 'Hundekeks', icon: '▤', price: 5, type: 'food', effect: 'hunger', amount: 12 },
-  { id: 'apple', name: 'Apfel', icon: '◉', price: 8, type: 'food', effect: 'hunger', amount: 16 },
-  { id: 'chicken', name: 'Hähnchenkeule', icon: '⌁', price: 15, type: 'food', effect: 'hunger', amount: 28 },
-  { id: 'burger', name: 'Burger', icon: '▰', price: 25, type: 'food', effect: 'hunger', amount: 40 },
-  { id: 'special', name: 'Spezialmenü', icon: '✦', price: 50, type: 'food', effect: 'hunger', amount: 60 },
-  { id: 'soap', name: 'Schaumbad', icon: '◌', price: 9, type: 'food', effect: 'sauberkeit', amount: 35 },
-  { id: 'ball', name: 'Quietschball', icon: '●', price: 22, type: 'toy' },
-  { id: 'bone-toy', name: 'Glücksknochen', icon: '⌁', price: 35, type: 'toy' },
-  { id: 'bow', name: 'Rote Schleife', icon: '≋', price: 24, type: 'accessory' },
-  { id: 'sunglasses', name: 'Sonnenbrille', icon: '◉', price: 36, type: 'accessory' },
-  { id: 'scarf', name: 'Sternenschal', icon: '≋', price: 48, type: 'accessory' },
-  { id: 'party-hat', name: 'Partyhut', icon: '△', price: 30, type: 'accessory' },
-  { id: 'collar', name: 'Halsband', icon: '◉', price: 34, type: 'accessory' },
-  { id: 'sleep-cap', name: 'Schlafmütze', icon: '⌂', price: 28, type: 'accessory' },
-  { id: 'crown', name: 'Krönchen', icon: '♛', price: 75, type: 'accessory', unlockLevel: 3 },
-  { id: 'plant', name: 'Fensterpflanze', icon: '♧', price: 30, type: 'room' },
-  { id: 'lamp', name: 'Sonnenlampe', icon: '☼', price: 42, type: 'room', unlockLevel: 2 },
-  { id: 'cushion', name: 'Knautschkissen', icon: '▰', price: 38, type: 'room', unlockLevel: 2 },
-  { id: 'rug', name: 'Wolken-Teppich', icon: '▰', price: 35, type: 'room' },
-  { id: 'plush', name: 'Kuschel-Freund', icon: '●', price: 32, type: 'room' },
-  { id: 'poster', name: 'Wuschel-Poster', icon: '▤', price: 26, type: 'room' },
-  { id: 'forest', name: 'Waldlichtung', icon: '♧', price: 44, type: 'background' },
-  { id: 'beach', name: 'Sonniger Strand', icon: '≈', price: 54, type: 'background' },
-  { id: 'night', name: 'Dunkles Zimmer', icon: '☾', price: 48, type: 'background', unlockLevel: 2 },
-  { id: 'fantasy', name: 'Fantasiewelt', icon: '✦', price: 68, type: 'background', unlockLevel: 3 },
-];
-const initialData = (): PetData => ({
-  version: 1, name: 'Wuschel', needs: { hunger: 78, glueck: 83, energie: 72, sauberkeit: 88 },
-  lastUpdated: Date.now(), coins: 55, xp: 0, inventory: { kibble: 2, soap: 1 }, owned: [], equipped: [],
-  room: 'Wohnzimmer', roomItems: [], activeBackground: 'classic', records: [], sleepUntil: null, stats: { games: 0, catches: 0, taps: 0, care: 0, rooms: 0, purchases: 0 },
-  daily: { feeds: 0, games: 0, baths: 0, pets: 0, coins: 0 },
-  missions: {}, claimedAchievements: [], missionsDate: new Date().toLocaleDateString('de-DE'),
-  settings: { sound: true, music: false, volume: 65, lampOn: true },
-});
-const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
-const levelFor = (xp: number) => Math.floor(xp / 100) + 1;
-const today = () => new Date().toLocaleDateString('de-DE');
-const fmtTime = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 const DAILY_GOALS: { id: keyof DailyProgress; title: string; detail: string; target: number; rewardCoins: number; rewardXp: number }[] = [
-  { id: 'feeds', title: 'Snack-Zeit', detail: 'Füttere Wuschel dreimal', target: 3, rewardCoins: 8, rewardXp: 10 },
+  { id: 'feeds', title: 'Snack-Zeit', detail: 'Füttere Scottchi dreimal', target: 3, rewardCoins: 8, rewardXp: 10 },
   { id: 'games', title: 'Spielrunde', detail: 'Spiele drei Minispiele', target: 3, rewardCoins: 15, rewardXp: 15 },
-  { id: 'baths', title: 'Schaumparty', detail: 'Bade Wuschel zweimal', target: 2, rewardCoins: 10, rewardXp: 12 },
-  { id: 'pets', title: 'Kraul-Meister', detail: 'Streichle Wuschel fünfmal', target: 5, rewardCoins: 10, rewardXp: 12 },
+  { id: 'baths', title: 'Schaumparty', detail: 'Bade Scottchi zweimal', target: 2, rewardCoins: 10, rewardXp: 12 },
+  { id: 'pets', title: 'Kraul-Meister', detail: 'Streichle Scottchi fünfmal', target: 5, rewardCoins: 10, rewardXp: 12 },
   { id: 'coins', title: 'Münz-Magnet', detail: 'Verdiene 100 Münzen', target: 100, rewardCoins: 12, rewardXp: 12 },
 ];
+type ToyUse = { action: PetAction; line: string; fx: 'throw' | 'arc' | 'bounce' | 'shake'; need: Partial<Record<NeedKey, number>>; energy?: number; freq: number; slide?: number; room?: Room; cooldown: number };
+const TOY_USE: Record<string, ToyUse> = {
+  ball: { action: 'spin', line: 'Ball! Ball! BALL!', fx: 'throw', need: { glueck: 12, energie: -5 }, energy: 10, freq: 700, cooldown: 15 },
+  'bone-toy': { action: 'wiggle', line: 'Knusper. Meins.', fx: 'bounce', need: { glueck: 12, hunger: 3 }, freq: 520, cooldown: 20 },
+  duck: { action: 'happy', line: 'Was war DAS?', fx: 'bounce', need: { glueck: 6 }, freq: 1300, slide: 700, cooldown: 6 },
+  rope: { action: 'wiggle', line: 'Grrr, ich gewinne!', fx: 'shake', need: { glueck: 16, energie: -7 }, energy: 12, freq: 380, cooldown: 25 },
+  frisbee: { action: 'happy', line: 'Ich fliege fast mit!', fx: 'arc', need: { glueck: 14, energie: -6 }, energy: 12, freq: 820, slide: 1100, cooldown: 20 },
+  teddy: { action: 'petting', line: 'Mein bester Freund.', fx: 'bounce', need: { glueck: 9, energie: 2 }, freq: 460, cooldown: 20 },
+  shampoo: { action: 'washing', line: 'Duftet nach Kokos!', fx: 'shake', need: { sauberkeit: 45, glueck: 3 }, freq: 760, room: 'Bad', cooldown: 90 },
+};
+
 function advanceDaily(data: PetData, id: keyof DailyProgress, amount = 1): PetData {
-  let next: PetData = {
-    ...data,
-    daily: { ...data.daily, [id]: data.daily[id] + amount },
-    missions: { ...data.missions },
-  };
+  let next: PetData = { ...data, daily: { ...data.daily, [id]: data.daily[id] + amount }, missions: { ...data.missions } };
   for (const goal of DAILY_GOALS) {
     if (next.daily[goal.id] >= goal.target && !next.missions[goal.id]) {
-      next = {
-        ...next,
-        coins: next.coins + goal.rewardCoins,
-        xp: next.xp + goal.rewardXp,
-        missions: { ...next.missions, [goal.id]: true },
-      };
+      next = { ...next, coins: next.coins + goal.rewardCoins, xp: next.xp + goal.rewardXp, missions: { ...next.missions, [goal.id]: true } };
     }
   }
   return next;
 }
+function applyNeeds(needs: PetData['needs'], delta: Partial<Record<NeedKey, number>>) {
+  const out = { ...needs };
+  for (const [k, v] of Object.entries(delta) as [NeedKey, number][]) out[k] = clamp(out[k] + v);
+  return out;
+}
 
-function loadData(): PetData {
-  try {
-    const raw = localStorage.getItem(STORE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<PetData>;
-      if (parsed.version === 1 && parsed.needs && parsed.stats) {
-        const elapsed = Math.max(0, Date.now() - (parsed.lastUpdated || Date.now()));
-        const decay = Math.floor(elapsed / 240000);
-        const dateChanged = parsed.missionsDate !== today();
-        return {
-          ...initialData(), ...parsed,
-          needs: Object.fromEntries(Object.entries(parsed.needs).map(([key, value]) => [key, clamp(Number(value) - decay)])) as PetData['needs'],
-          lastUpdated: Date.now(), missions: dateChanged ? {} : (parsed.missions || {}),
-          daily: dateChanged ? initialData().daily : (parsed.daily || initialData().daily), claimedAchievements: parsed.claimedAchievements || [], missionsDate: today(),
-          stats: { ...initialData().stats, ...parsed.stats },
-          settings: {
-            sound: parsed.settings?.sound ?? true,
-            music: parsed.settings?.music ?? false,
-            volume: parsed.settings?.volume ?? 65,
-            lampOn: parsed.settings?.lampOn ?? true,
-          },
-        };
-      }
-    }
-  } catch { /* a damaged local save starts a fresh, safe game */ }
-  return initialData();
+function ItemIcon({ item }: { item: Item }) {
+  return <div className={`item-icon ${item.img ? 'has-img' : ''}`}>{item.img ? <img src={item.img} alt="" loading="lazy"/> : item.icon}</div>;
 }
 
 function App() {
   const [data, setData] = useState<PetData>(loadData);
+  const dataRef = useRef(data); dataRef.current = data;
   const [page, setPage] = useState('home');
   const [shopTab, setShopTab] = useState<Item['type']>('food');
   const [selectedFood, setSelectedFood] = useState('kibble');
@@ -141,42 +65,49 @@ function App() {
   const [nameDraft, setNameDraft] = useState(data.name);
   const [petAction, setPetAction] = useState<PetAction>('idle');
   const [petSpeech, setPetSpeech] = useState('Ich bin eine Kreatur.');
+  const [excited, setExcited] = useState(false);
   const [toast, setToast] = useState('');
-  const [game, setGame] = useState<GameState | null>(null);
-  const [cards, setCards] = useState<{ value: string; open: boolean; matched: boolean }[]>([]);
-  const [firstCard, setFirstCard] = useState<number | null>(null);
+  const [activeGame, setActiveGame] = useState<GameId | null>(null);
   const [memoryPairs, setMemoryPairs] = useState(6);
-  const [target, setTarget] = useState({ x: 50, y: 50 });
-  const [fallingItems, setFallingItems] = useState<FallingItem[]>([]);
-  const [basketX, setBasketX] = useState(50);
-  const [cups, setCups] = useState([0, 1, 2]);
-  const [boneTarget, setBoneTarget] = useState(1);
-  const [jumping, setJumping] = useState(false);
+  const [cupLevel, setCupLevel] = useState(1);
+  const [toyFx, setToyFx] = useState<{ id: string; fx: string; key: number } | null>(null);
+  const [tunerOpen, setTunerOpen] = useState(false);
+  const [tunerVersion, setTunerVersion] = useState(0);
   const [fileText, setFileText] = useState('');
+  const [now, setNow] = useState(Date.now());
   const fileRef = useRef<HTMLInputElement>(null);
   const soundContext = useRef<AudioContext | null>(null);
-  const playfieldRef = useRef<HTMLDivElement>(null);
-  const fallingItemsRef = useRef<FallingItem[]>([]);
-  const basketXRef = useRef(50);
-  const catchTickRef = useRef(0);
-  const obstacleResolvedRef = useRef(false);
-  const finishedGameRef = useRef(false);
-  const petActionTimer = useRef<number | undefined>(undefined);
+  const timers = useRef<Record<string, number | undefined>>({});
+  const toyCooldown = useRef<Record<string, number>>({});
+  const rewardedSessions = useRef<Set<string>>(new Set());
 
+  const later = useCallback((key: string, fn: () => void, ms: number) => {
+    window.clearTimeout(timers.current[key]);
+    timers.current[key] = window.setTimeout(fn, ms);
+  }, []);
+  useEffect(() => () => { Object.values(timers.current).forEach((t) => window.clearTimeout(t)); }, []);
+
+  // autosave
+  useEffect(() => { localStorage.setItem(STORE_KEY, JSON.stringify(data)); }, [data]);
+  // preload character sprites + room backgrounds so mood/room swaps never flash
   useEffect(() => {
-    localStorage.setItem(STORE_KEY, JSON.stringify(data));
-  }, [data]);
+    void preloadAll(CORE_SPRITES).then(() => Object.values(BACKGROUNDS).forEach((b) => void preloadImage(b.src)));
+  }, []);
+  // need decay + daily reset + sleep regen in one interval
   useEffect(() => {
     const id = window.setInterval(() => {
+      setNow(Date.now());
       setData((old) => {
-        const dayReset = old.missionsDate !== today();
-        const current = dayReset ? { ...old, daily: { feeds: 0, games: 0, baths: 0, pets: 0, coins: 0 }, missions: {}, missionsDate: today() } : old;
-        const elapsed = Date.now() - current.lastUpdated;
-        if (elapsed < 240000) return current;
-        const decay = Math.floor(elapsed / 240000);
-        return { ...current, lastUpdated: Date.now(), needs: Object.fromEntries(Object.entries(current.needs).map(([key, value]) => [key, clamp(value - decay)])) as PetData['needs'] };
+        let cur = old;
+        if (cur.missionsDate !== today()) cur = { ...cur, daily: { feeds: 0, games: 0, baths: 0, pets: 0, coins: 0 }, missions: {}, missionsDate: today() };
+        const elapsed = Date.now() - cur.lastUpdated;
+        if (elapsed >= 240000) {
+          const decay = Math.floor(elapsed / 240000);
+          cur = { ...cur, lastUpdated: Date.now(), needs: Object.fromEntries(Object.entries(cur.needs).map(([k, v]) => [k, clamp(v - decay)])) as PetData['needs'] };
+        }
+        return cur;
       });
-    }, 30000);
+    }, 10000);
     return () => window.clearInterval(id);
   }, []);
   useEffect(() => {
@@ -184,116 +115,45 @@ function App() {
       setData((old) => {
         if (!old.sleepUntil) return old;
         if (old.room !== 'Schlafzimmer' || Date.now() >= old.sleepUntil) return { ...old, sleepUntil: null };
-        return { ...old, needs: { ...old.needs, energie: clamp(old.needs.energie + 5) } };
+        const gain = old.owned.includes('teddy') ? 7 : 5;
+        return { ...old, needs: { ...old.needs, energie: clamp(old.needs.energie + gain) } };
       });
     }, 10000);
     return () => window.clearInterval(id);
   }, []);
-  useEffect(() => {
-    if (!game || game.phase !== 'playing') return;
-    const interval = window.setInterval(() => {
-      setGame((old) => {
-        if (!old || old.phase !== 'playing') return old;
-        if (old.time <= 1) return { ...old, time: 0 };
-        return { ...old, time: old.time - 1 };
-      });
-      if (game.id === 'turbo') setTarget({ x: 8 + Math.random() * 84, y: 12 + Math.random() * 76 });
-      if (game.id === 'run') setTarget((point) => ({ ...point, x: Math.max(8, point.x - 4.5) }));
-    }, 1000);
-    return () => window.clearInterval(interval);
-  }, [game?.id, game?.phase]);
-  useEffect(() => {
-    if (!game || game.phase !== 'playing' || game.id !== 'catch') return undefined;
-    catchTickRef.current = 0;
-    fallingItemsRef.current = [];
-    setFallingItems([]);
-    const timer = window.setInterval(() => {
-      catchTickRef.current += 1;
-      const next: FallingItem[] = [];
-      let scoreDelta = 0;
-      let caughtGood = 0;
-      for (const item of fallingItemsRef.current) {
-        const moved = { ...item, y: item.y + 1.2 + Math.max(0, 25 - game.time) / 45 };
-        if (moved.y >= 83 && Math.abs(moved.x - basketXRef.current) < 14) {
-          scoreDelta += moved.good ? 2 : -3;
-          if (moved.good) caughtGood += 1;
-        } else if (moved.y < 102) next.push(moved);
-      }
-      if (catchTickRef.current % 5 === 0) {
-        next.push({ id: Date.now() + catchTickRef.current, x: 8 + Math.random() * 84, y: -8, good: Math.random() > .28 });
-      }
-      fallingItemsRef.current = next;
-      setFallingItems(next);
-      if (scoreDelta) setGame((old) => old && old.phase === 'playing' ? { ...old, score: Math.max(0, old.score + scoreDelta), message: scoreDelta > 0 ? 'Snack gefangen!' : 'Iih, lieber nicht!' } : old);
-      if (caughtGood) setData((old) => ({ ...old, stats: { ...old.stats, catches: old.stats.catches + caughtGood } }));
-    }, 100);
-    return () => window.clearInterval(timer);
-  }, [game?.id, game?.phase]);
-  useEffect(() => {
-    if (!game || game.phase !== 'playing' || game.id !== 'bone') return undefined;
-    const timer = window.setInterval(() => {
-      setCups((old) => {
-        const next = [...old];
-        const first = Math.floor(Math.random() * 3);
-        let second = Math.floor(Math.random() * 2);
-        if (second >= first) second += 1;
-        [next[first], next[second]] = [next[second], next[first]];
-        return next;
-      });
-    }, 720);
-    return () => window.clearInterval(timer);
-  }, [game?.id, game?.phase]);
-  useEffect(() => {
-    if (game?.phase === 'playing' && game.time <= 0) finishGame(game);
-  }, [game?.time, game?.phase]);
-  useEffect(() => {
-    if (!game || game.phase !== 'playing' || game.id !== 'memory' || !cards.length) return undefined;
-    if (cards.every((card) => card.matched)) {
-      const id = window.setTimeout(() => setGame((old) => old ? finishGame({ ...old, time: Math.max(0, old.time), score: old.score + Math.max(0, old.time) * 2 }) : old), 700);
-      return () => window.clearTimeout(id);
-    }
-    return undefined;
-  }, [cards, game?.id, game?.phase]);
-  useEffect(() => {
-    if (game?.id === 'run' && game.phase === 'playing' && target.x <= 8) {
-      if (target.y > 0 && !jumping) setGame((old) => old && old.phase === 'playing' ? { ...old, score: Math.max(0, old.score - 3), message: 'Platsch! Hindernis erwischt.' } : old);
-      setTarget({ x: 105, y: Math.random() > .4 ? 0 : 35 });
-    }
-  }, [game?.id, game?.phase, target.x, target.y, jumping]);
+
   const level = levelFor(data.xp);
   const previousLevel = useRef(level);
   const xpProgress = data.xp % 100;
   const topScore = useMemo(() => [...data.records].sort((a, b) => b.score - a.score).slice(0, 10), [data.records]);
-  const notify = useCallback((message: string) => { setToast(message); window.setTimeout(() => setToast(''), 2400); }, []);
+  const notify = useCallback((message: string) => { setToast(message); later('toast', () => setToast(''), 2400); }, [later]);
   useEffect(() => {
     if (level > previousLevel.current) {
-      const levelsGained = level - previousLevel.current;
+      const gained = level - previousLevel.current;
       previousLevel.current = level;
-      setData((old) => ({ ...old, coins: old.coins + levelsGained * 20 }));
-      notify(`Level ${level}! ${levelsGained * 20} Münzen warten auf dich.`);
+      setData((old) => ({ ...old, coins: old.coins + gained * 20 }));
+      notify(`Level ${level}! ${gained * 20} Münzen warten auf dich.`);
     }
   }, [level, notify]);
-  const sound = useCallback((frequency = 540) => {
-    if (!data.settings.sound || data.settings.volume <= 0) return;
+
+  const settingsRef = useRef(data.settings); settingsRef.current = data.settings;
+  const sound: SoundFn = useCallback((frequency = 540, opts = {}) => {
+    const st = settingsRef.current;
+    if (!st.sound || st.volume <= 0) return;
     try {
       const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtx) return;
       soundContext.current ??= new AudioCtx();
       const ctx = soundContext.current;
-      const oscillator = ctx.createOscillator(); const gain = ctx.createGain();
-      oscillator.type = 'triangle'; oscillator.frequency.value = frequency;
-      gain.gain.setValueAtTime(.08 * data.settings.volume / 100, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(.001, ctx.currentTime + .16);
-      oscillator.connect(gain); gain.connect(ctx.destination); oscillator.start(); oscillator.stop(ctx.currentTime + .17);
+      if (ctx.state === 'suspended') void ctx.resume();
+      const dur = opts.dur ?? 0.16;
+      const osc = ctx.createOscillator(); const gain = ctx.createGain();
+      osc.type = opts.type ?? 'triangle'; osc.frequency.setValueAtTime(frequency, ctx.currentTime);
+      if (opts.slide) osc.frequency.exponentialRampToValueAtTime(opts.slide, ctx.currentTime + dur);
+      gain.gain.setValueAtTime(0.08 * st.volume / 100, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+      osc.connect(gain); gain.connect(ctx.destination); osc.start(); osc.stop(ctx.currentTime + dur + 0.02);
     } catch { /* audio is optional */ }
-  }, [data.settings.sound, data.settings.volume]);
-  function showPetAction(action: PetAction, line: string) {
-    setPetAction(action);
-    setPetSpeech(line);
-    if (petActionTimer.current) window.clearTimeout(petActionTimer.current);
-    if (action !== 'sleeping') {
-      petActionTimer.current = window.setTimeout(() => setPetAction('idle'), 1800);
-    }
-  }
+  }, []);
   useEffect(() => {
     if (!data.settings.music || data.settings.volume <= 0) return undefined;
     const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -304,161 +164,128 @@ function App() {
     const notes = [261.63, 329.63, 392, 329.63, 293.66, 349.23, 392, 349.23];
     let index = 0;
     const playNote = () => {
-      const oscillator = context.createOscillator();
-      const gain = context.createGain();
-      oscillator.type = 'sine';
-      oscillator.frequency.value = notes[index++ % notes.length];
-      gain.gain.setValueAtTime(.001, context.currentTime);
-      gain.gain.linearRampToValueAtTime(.012 * data.settings.volume / 100, context.currentTime + .08);
-      gain.gain.exponentialRampToValueAtTime(.001, context.currentTime + .48);
-      oscillator.connect(gain); gain.connect(context.destination);
-      oscillator.start(); oscillator.stop(context.currentTime + .5);
+      const o = context.createOscillator(); const g = context.createGain();
+      o.type = 'sine'; o.frequency.value = notes[index++ % notes.length];
+      g.gain.setValueAtTime(0.001, context.currentTime);
+      g.gain.linearRampToValueAtTime(0.012 * data.settings.volume / 100, context.currentTime + 0.08);
+      g.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.48);
+      o.connect(g); g.connect(context.destination); o.start(); o.stop(context.currentTime + 0.5);
     };
     playNote();
     const timer = window.setInterval(playNote, 650);
     return () => window.clearInterval(timer);
   }, [data.settings.music, data.settings.volume]);
 
-  function award(coins: number, xp: number, stat?: keyof PetData['stats']) {
-    setData((old) => ({ ...old, coins: old.coins + coins, xp: old.xp + xp, stats: { ...old.stats, ...(stat ? { [stat]: old.stats[stat] + 1 } : {}) } }));
+  const sleeping = !!data.sleepUntil && data.sleepUntil > now;
+  const mood = moodFor(data.needs, excited, sleeping);
+  function cheer(ms = 3500) { setExcited(true); later('excited', () => setExcited(false), ms); }
+  function showPetAction(action: PetAction, line: string) {
+    setPetAction(action); setPetSpeech(line);
+    if (action !== 'sleeping') later('pet', () => setPetAction('idle'), 1800);
   }
-  function finishGame(finalGame: GameState): GameState {
-    if (finishedGameRef.current) return finalGame;
-    finishedGameRef.current = true;
-    const record: GameRecord = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, game: finalGame.id, score: finalGame.score, date: Date.now() };
-    const rewardCoins = Math.max(5, Math.floor(finalGame.score / 2));
+
+  // ---------- games ----------
+  const requestStart = useCallback(() => {
+    if (dataRef.current.needs.energie < 20) { notify('Scottchi braucht erst Schlaf. Besuch das Schlafzimmer.'); return false; }
+    setData((old) => ({ ...old, needs: { ...old.needs, energie: clamp(old.needs.energie - 8) } }));
+    return true;
+  }, [notify]);
+  const completeGame = useCallback((sessionId: string, result: GameResult): RewardSummary => {
+    const cur = dataRef.current;
+    const game = sessionId.split('-')[0] as GameId;
+    const prevBest = cur.highscores[game] || 0;
+    const { coins, xp, reduced } = rewardFor(game, result.score, cur.daily.games);
+    const newChallenges = CHALLENGES.filter((c) => c.game === game && !cur.challenges[c.id] && c.test(result.score, result.metrics));
+    const summary: RewardSummary = {
+      coins: coins + newChallenges.reduce((a, c) => a + c.coins, 0), xp: xp + newChallenges.reduce((a, c) => a + c.xp, 0),
+      newBest: result.score > prevBest && result.score > 0, best: Math.max(prevBest, result.score), challenges: newChallenges.map((c) => c.title), reduced,
+    };
+    if (rewardedSessions.current.has(sessionId)) return { ...summary, coins: 0, xp: 0, challenges: [] };
+    rewardedSessions.current.add(sessionId);
+    const record: GameRecord = { id: sessionId, game, score: result.score, date: Date.now() };
     setData((old) => {
+      if (old.records.some((r) => r.id === sessionId)) return old;
+      const challenges = { ...old.challenges };
+      let bonusCoins = 0, bonusXp = 0;
+      for (const c of newChallenges) if (!challenges[c.id]) { challenges[c.id] = Date.now(); bonusCoins += c.coins; bonusXp += c.xp; }
       let next: PetData = {
-        ...old, records: [record, ...old.records].slice(0, 100), coins: old.coins + rewardCoins,
-        xp: old.xp + Math.max(5, Math.floor(finalGame.score / 3)), stats: { ...old.stats, games: old.stats.games + 1 },
+        ...old, records: [record, ...old.records].slice(0, 100), coins: old.coins + coins + bonusCoins, xp: old.xp + xp + bonusXp,
+        highscores: { ...old.highscores, [game]: Math.max(old.highscores[game] || 0, result.score) }, challenges,
+        needs: applyNeeds(old.needs, { glueck: 6 }),
+        stats: { ...old.stats, games: old.stats.games + 1, catches: old.stats.catches + (result.metrics.caught || 0), taps: old.stats.taps + (result.metrics.hits || 0) },
       };
       next = advanceDaily(next, 'games');
-      return advanceDaily(next, 'coins', rewardCoins);
+      return advanceDaily(next, 'coins', coins + bonusCoins);
     });
-    const done = { ...finalGame, phase: 'done' as const, message: 'Runde geschafft!' };
-    setGame(done); sound(780); return done;
-  }
-  function beginGame(id: GameId, pairCount = memoryPairs) {
-    if (data.needs.energie < 20) { notify('Wuschel braucht erst Schlaf. Besuch das Schlafzimmer.'); return; }
-    const durations: Record<GameId, number> = { catch: 30, memory: pairCount === 6 ? 75 : pairCount === 8 ? 100 : 135, turbo: 10, bone: 25, run: 30 };
-    setData((old) => ({ ...old, needs: { ...old.needs, energie: clamp(old.needs.energie - 8) } }));
-    finishedGameRef.current = false;
-    setGame({ id, phase: 'playing', score: 0, time: durations[id] });
-    setTarget({ x: 50, y: 50 }); setCards([]); setFirstCard(null); setJumping(false); setFallingItems([]); fallingItemsRef.current = [];
-    setBasketX(50); basketXRef.current = 50; setCups([0, 1, 2]); setBoneTarget(Math.floor(Math.random() * 3)); obstacleResolvedRef.current = false;
-    if (id === 'memory') {
-      const values = ['●', '✦', '⌁', '▰', '◉', '♧', '◇', '♥', '≈', '☼', '♛', '✿'].slice(0, pairCount);
-      setCards([...values, ...values].sort(() => Math.random() - .5).map((value) => ({ value, open: false, matched: false })));
-    }
-    sound(430);
-  }
-  function hitTarget(e?: PointerEvent<HTMLButtonElement>) {
-    e?.stopPropagation();
-    if (!game || game.phase !== 'playing') return;
-    setGame({ ...game, score: game.score + (game.id === 'catch' ? 2 : game.id === 'bone' ? 5 : 1), message: '' });
-    setTarget({ x: 8 + Math.random() * 84, y: 12 + Math.random() * 76 }); sound(game.id === 'bone' ? 820 : 620);
-    if (game.id === 'catch') award(0, 0, 'catches');
-    if (game.id === 'turbo') award(0, 0, 'taps');
-  }
-  function moveBasket(e: PointerEvent<HTMLDivElement>) {
-    if (game?.id !== 'catch' || game.phase !== 'playing') return;
-    const bounds = e.currentTarget.getBoundingClientRect();
-    const nextX = Math.max(7, Math.min(93, ((e.clientX - bounds.left) / bounds.width) * 100));
-    basketXRef.current = nextX;
-    setBasketX(nextX);
-  }
-  function chooseCup(position: number) {
-    if (!game || game.id !== 'bone' || game.phase !== 'playing') return;
-    if (cups[position] === boneTarget) {
-      setGame((old) => old ? { ...old, score: old.score + 10, message: 'Gefunden! +10 Punkte.' } : old);
-      setBoneTarget(Math.floor(Math.random() * 3));
-      setCups([0, 1, 2]); sound(800);
-    } else {
-      setGame((old) => old ? { ...old, time: Math.max(0, old.time - 2), message: 'Daneben! Zwei Sekunden verloren.' } : old);
-      sound(240);
-    }
-  }
-  function playMemory(index: number) {
-    if (!game || game.phase !== 'playing' || cards[index]?.open || cards[index]?.matched || cards.filter((card) => card.open && !card.matched).length >= 2) return;
-    sound(500);
-    if (firstCard === null) {
-      setFirstCard(index); setCards((old) => old.map((card, i) => i === index ? { ...card, open: true } : card)); return;
-    }
-    const pairIndex = firstCard;
-    const openNow = cards.map((card, i) => i === index || i === pairIndex ? { ...card, open: true } : card);
-    setCards(openNow); setFirstCard(null);
-    if (cards[pairIndex].value === cards[index].value) {
-      setTimeout(() => setCards((old) => old.map((card, i) => i === index || i === pairIndex ? { ...card, matched: true } : card)), 300);
-      setGame((old) => old ? { ...old, score: old.score + 10 } : old); sound(740);
-    } else setTimeout(() => setCards((old) => old.map((card, i) => i === index || i === pairIndex ? { ...card, open: false } : card)), 700);
-  }
-  function jump() {
-    if (!game || game.id !== 'run' || game.phase !== 'playing') return;
-    if (target.y > 0 && target.x <= 35 && target.x > 8) {
-      setGame({ ...game, score: game.score + 5, message: 'Hindernis übersprungen! +5' });
-      award(0, 0, 'taps'); setTarget({ x: 100, y: Math.random() > .22 ? 0 : 37 }); sound(700);
-    }
-    setJumping(true); window.setTimeout(() => setJumping(false), 420);
-  }
+    sound(780, { dur: 0.25, slide: 1170 });
+    if (result.score > 0 || newChallenges.length) cheer(5000);
+    return summary;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sound]);
+  function openGame(id: GameId) { setPage('games'); setActiveGame(id); }
+
+  // ---------- care ----------
   function performNeed(id: NeedKey) {
     if (id === 'hunger') {
       const preferred = ITEMS.find((item) => item.id === selectedFood && item.effect === 'hunger');
-      const food = (preferred && data.inventory[preferred.id] > 0 ? preferred : null)
-        || ITEMS.find((item) => item.effect === 'hunger' && (data.inventory[item.id] || 0) > 0);
+      const food = (preferred && data.inventory[preferred.id] > 0 ? preferred : null) || ITEMS.find((item) => item.effect === 'hunger' && (data.inventory[item.id] || 0) > 0);
       if (!food) { notify('Der Vorrat ist leer. Im Laden gibt es Snacks.'); return; }
-      if (data.needs.hunger >= 100) { notify('Wuschel ist schon pappsatt.'); return; }
+      if (data.needs.hunger >= 100) { notify('Scottchi ist schon pappsatt.'); return; }
+      const bowl = data.owned.includes('bowl') ? 1.25 : 1;
       setData((old) => advanceDaily({
-        ...old,
-        inventory: { ...old.inventory, [food.id]: Math.max(0, (old.inventory[food.id] || 0) - 1) },
-        needs: { ...old.needs, hunger: clamp(old.needs.hunger + (food.amount || 12)) },
-        xp: old.xp + 9,
-        stats: { ...old.stats, care: old.stats.care + 1 },
+        ...old, inventory: { ...old.inventory, [food.id]: Math.max(0, (old.inventory[food.id] || 0) - 1) },
+        needs: { ...old.needs, hunger: clamp(old.needs.hunger + (food.amount || 12) * bowl) }, xp: old.xp + 9, stats: { ...old.stats, care: old.stats.care + 1 },
       }, 'feeds'));
       showPetAction('eating', `Mmmh, ${food.name.toLowerCase()}!`);
-      notify(`${food.name} für ${data.name}!`); sound(680); return;
+      notify(`${food.name} für ${data.name}${bowl > 1 ? ' aus dem Napf' : ''}!`); sound(680); return;
     }
     if (id === 'sauberkeit') {
-      const soap = ITEMS.find((item) => item.id === 'soap');
-      if ((data.inventory.soap || 0) < 1) { notify('Für ein Schaumbad brauchst du noch Seife aus dem Laden.'); return; }
-      if (data.needs.sauberkeit >= 100) { notify('Wuschel ist schon blitzsauber.'); return; }
+      if ((data.inventory.soap || 0) < 1) { notify(data.owned.includes('shampoo') ? 'Keine Seife. Im Bad kannst du das Shampoo benutzen.' : 'Für ein Schaumbad brauchst du noch Seife aus dem Laden.'); return; }
+      if (data.needs.sauberkeit >= 100) { notify('Scottchi ist schon blitzsauber.'); return; }
       setData((old) => advanceDaily({
-        ...old,
-        inventory: { ...old.inventory, soap: Math.max(0, (old.inventory.soap || 0) - 1) },
-        needs: { ...old.needs, sauberkeit: clamp(old.needs.sauberkeit + (soap?.amount || 30)) },
-        xp: old.xp + 10,
-        stats: { ...old.stats, care: old.stats.care + 1 },
+        ...old, inventory: { ...old.inventory, soap: Math.max(0, (old.inventory.soap || 0) - 1) },
+        needs: { ...old.needs, sauberkeit: clamp(old.needs.sauberkeit + 35) }, xp: old.xp + 10, stats: { ...old.stats, care: old.stats.care + 1 },
       }, 'baths'));
       showPetAction('washing', 'Blasen! Blasen! Das kitzelt.');
-      notify('Schaumwolke! Wuschel ist wieder sauber.'); sound(760); return;
+      notify('Schaumwolke! Scottchi ist wieder sauber.'); sound(760); return;
     }
-    if (id === 'glueck') {
-      if (data.needs.energie < 10) { notify('Wuschel braucht erst eine Pause.'); return; }
-      setData((old) => ({
-        ...old,
-        needs: { ...old.needs, glueck: clamp(old.needs.glueck + 12), energie: clamp(old.needs.energie - 4) },
-        xp: old.xp + 4,
-        stats: { ...old.stats, care: old.stats.care + 1 },
-      }));
-      showPetAction('happy', 'Wuff oder so!');
-      notify('Wuschel macht einen Quatsch-Sprung.'); sound(720);
-    }
+    if (data.needs.energie < 10) { notify('Scottchi braucht erst eine Pause.'); return; }
+    setData((old) => ({ ...old, needs: { ...old.needs, glueck: clamp(old.needs.glueck + 12), energie: clamp(old.needs.energie - 4) }, xp: old.xp + 4, stats: { ...old.stats, care: old.stats.care + 1 } }));
+    showPetAction('happy', 'Wuff oder so!'); cheer(1800);
+    notify('Scottchi macht einen Quatsch-Sprung.'); sound(720);
   }
   function pet() {
-    setData((old) => advanceDaily({
-      ...old,
-      needs: { ...old.needs, glueck: clamp(old.needs.glueck + 8) },
-      xp: old.xp + 4,
-      stats: { ...old.stats, care: old.stats.care + 1 },
-    }, 'pets'));
+    if (sleeping) { showPetAction('sleeping', 'Zzz… nur noch fünf Minuten.'); return; }
+    setData((old) => advanceDaily({ ...old, needs: { ...old.needs, glueck: clamp(old.needs.glueck + 8) }, xp: old.xp + 4, stats: { ...old.stats, care: old.stats.care + 1 } }, 'pets'));
     const lines = ['Das kitzelt!', 'Was guckst du?', 'Wuff oder so!', 'Ich bin eine Kreatur.', 'Was passiert hier eigentlich?', 'Ich habe existenzielle Fragen.'];
     showPetAction('petting', lines[Math.floor(Math.random() * lines.length)]);
-    notify('Wuschel freut sich.'); sound(650);
+    notify(`${data.name} freut sich.`); sound(650);
+  }
+  function playToy(id: string) {
+    const use = TOY_USE[id];
+    const item = itemById(id);
+    if (!use || !item || !data.owned.includes(id)) return;
+    if (sleeping) { notify('Psst, Scottchi schläft.'); return; }
+    if (use.room && data.room !== use.room) { notify(`${item.name} funktioniert nur im ${use.room}.`); return; }
+    if (use.energy && data.needs.energie < use.energy) { notify('Zu müde zum Toben. Erst schlafen.'); return; }
+    setToyFx({ id, fx: use.fx, key: Date.now() }); later('toy', () => setToyFx(null), 1300);
+    sound(use.freq, { dur: id === 'duck' ? 0.18 : 0.2, slide: use.slide, type: id === 'duck' ? 'square' : 'triangle' });
+    showPetAction(use.action, use.line);
+    const ready = (toyCooldown.current[id] || 0) <= Date.now();
+    if (!ready) { notify('Lustig! Für Bonuspunkte kurz verschnaufen.'); return; }
+    toyCooldown.current[id] = Date.now() + use.cooldown * 1000;
+    if (use.action !== 'washing') cheer(2200);
+    setData((old) => {
+      const next = { ...old, needs: applyNeeds(old.needs, use.need), xp: old.xp + 5, stats: { ...old.stats, toys: (old.stats.toys || 0) + 1, care: old.stats.care + 1 } };
+      return id === 'shampoo' ? advanceDaily(next, 'baths') : next;
+    });
   }
   function buy(item: Item) {
     if (item.unlockLevel && level < item.unlockLevel) { notify(`Ab Level ${item.unlockLevel} freigeschaltet.`); return; }
     if (item.type !== 'food' && data.owned.includes(item.id)) { notify('Das gehört schon dir.'); return; }
     if (data.coins < item.price) { notify('Noch nicht genug Münzen.'); return; }
     setData((old) => {
+      if (old.coins < item.price || (item.type !== 'food' && old.owned.includes(item.id))) return old;
       const stats = { ...old.stats, purchases: old.stats.purchases + 1 };
       if (item.type === 'food') return { ...old, coins: old.coins - item.price, inventory: { ...old.inventory, [item.id]: (old.inventory[item.id] || 0) + 1 }, stats };
       return { ...old, coins: old.coins - item.price, owned: [...old.owned, item.id], stats };
@@ -467,11 +294,14 @@ function App() {
   }
   function equip(id: string) {
     setData((old) => {
-      const item = ITEMS.find((value) => value.id === id);
+      const item = itemById(id);
       if (!item) return old;
-      if (item.type === 'room') return { ...old, roomItems: old.roomItems.includes(id) ? old.roomItems.filter((value) => value !== id) : [...old.roomItems, id] };
+      if (item.type === 'room') return { ...old, roomItems: old.roomItems.includes(id) ? old.roomItems.filter((v) => v !== id) : [...old.roomItems, id] };
       if (item.type === 'background') return { ...old, activeBackground: old.activeBackground === id ? 'classic' : id };
-      return { ...old, equipped: old.equipped.includes(id) ? old.equipped.filter((value) => value !== id) : [...old.equipped, id] };
+      if (old.equipped.includes(id)) return { ...old, equipped: old.equipped.filter((v) => v !== id) };
+      const slot = SLOT_OF[id];
+      // one item per slot: equipping a hat swaps the old hat, etc.
+      return { ...old, equipped: [...old.equipped.filter((v) => !slot || SLOT_OF[v] !== slot), id] };
     });
   }
   function changeRoom(room: Room) {
@@ -479,16 +309,15 @@ function App() {
     sound(520);
   }
   function sleep() {
-    if (data.room !== 'Schlafzimmer') { notify('Wuschel kann nur im Schlafzimmer schlafen.'); return; }
-    if (data.sleepUntil && data.sleepUntil > Date.now()) {
+    if (data.room !== 'Schlafzimmer') { notify('Scottchi kann nur im Schlafzimmer schlafen.'); return; }
+    if (sleeping) {
       setData((old) => ({ ...old, sleepUntil: null, settings: { ...old.settings, lampOn: true } }));
-      showPetAction('idle', 'Morgen! Was gibt es?');
-      notify('Wuschel ist wieder wach.'); sound(500); return;
+      showPetAction('idle', 'Morgen! Was gibt es?'); notify('Scottchi ist wieder wach.'); sound(500); return;
     }
     setData((old) => ({ ...old, sleepUntil: Date.now() + 60000, settings: { ...old.settings, lampOn: false }, xp: old.xp + 2 }));
+    setNow(Date.now() + 1);
     showPetAction('sleeping', 'Zzz…');
-    notify(`${data.name} schläft jetzt eine Runde. Energie erholt sich.`);
-    sound(420);
+    notify(`${data.name} schläft jetzt eine Runde${data.owned.includes('teddy') ? ' mit dem Teddy' : ''}.`); sound(420);
   }
   function exportSave() {
     const blob = new Blob([JSON.stringify({ ...data, lastUpdated: Date.now() }, null, 2)], { type: 'application/json' });
@@ -498,90 +327,61 @@ function App() {
     try {
       const value = JSON.parse(fileText) as Partial<PetData>;
       if (value.version !== 1 || !value.needs || !value.stats || !Number.isFinite(value.coins) || !Number.isFinite(value.xp)) throw new Error('invalid');
-      const defaults = initialData();
-      const now = Date.now();
-      const decay = Math.floor(Math.max(0, now - (value.lastUpdated || now)) / 240000);
-      const sameDay = value.missionsDate === today();
-      const imported: PetData = {
-        ...defaults, ...value,
-        needs: {
-          hunger: clamp(Number(value.needs.hunger ?? defaults.needs.hunger) - decay),
-          glueck: clamp(Number(value.needs.glueck ?? defaults.needs.glueck) - decay),
-          energie: clamp(Number(value.needs.energie ?? defaults.needs.energie) - decay),
-          sauberkeit: clamp(Number(value.needs.sauberkeit ?? defaults.needs.sauberkeit) - decay),
-        },
-        stats: { ...defaults.stats, ...value.stats },
-        daily: sameDay ? { ...defaults.daily, ...value.daily } : defaults.daily,
-        missions: sameDay ? (value.missions || {}) : {},
-        claimedAchievements: value.claimedAchievements || [],
-        settings: { ...defaults.settings, ...value.settings },
-        lastUpdated: now,
-        missionsDate: today(),
-      };
-      setData(imported); setModal(null); setFileText(''); notify('Spielstand geladen.');
+      setData(normalize(value)); setModal(null); setFileText(''); notify('Spielstand geladen.');
     } catch { notify('Datei ist kein gültiger tamascottchi-Spielstand.'); }
   }
-  function resetGame() { localStorage.removeItem(STORE_KEY); setData(initialData()); setPage('home'); setGame(null); setModal(null); notify('Neuer Spielstand gestartet.'); }
+  function resetGame() { localStorage.removeItem(STORE_KEY); setData(initialData()); setPage('home'); setActiveGame(null); setModal(null); notify('Neuer Spielstand gestartet.'); }
+
   const nav = [
     { id: 'home', label: 'Zuhause', icon: Home }, { id: 'shop', label: 'Laden', icon: ShoppingBag },
-    { id: 'games', label: 'Spiele', icon: Gamepad2 }, { id: 'closet', label: 'Fundstücke', icon: Sparkles },
+    { id: 'games', label: 'Spiele', icon: Gamepad2 }, { id: 'closet', label: 'Schrank', icon: Shirt },
     { id: 'leaderboard', label: 'Bestenliste', icon: Trophy }, { id: 'achievements', label: 'Erfolge', icon: Award },
   ];
-  const missions = DAILY_GOALS.map((goal) => ({
-    ...goal,
-    progress: Math.min(data.daily[goal.id], goal.target),
-    done: data.missions[goal.id] || false,
-    reward: `+${goal.rewardCoins} Münzen · +${goal.rewardXp} XP`,
-  }));
+  const missions = DAILY_GOALS.map((goal) => ({ ...goal, progress: Math.min(data.daily[goal.id], goal.target), done: data.missions[goal.id] || false, reward: `+${goal.rewardCoins} Münzen · +${goal.rewardXp} XP` }));
   const achievements = [
     { id: 'first-game', title: 'Pfoten in Bewegung', detail: 'Schließe dein erstes Spiel ab', progress: data.stats.games, goal: 1, icon: '✦', rewardCoins: 12, rewardXp: 10 },
     { id: 'ten-games', title: 'Spielplatz-Stammgast', detail: 'Spiele insgesamt 10 Runden', progress: data.stats.games, goal: 10, icon: '▦', rewardCoins: 30, rewardXp: 20 },
-    { id: 'careful', title: 'Gute Pfote', detail: 'Kümmere dich 5-mal um Wuschel', progress: data.stats.care, goal: 5, icon: '♥', rewardCoins: 16, rewardXp: 12 },
+    { id: 'careful', title: 'Gute Pfote', detail: 'Kümmere dich 5-mal um Scottchi', progress: data.stats.care, goal: 5, icon: '♥', rewardCoins: 16, rewardXp: 12 },
     { id: 'collector', title: 'Kleiner Sammler', detail: 'Kaufe 3 Dinge im Laden', progress: data.stats.purchases, goal: 3, icon: '◇', rewardCoins: 18, rewardXp: 12 },
     { id: 'room-hop', title: 'Zimmerreise', detail: 'Wechsle 5-mal den Raum', progress: data.stats.rooms, goal: 5, icon: '⌂', rewardCoins: 14, rewardXp: 12 },
     { id: 'snack', title: 'Snack-Spezialist', detail: 'Fang 25 Snacks', progress: data.stats.catches, goal: 25, icon: '●', rewardCoins: 22, rewardXp: 16 },
+    { id: 'toybox', title: 'Spielkamerad', detail: 'Spiele 15-mal mit Spielzeug', progress: data.stats.toys || 0, goal: 15, icon: '◎', rewardCoins: 20, rewardXp: 15 },
   ];
   function claimAchievement(id: string) {
-    const achievement = achievements.find((item) => item.id === id);
-    if (!achievement || achievement.progress < achievement.goal || data.claimedAchievements.includes(id)) return;
-    setData((old) => advanceDaily({
-      ...old,
-      coins: old.coins + achievement.rewardCoins,
-      xp: old.xp + achievement.rewardXp,
-      claimedAchievements: [...old.claimedAchievements, id],
-    }, 'coins', achievement.rewardCoins));
-    notify(`Erfolg abgeholt: +${achievement.rewardCoins} Münzen.`);
+    const a = achievements.find((item) => item.id === id);
+    if (!a || a.progress < a.goal || data.claimedAchievements.includes(id)) return;
+    setData((old) => old.claimedAchievements.includes(id) ? old : advanceDaily({ ...old, coins: old.coins + a.rewardCoins, xp: old.xp + a.rewardXp, claimedAchievements: [...old.claimedAchievements, id] }, 'coins', a.rewardCoins));
+    notify(`Erfolg abgeholt: +${a.rewardCoins} Münzen.`);
   }
-  const equipped = data.equipped.map((id) => ITEMS.find((item) => item.id === id)).filter(Boolean) as Item[];
-  const roomDecor = data.roomItems.map((id) => ITEMS.find((item) => item.id === id)).filter(Boolean) as Item[];
-  const currentGame = GAMES.find((item) => item.id === game?.id);
+  const roomDecor = data.roomItems.map(itemById).filter(Boolean) as Item[];
+  const ownedToys = data.owned.filter((id) => TOY_USE[id]);
+  const bgKey = data.activeBackground === 'classic' ? ROOM_BG[data.room] : undefined;
+  const bg = bgKey ? BACKGROUNDS[bgKey] : null;
+  const currentGame = GAMES.find((g) => g.id === activeGame);
+  const speech = sleeping ? 'Zzz…' : mood === 'hungry' ? 'Bro, ich hab Hunger.' : mood === 'tired' ? 'Ich bin so müde.' : mood === 'dirty' ? 'Ich rieche… interessant.' : mood === 'sad' ? 'Spielst du mit mir?' : petSpeech;
+  const ownedOf = (type: Item['type']) => data.owned.filter((id) => itemById(id)?.type === type);
 
-  function renderGameBoard() {
-    if (!game || !currentGame) return null;
-    const gameClass = game.id === 'catch' ? 'catch' : game.id === 'memory' ? 'memory' : game.id === 'turbo' ? 'tap' : game.id === 'bone' ? 'bone' : 'run';
-    return <section className={`game-screen ${gameClass}`} data-testid="game-board">
-      <div className="game-top"><button className="button small ghost" onClick={() => setGame(null)} data-testid="button-exit-game"><ChevronLeft size={15}/> Zurück</button><span className="eyebrow">{currentGame.name}</span><span className="stat-pill"><Zap size={14}/>{game.score}</span></div>
-      {game.id === 'memory' ? <><p className="subline">Finde {cards.length / 2} Paare · {fmtTime(game.time)} übrig</p><div className="memory-grid">{cards.map((card, i) => <button key={i} className={`memory-card ${card.open || card.matched ? 'open' : ''}`} onClick={() => playMemory(i)} disabled={card.matched} data-testid={`memory-card-${i}`}>{card.open || card.matched ? card.value : '?'}</button>)}</div></>
-        : <><div ref={playfieldRef} className="game-playfield" onPointerMove={game.id === 'catch' ? moveBasket : undefined} data-testid="game-playfield">
-          {game.id === 'catch' && <>
-            {fallingItems.map((item) => <span key={item.id} className={`falling-item ${item.good ? 'good' : 'bad'}`} style={{ left: `${item.x}%`, top: `${item.y}%` }} aria-label={item.good ? 'Snack' : 'Schmutz'}>{item.good ? '●' : '×'}</span>)}
-            <div className="snack-basket" style={{ left: `${basketX}%` }} aria-label="Futterkorb">▰</div>
-          </>}
-          {game.id === 'turbo' && <button className="catch-item" style={{ left: `${target.x}%`, top: `${target.y}%` }} onPointerDown={hitTarget} data-testid="game-target" aria-label="Pfote treffen"><PawPrint size={34}/></button>}
-          {game.id === 'bone' && <div className="cup-row">{cups.map((cup, position) => <button className="cup" style={{ left: `${16 + position * 34}%` }} key={cup} onClick={() => chooseCup(position)} data-testid={`cup-${position}`} aria-label={`Becher ${position + 1} wählen`}><span>∩</span><small>?</small></button>)}</div>}
-          {game.id === 'run' && <div className="run-track" onPointerDown={jump}><span className="runner" style={{ transform: jumping ? 'translateY(-68px) rotate(-12deg)' : 'translateY(0)' }}><img src={Wuschel} alt="" style={{ width: 60, height: 60, objectFit: 'contain' }}/></span>{target.y > 0 && <span className="obstacle" style={{ left: `${target.x}%` }}>▰</span>}</div>}
-          {game.id === 'run' && <button className="button orange" style={{ marginTop: 15 }} onPointerDown={(e) => { e.stopPropagation(); jump(); }} data-testid="button-jump"><Footprints size={16}/> Springen</button>}
-          {game.id === 'catch' && <p className="subline">Ziehe den Korb nach links und rechts und fange die fallenden Snacks.</p>}
-          {game.id === 'turbo' && <p className="subline">Triff die Pfote so oft du kannst, bevor die Zeit abläuft.</p>}
-          {game.id === 'bone' && <p className="subline">Merke dir den Knochenbecher und wähle ihn nach dem Mischen.</p>}
-          {game.id === 'run' && <p className="subline">Tippe auf das Feld oder „Springen“, wenn ein Hindernis kommt.</p>}
-          </div><div className="panel-head" style={{ margin: '12px 0 0' }}><span className="eyebrow">ZEIT</span><span className="score-big">{fmtTime(game.time)}</span></div></>}
-      {game.message && game.phase !== 'done' && <p className="subline">{game.message}</p>}
-      {game.phase === 'done' && <div className="overlay-result"><div><div className="eyebrow">RUNDENENDE</div><h2 className="panel-title" style={{ fontSize: 27 }}>{game.message || 'Stark gemacht!'}</h2><p>Punktzahl: <strong>{game.score}</strong><br/>Münzen und Erfahrung sind gutgeschrieben.</p><button className="button orange" onClick={() => beginGame(game.id)} data-testid="button-replay"><RotateCcw size={15}/> Nochmal spielen</button><button className="button" style={{ marginLeft: 9 }} onClick={() => { setGame(null); setPage('games'); }} data-testid="button-games-done">Spielauswahl</button></div></div>}
-    </section>;
-  }
+  const scene = <section
+    className={`room-card ${bg ? 'has-photo' : `room-${data.room.toLowerCase()} background-${data.activeBackground}`} ${data.room === 'Schlafzimmer' && !data.settings.lampOn ? 'room-dark' : ''}`}
+    style={bg ? { ['--bg-pos' as string]: bg.pos, ['--bg-pos-m' as string]: bg.mobilePos } : undefined} data-testid="room-scene">
+    {bg ? <picture key={bgKey} className="room-photo"><source srcSet={bg.src} type="image/webp"/><img src={bg.fallback} alt=""/></picture>
+      : <div key={data.room + data.activeBackground} className="room-css"><div className="room-sky"/><div className="room-floor"/><div className="room-window"/><div className="room-art">W</div><div className="rug"/></div>}
+    {roomDecor.map((item, i) => <div className="room-item" key={item.id} style={{ left: `${8 + i * 15}%` }}>{item.icon}</div>)}
+    {data.owned.includes('bowl') && <img src={itemById('bowl')!.img} alt="Futternapf" className="scene-bowl"/>}
+    <div className="room-badge">{data.room}</div>
+    <div className="pet-speech" key={speech} data-testid="text-pet-speech">{speech}</div>
+    {data.room === 'Schlafzimmer' && <button className="button small room-light" onClick={() => setData((old) => ({ ...old, settings: { ...old.settings, lampOn: !old.settings.lampOn } }))} data-testid="button-bedroom-light">{data.settings.lampOn ? 'Licht aus' : 'Licht an'}</button>}
+    <div className="pet-anchor">
+      <Scottchi mood={mood} equipped={data.equipped} action={petAction} sleeping={sleeping} onTap={pet} overrideVersion={tunerVersion}/>
+      {petAction === 'washing' && <div className="bubbles" aria-hidden><i/><i/><i/><i/><i/></div>}
+      {sleeping && <div className="zzz" aria-hidden><i>z</i><i>z</i><i>Z</i></div>}
+    </div>
+    {toyFx && <img key={toyFx.key} src={itemById(toyFx.id)?.img} alt="" className={`toy-fx fx-${toyFx.fx}`}/>}
+    {ownedToys.length > 0 && <div className="toy-tray" aria-label="Spielzeug benutzen">{ownedToys.map((id) => { const it = itemById(id)!; const locked = !!TOY_USE[id].room && TOY_USE[id].room !== data.room; return <button key={id} className={`toy-btn ${locked ? 'locked' : ''}`} onClick={() => playToy(id)} title={it.name} data-testid={`button-toy-${id}`}><img src={it.img} alt={it.name}/></button>; })}</div>}
+    <div className="room-controls">{ROOM_LIST.map((room) => <button key={room} className={`room-chip ${data.room === room ? 'selected' : ''}`} onClick={() => changeRoom(room)} data-testid={`room-${room.toLowerCase()}`}>{room}</button>)}</div>
+  </section>;
 
-  return <div className="app-shell">
+  return <div className={`app-shell ${activeGame ? 'in-game' : ''}`}>
     <header className="topbar">
       <div className="brand"><span className="brand-mark">t</span>tamascottchi</div>
       <div className="topstats">
@@ -592,68 +392,83 @@ function App() {
     </header>
     <div className="layout">
       <aside className="sidebar">
-        <div className="nav-card"><div className="nav-label">DEIN KLEINES UNIVERSUM</div><div className="nav-list">{nav.map(({ id, label, icon: Icon }) => <button key={id} onClick={() => { setPage(id); setGame(null); }} className={`nav-button ${page === id ? 'active' : ''}`} data-testid={`nav-${id}`}><Icon/>{label}</button>)}</div></div>
-        <div className="side-note"><strong>Level {level} · Wuschel-Fan</strong><div className="progress-track"><span style={{ width: `${xpProgress}%` }}/></div><div style={{ marginTop: 7 }}>{xpProgress} / 100 XP bis zum nächsten Level</div></div>
+        <div className="nav-card"><div className="nav-label">DEIN KLEINES UNIVERSUM</div><div className="nav-list">{nav.map(({ id, label, icon: Icon }) => <button key={id} onClick={() => { setPage(id); setActiveGame(null); }} className={`nav-button ${page === id ? 'active' : ''}`} data-testid={`nav-${id}`}><Icon/>{label}</button>)}</div></div>
+        <div className="side-note"><strong>Level {level} · Scottchi-Fan</strong><div className="progress-track"><span style={{ width: `${xpProgress}%` }}/></div><div style={{ marginTop: 7 }}>{xpProgress} / 100 XP bis zum nächsten Level</div></div>
       </aside>
       <main className="main">
-        <div className="main-head"><div><div className="eyebrow">{page === 'home' ? 'DEIN ZUHAUSE' : 'TAMASCOTTCHI'}</div><h1>{page === 'home' ? `Hallo, ${data.name}.` : page === 'shop' ? 'Der kleine Laden' : page === 'games' ? 'Spielzeit!' : page === 'closet' ? 'Fundstücke' : page === 'leaderboard' ? 'Bestenliste' : 'Erfolge'}</h1><div className="subline">{page === 'home' ? 'Heute ist ein guter Tag für Quatsch.' : page === 'leaderboard' ? 'Nur deine Ergebnisse auf diesem Gerät.' : 'Ein gemütlicher Ort für Wuschel und dich.'}</div></div>
+        {!activeGame && <div className="main-head"><div><div className="eyebrow">{page === 'home' ? 'DEIN ZUHAUSE' : 'TAMASCOTTCHI'}</div><h1>{page === 'home' ? `Hallo, ${data.name}.` : page === 'shop' ? 'Der kleine Laden' : page === 'games' ? 'Spielzeit!' : page === 'closet' ? 'Kleiderschrank' : page === 'leaderboard' ? 'Bestenliste' : 'Erfolge'}</h1><div className="subline">{page === 'home' ? 'Tippe Scottchi an, wirf Spielzeug, wechsle das Zimmer.' : page === 'leaderboard' ? 'Nur deine Ergebnisse auf diesem Gerät.' : 'Ein gemütlicher Ort für Scottchi und dich.'}</div></div>
           {page === 'home' && <button className="button small" onClick={() => { setNameDraft(data.name); setModal('name'); }} data-testid="button-rename">Name ändern</button>}
-          {page === 'home' && <div className="level-tag" aria-label={`Level ${level}`}></div>}
-        </div>
+        </div>}
 
         {page === 'home' && <>
           <div className="hero-grid">
-            <section className={`room-card room-${data.room.toLowerCase()} background-${data.activeBackground} ${data.room === 'Schlafzimmer' && !data.settings.lampOn ? 'room-dark' : ''}`} data-testid="room-scene">
-              <div className="room-sky"/><div className="room-floor"/><div className="room-window"/><div className="room-art">W</div><div className="rug"/>
-              {roomDecor.map((item, i) => <div className="room-item" key={item.id} style={{ left: `${20 + i * 18}%` }}>{item.icon}</div>)}
-              <div className="room-badge">{data.room}</div>
-              <div className="pet-speech">{data.sleepUntil && data.sleepUntil > Date.now() ? 'Zzz…' : data.needs.hunger < 20 ? 'Bro, ich hab Hunger.' : data.needs.energie < 20 ? 'Ich bin müde.' : petSpeech}</div>
-              {data.room === 'Schlafzimmer' && <button className="button small room-light" onClick={() => setData((old) => ({ ...old, settings: { ...old.settings, lampOn: !old.settings.lampOn } }))} data-testid="button-bedroom-light">{data.settings.lampOn ? 'Licht aus' : 'Licht an'}</button>}
-              <img src={Wuschel} className={`pet action-${petAction} ${data.sleepUntil && data.sleepUntil > Date.now() ? 'sleeping' : ''}`} role="button" tabIndex={0} aria-label="Wuschel streicheln" alt="Wuschel, dein flauschiger Hund-Mensch" onClick={pet} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') pet(); }} data-testid="img-wuschel"/>
-              {equipped.map((item) => <span key={item.id} className="room-item" style={{ top: '34%', left: '56%', bottom: 'auto', fontSize: 24 }}>{item.icon}</span>)}
-              <div className="room-controls">{ROOM_LIST.map((room) => <button key={room} className={`room-chip ${data.room === room ? 'selected' : ''}`} onClick={() => changeRoom(room)} data-testid={`room-${room.toLowerCase()}`}>{room}</button>)}</div>
-            </section>
+            {scene}
             <section className="panel need-panel">
-              <div className="panel-head"><h2 className="panel-title">Wuschels Wohlgefühl</h2><Activity size={18}/></div>
+              <div className="panel-head"><h2 className="panel-title">{data.name}s Wohlgefühl</h2><span className={`mood-tag mood-${mood}`} data-testid="status-mood">{({ default: 'Entspannt', happy: 'Glücklich', hungry: 'Hungrig', tired: 'Müde', dirty: 'Schmutzig', sad: 'Traurig', excited: 'Aufgedreht' } as const)[mood]}</span></div>
               {NEEDS.map(({ id, name, icon: Icon }) => <div className="need-row" key={id} data-testid={`need-${id}`}>
-                <div className="need-icon"><Icon/></div><div><div className="need-label">{name}</div><div className="meter"><div className={`meter-fill ${data.needs[id] < 30 ? 'low' : data.needs[id] < 55 ? 'mid' : ''}`} style={{ width: `${data.needs[id]}%` }}/></div></div><div className="need-value">{data.needs[id]}%</div>
+                <div className="need-icon"><Icon/></div><div><div className="need-label">{name}</div><div className="meter"><div className={`meter-fill ${data.needs[id] < 30 ? 'low' : data.needs[id] < 55 ? 'mid' : ''}`} style={{ transform: `scaleX(${data.needs[id] / 100})` }}/></div></div><div className="need-value">{data.needs[id]}%</div>
               </div>)}
               {data.room === 'Küche' && <div className="room-controls" style={{ position: 'static', flexWrap: 'wrap', margin: '0 0 3px' }} aria-label="Futter auswählen">
                 {ITEMS.filter((item) => item.type === 'food' && item.effect === 'hunger').map((item) => <button key={item.id} className={`room-chip ${selectedFood === item.id ? 'selected' : ''}`} disabled={!data.inventory[item.id]} onClick={() => setSelectedFood(item.id)} data-testid={`food-choice-${item.id}`}>{item.name} · {data.inventory[item.id] || 0}</button>)}
               </div>}
               <div className="pet-actions">
                 <button className="action-button" onClick={() => performNeed('hunger')} disabled={!ITEMS.some((item) => item.effect === 'hunger' && (data.inventory[item.id] || 0) > 0)} data-testid="button-feed"><Utensils/>Füttern · {data.inventory[selectedFood] || 0}</button>
-                <button className="action-button" onClick={() => performNeed('glueck')} data-testid="button-play-care"><Dumbbell/>Spielen</button>
+                <button className="action-button" onClick={() => performNeed('glueck')} data-testid="button-play-care"><Dumbbell/>Toben</button>
                 <button className="action-button" onClick={() => performNeed('sauberkeit')} data-testid="button-bath"><Bath/>Baden {data.inventory.soap ? `· ${data.inventory.soap}` : ''}</button>
                 <button className="action-button" onClick={pet} data-testid="button-cuddle"><Heart/>Kraulen</button>
-                {data.room === 'Schlafzimmer' && <button className="action-button" onClick={sleep} data-testid="button-sleep"><Moon size={15}/>{data.sleepUntil && data.sleepUntil > Date.now() ? 'Aufwachen' : 'Schlafen'}</button>}
+                {data.room === 'Schlafzimmer' && <button className="action-button" onClick={sleep} data-testid="button-sleep"><Moon size={15}/>{sleeping ? 'Aufwachen' : 'Schlafen'}</button>}
               </div>
+              {!ownedToys.length && <p className="subline">Spielzeug aus dem Laden erscheint direkt im Zimmer und lässt sich antippen.</p>}
             </section>
           </div>
           <div className="section-grid">
-            <section className="panel"><div className="panel-head"><h2 className="panel-title">Heute für euch</h2><Gift size={18}/></div><div className="mission-list">{missions.map((mission) => <div className="mission" key={mission.id} data-testid={`mission-${mission.id}`}><div className={`mission-check ${mission.done ? 'done' : ''}`}>{mission.done && <Check/>}</div><div><div className="mission-title">{mission.title}</div><div className="mission-progress">{mission.done ? 'Für heute erledigt' : `${mission.progress} / ${mission.target} · ${mission.detail}`}</div></div><span className="reward">{mission.done ? '✓' : mission.reward}</span></div>)}</div></section>
-            <section className="panel"><div className="panel-head"><h2 className="panel-title">Eine Runde?</h2><button className="text-link" onClick={() => setPage('games')} data-testid="link-all-games">Alle Spiele</button></div><div className="game-list">{GAMES.slice(0, 4).map((item) => <button key={item.id} className="game-tile" onClick={() => { setPage('games'); beginGame(item.id); }} data-testid={`start-${item.id}`}><span className="game-icon">{item.icon}</span><span className="game-name">{item.name}</span><span className="game-desc">{item.desc}</span></button>)}</div></section>
+            <section className="panel"><div className="panel-head"><h2 className="panel-title">Heute für euch</h2><Gift size={18}/></div><div className="mission-list">{missions.map((m) => <div className="mission" key={m.id} data-testid={`mission-${m.id}`}><div className={`mission-check ${m.done ? 'done' : ''}`}>{m.done && <Check/>}</div><div><div className="mission-title">{m.title}</div><div className="mission-progress">{m.done ? 'Für heute erledigt' : `${m.progress} / ${m.target} · ${m.detail}`}</div></div><span className="reward">{m.done ? 'Erledigt' : m.reward}</span></div>)}</div></section>
+            <section className="panel"><div className="panel-head"><h2 className="panel-title">Eine Runde?</h2><button className="text-link" onClick={() => setPage('games')} data-testid="link-all-games">Alle Spiele</button></div><div className="game-list">{GAMES.slice(0, 4).map((g) => <button key={g.id} className="game-tile" onClick={() => openGame(g.id)} data-testid={`start-${g.id}`}><span className="game-name">{g.name}</span><span className="game-desc">{g.desc}</span><span className="game-best">Best {data.highscores[g.id] || 0}</span></button>)}</div></section>
           </div>
         </>}
 
-        {page === 'games' && <>{game ? renderGameBoard() : <section className="page-grid">{GAMES.map((item) => <article className="panel" key={item.id} data-testid={`game-card-${item.id}`}><div className="panel-head"><h2 className="panel-title">{item.name}</h2><span style={{ font: '600 22px Fredoka', color: 'var(--orange)' }}>{item.icon}</span></div><p className="subline" style={{ minHeight: 32 }}>{item.desc}</p>{item.id === 'memory' && <div className="memory-difficulty" aria-label="Memory-Schwierigkeit">{[6, 8, 12].map((pairs) => <button key={pairs} className={`room-chip ${memoryPairs === pairs ? 'selected' : ''}`} onClick={() => setMemoryPairs(pairs)} data-testid={`memory-difficulty-${pairs}`}>{pairs === 6 ? 'Leicht' : pairs === 8 ? 'Mittel' : 'Schwer'} · {pairs}</button>)}</div>}<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14 }}><span className="eyebrow">ERGEBNISSE ZÄHLEN FÜR DEINE BESTENLISTE</span><button className="button orange" onClick={() => beginGame(item.id, memoryPairs)} data-testid={`button-start-${item.id}`}><Play size={14}/> Start</button></div></article>)}</section>}</>}
+        {page === 'games' && (activeGame && currentGame
+          ? <GameStage key={`${activeGame}-${memoryPairs}-${cupLevel}`} id={activeGame} name={currentGame.name} rules={currentGame.rules} best={data.highscores[activeGame] || 0}
+              difficulty={activeGame === 'memory' ? memoryPairs : activeGame === 'bone' ? cupLevel : undefined} extras={data.owned}
+              sound={sound} onRequestStart={requestStart} onComplete={completeGame} onExit={() => setActiveGame(null)}/>
+          : <section className="page-grid">{GAMES.map((g) => <article className="panel game-card2" key={g.id} data-testid={`game-card-${g.id}`}>
+            <div className="panel-head"><h2 className="panel-title">{g.name}</h2><span className="best-badge"><Trophy size={13}/> {data.highscores[g.id] || 0}</span></div>
+            <p className="subline" style={{ minHeight: 32 }}>{g.desc}</p>
+            {g.id === 'memory' && <div className="memory-difficulty">{[6, 8, 12].map((p) => <button key={p} className={`room-chip ${memoryPairs === p ? 'selected' : ''}`} onClick={() => setMemoryPairs(p)} data-testid={`memory-difficulty-${p}`}>{p === 6 ? 'Leicht' : p === 8 ? 'Mittel' : 'Schwer'} · {p}</button>)}</div>}
+            {g.id === 'bone' && <div className="memory-difficulty">{['Leicht', 'Mittel', 'Schwer'].map((l, i) => <button key={l} className={`room-chip ${cupLevel === i ? 'selected' : ''}`} onClick={() => setCupLevel(i)} data-testid={`cups-difficulty-${i}`}>{l}</button>)}</div>}
+            <div className="challenge-mini">{CHALLENGES.filter((c) => c.game === g.id).map((c) => <span key={c.id} className={data.challenges[c.id] ? 'done' : ''}><Target size={12}/> {c.title}</span>)}</div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}><button className="button orange" onClick={() => setActiveGame(g.id)} data-testid={`button-start-${g.id}`}><Play size={14}/> Spielen</button></div>
+          </article>)}</section>)}
 
-        {page === 'shop' && <section className="panel"><div className="panel-head"><h2 className="panel-title">Ein paar gute Dinge</h2><span className="stat-pill"><Coins size={14}/>{data.coins}</span></div><div className="room-controls" style={{ position: 'static', margin: '0 0 14px' }}>{(['food', 'toy', 'accessory', 'room', 'background'] as const).map((tab) => <button className={`room-chip ${shopTab === tab ? 'selected' : ''}`} key={tab} onClick={() => setShopTab(tab)} data-testid={`shop-tab-${tab}`}>{tab === 'food' ? 'Futter & Pflege' : tab === 'toy' ? 'Spielzeug' : tab === 'accessory' ? 'Accessoires' : tab === 'room' ? 'Zimmer' : 'Hintergründe'}</button>)}</div>
-          <div className="page-grid">{ITEMS.filter((item) => item.type === shopTab).map((item) => <div className="shop-item" key={item.id} data-testid={`shop-item-${item.id}`}><div className="item-icon">{item.icon}</div><div className="item-info"><div className="item-title">{item.name}</div><div className="item-meta">{item.unlockLevel && level < item.unlockLevel ? `Ab Level ${item.unlockLevel} freigeschaltet` : item.type === 'food' ? `${item.amount}% ${NEEDS.find((need) => need.id === item.effect)?.name.toLowerCase()} · Vorrat: ${data.inventory[item.id] || 0}` : item.type === 'room' ? 'Dekoration für dein Zuhause' : item.type === 'background' ? 'Ein neues Motiv für Wuschels Zimmer' : item.type === 'toy' ? 'Macht Wuschel glücklich' : 'Zum Anziehen und Angeben'}</div></div><button className="button small" onClick={() => buy(item)} disabled={(item.type !== 'food' && data.owned.includes(item.id)) || (!!item.unlockLevel && level < item.unlockLevel)} data-testid={`button-buy-${item.id}`}><Coins size={13}/>{item.type !== 'food' && data.owned.includes(item.id) ? 'Gekauft' : item.unlockLevel && level < item.unlockLevel ? `Level ${item.unlockLevel}` : item.price}</button></div>)}</div>
+        {page === 'shop' && <section className="panel"><div className="panel-head"><h2 className="panel-title">Ein paar gute Dinge</h2><span className="stat-pill"><Coins size={14}/>{data.coins}</span></div><div className="room-controls" style={{ position: 'static', margin: '0 0 14px', flexWrap: 'wrap' }}>{(['food', 'toy', 'accessory', 'room', 'background'] as const).map((tab) => <button className={`room-chip ${shopTab === tab ? 'selected' : ''}`} key={tab} onClick={() => setShopTab(tab)} data-testid={`shop-tab-${tab}`}>{tab === 'food' ? 'Futter & Pflege' : tab === 'toy' ? 'Spielzeug' : tab === 'accessory' ? 'Kleidung & Hüte' : tab === 'room' ? 'Zimmer' : 'Hintergründe'}</button>)}</div>
+          <div className="page-grid">{ITEMS.filter((item) => item.type === shopTab).map((item) => <div className="shop-item" key={item.id} data-testid={`shop-item-${item.id}`}><ItemIcon item={item}/><div className="item-info"><div className="item-title">{item.name}</div><div className="item-meta">{item.unlockLevel && level < item.unlockLevel ? `Ab Level ${item.unlockLevel} freigeschaltet` : item.type === 'food' ? `${item.amount}% ${NEEDS.find((n) => n.id === item.effect)?.name.toLowerCase()} · Vorrat: ${data.inventory[item.id] || 0}` : item.type === 'room' ? 'Dekoration für dein Zuhause' : item.type === 'background' ? 'Ersetzt das Zimmerbild durch ein Motiv' : item.type === 'toy' ? item.desc : SLOT_OF[item.id] === 'hat' ? 'Kopfbedeckung' : SLOT_OF[item.id] === 'outfit' ? 'Kleidung' : 'Accessoire'}</div></div><button className="button small" onClick={() => buy(item)} disabled={(item.type !== 'food' && data.owned.includes(item.id)) || (!!item.unlockLevel && level < item.unlockLevel)} data-testid={`button-buy-${item.id}`}><Coins size={13}/>{item.type !== 'food' && data.owned.includes(item.id) ? 'Gekauft' : item.unlockLevel && level < item.unlockLevel ? `Level ${item.unlockLevel}` : item.price}</button></div>)}</div>
         </section>}
 
-        {page === 'closet' && <div className="page-grid">
-          <section className="panel"><div className="panel-head"><h2 className="panel-title">Wuschel trägt</h2><Sparkles size={18}/></div>{data.owned.filter((id) => ['accessory', 'toy'].includes(ITEMS.find((item) => item.id === id)?.type || '')).length ? data.owned.filter((id) => ['accessory', 'toy'].includes(ITEMS.find((item) => item.id === id)?.type || '')).map((id) => { const item = ITEMS.find((value) => value.id === id)!; return <div className="shop-item" key={id}><div className="item-icon">{item.icon}</div><div className="item-info"><div className="item-title">{item.name}</div><div className="item-meta">{item.type === 'toy' ? 'Spielzeug' : 'Accessoire'}</div></div><button className="button small" onClick={() => equip(id)} data-testid={`button-equip-${id}`}>{data.equipped.includes(id) ? 'Ablegen' : 'Anziehen'}</button></div>; }) : <div className="empty-state">Noch nichts im Körbchen. Im Laden warten Accessoires und Spielzeug auf euch.</div>}
-           </section><section className="panel"><div className="panel-head"><h2 className="panel-title">Zimmerstücke</h2><House size={18}/></div>{data.owned.filter((id) => ITEMS.find((item) => item.id === id)?.type === 'room').length ? data.owned.filter((id) => ITEMS.find((item) => item.id === id)?.type === 'room').map((id) => { const item = ITEMS.find((value) => value.id === id)!; return <div className="shop-item" key={id}><div className="item-icon">{item.icon}</div><div className="item-info"><div className="item-title">{item.name}</div><div className="item-meta">{data.roomItems.includes(id) ? 'Steht schon im Zimmer' : 'Passt gut ins Zimmer'}</div></div><button className="button small" onClick={() => equip(id)} data-testid={`button-place-${id}`}>{data.roomItems.includes(id) ? 'Wegräumen' : 'Aufstellen'}</button></div>; }) : <div className="empty-state">Mit einer Pflanze oder Lampe wird es gleich viel wohnlicher.</div>}</section>
-           <section className="panel"><div className="panel-head"><h2 className="panel-title">Hintergründe</h2><House size={18}/></div>{data.owned.filter((id) => ITEMS.find((item) => item.id === id)?.type === 'background').length ? data.owned.filter((id) => ITEMS.find((item) => item.id === id)?.type === 'background').map((id) => { const item = ITEMS.find((value) => value.id === id)!; return <div className="shop-item" key={id}><div className="item-icon">{item.icon}</div><div className="item-info"><div className="item-title">{item.name}</div><div className="item-meta">{data.activeBackground === id ? 'Gerade ausgewählt' : 'Zimmermotiv'}</div></div><button className="button small" onClick={() => equip(id)} data-testid={`button-background-${id}`}>{data.activeBackground === id ? 'Auswählen' : 'Anwenden'}</button></div>; }) : <div className="empty-state">Freischaltbare Zimmermotive findest du im Laden.</div>}</section>
+        {page === 'closet' && <div className="closet-grid">
+          <section className="panel closet-preview"><div className="panel-head"><h2 className="panel-title">Anprobe</h2>{import.meta.env.DEV && <button className="button small ghost" onClick={() => setTunerOpen((v) => !v)} data-testid="button-dev-tuner"><Wrench size={14}/> Passform</button>}</div>
+            <div className="preview-stage"><Scottchi mood={mood} equipped={data.equipped} overrideVersion={tunerVersion}/></div>
+            {tunerOpen && <PlacementTuner mood={mood} equipped={data.equipped} onChange={() => setTunerVersion((v) => v + 1)}/>}
+          </section>
+          <div className="closet-lists">
+            <section className="panel"><div className="panel-head"><h2 className="panel-title">Kleidung & Hüte</h2><Sparkles size={18}/></div>{ownedOf('accessory').length ? ownedOf('accessory').map((id) => { const item = itemById(id)!; return <div className="shop-item" key={id}><ItemIcon item={item}/><div className="item-info"><div className="item-title">{item.name}</div><div className="item-meta">{SLOT_OF[id] === 'hat' ? 'Kopf' : SLOT_OF[id] === 'outfit' ? 'Körper' : SLOT_OF[id] === 'face' ? 'Gesicht' : 'Hals'}</div></div><button className="button small" onClick={() => equip(id)} data-testid={`button-equip-${id}`}>{data.equipped.includes(id) ? 'Ablegen' : 'Anziehen'}</button></div>; }) : <div className="empty-state">Noch nichts im Schrank. Im Laden warten Hüte, Hoodies und mehr.</div>}</section>
+            <section className="panel"><div className="panel-head"><h2 className="panel-title">Spielzeug</h2><Gamepad2 size={18}/></div>{ownedOf('toy').length ? ownedOf('toy').map((id) => { const item = itemById(id)!; return <div className="shop-item" key={id}><ItemIcon item={item}/><div className="item-info"><div className="item-title">{item.name}</div><div className="item-meta">{item.desc}</div></div>{TOY_USE[id] ? <button className="button small" onClick={() => { setPage('home'); playToy(id); }} data-testid={`button-use-${id}`}>Benutzen</button> : <span className="reward">Aktiv</span>}</div>; }) : <div className="empty-state">Ball, Ente, Seil und Co. findest du im Laden.</div>}</section>
+            <section className="panel"><div className="panel-head"><h2 className="panel-title">Zimmerstücke</h2><House size={18}/></div>{ownedOf('room').length ? ownedOf('room').map((id) => { const item = itemById(id)!; return <div className="shop-item" key={id}><ItemIcon item={item}/><div className="item-info"><div className="item-title">{item.name}</div><div className="item-meta">{data.roomItems.includes(id) ? 'Steht schon im Zimmer' : 'Passt gut ins Zimmer'}</div></div><button className="button small" onClick={() => equip(id)} data-testid={`button-place-${id}`}>{data.roomItems.includes(id) ? 'Wegräumen' : 'Aufstellen'}</button></div>; }) : <div className="empty-state">Mit einer Pflanze oder Lampe wird es gleich viel wohnlicher.</div>}</section>
+            <section className="panel"><div className="panel-head"><h2 className="panel-title">Hintergründe</h2><House size={18}/></div>{ownedOf('background').length ? ownedOf('background').map((id) => { const item = itemById(id)!; return <div className="shop-item" key={id}><ItemIcon item={item}/><div className="item-info"><div className="item-title">{item.name}</div><div className="item-meta">{data.activeBackground === id ? 'Aktiv · ersetzt die Zimmerbilder' : 'Zimmermotiv'}</div></div><button className="button small" onClick={() => equip(id)} data-testid={`button-background-${id}`}>{data.activeBackground === id ? 'Zimmerbild zeigen' : 'Anwenden'}</button></div>; }) : <div className="empty-state">Freischaltbare Zimmermotive findest du im Laden.</div>}</section>
+          </div>
         </div>}
 
-        {page === 'leaderboard' && <section className="panel"><div className="panel-head"><h2 className="panel-title">Deine stärksten Runden</h2><Trophy size={18}/></div><div className="side-note" style={{ margin: '0 0 12px' }}><strong>Geräte-lokale Bestenliste</strong>Hier stehen nur echte Spielrunden aus diesem Browser. Es gibt keine Online-Spieler und keinen Serverabgleich.</div>{topScore.length ? topScore.map((record, index) => <div className="leaderboard-row" key={record.id} data-testid={`score-row-${index}`}><span className="rank">#{index + 1}</span><div><strong>{GAMES.find((g) => g.id === record.game)?.name}</strong><div className="score-game">{new Date(record.date).toLocaleDateString('de-DE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</div></div><strong>{record.score} Pkt.</strong><Medal size={16}/></div>) : <div className="empty-state"><Trophy size={28}/><p>Noch keine Ergebnisse. Spiel eine Runde – deine echten Punkte erscheinen hier.</p><button className="button orange" onClick={() => setPage('games')} data-testid="button-play-first">Zu den Spielen</button></div>}</section>}
+        {page === 'leaderboard' && <div className="page-grid">
+          <section className="panel"><div className="panel-head"><h2 className="panel-title">Persönliche Bestwerte</h2><Medal size={18}/></div>{GAMES.map((g) => <div className="leaderboard-row" key={g.id} data-testid={`highscore-${g.id}`}><span className="rank"><Trophy size={14}/></span><strong>{g.name}</strong><strong>{data.highscores[g.id] || 0} Pkt.</strong><button className="button small" onClick={() => openGame(g.id)} data-testid={`button-beat-${g.id}`}>Schlagen</button></div>)}</section>
+          <section className="panel"><div className="panel-head"><h2 className="panel-title">Deine stärksten Runden</h2><Trophy size={18}/></div><div className="side-note" style={{ margin: '0 0 12px' }}><strong>Geräte-lokale Bestenliste</strong>Hier stehen nur echte Spielrunden aus diesem Browser. Es gibt keine Online-Spieler und keinen Serverabgleich.</div>{topScore.length ? topScore.map((r, i) => <div className="leaderboard-row" key={r.id} data-testid={`score-row-${i}`}><span className="rank">#{i + 1}</span><div><strong>{GAMES.find((g) => g.id === r.game)?.name}</strong><div className="score-game">{new Date(r.date).toLocaleDateString('de-DE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</div></div><strong>{r.score} Pkt.</strong><Medal size={16}/></div>) : <div className="empty-state"><Trophy size={28}/><p>Noch keine Ergebnisse. Spiel eine Runde, deine echten Punkte erscheinen hier.</p><button className="button orange" onClick={() => setPage('games')} data-testid="button-play-first">Zu den Spielen</button></div>}</section>
+        </div>}
 
-        {page === 'achievements' && <section className="panel"><div className="panel-head"><h2 className="panel-title">Kleine große Momente</h2><Award size={18}/></div><div className="page-grid">{achievements.map((item) => <div className={`achievement ${item.progress < item.goal ? 'locked' : ''}`} key={item.id} data-testid={`achievement-${item.id}`}><div className="item-icon">{item.progress >= item.goal ? item.icon : '·'}</div><div className="item-info"><div className="item-title">{item.title}</div><div className="item-meta">{item.detail}</div><div className="progress-track"><span style={{ width: `${Math.min(100, item.progress / item.goal * 100)}%` }}/></div><div className="item-meta">{Math.min(item.progress, item.goal)} / {item.goal} · Belohnung {item.rewardCoins} Münzen</div></div>{item.progress >= item.goal ? data.claimedAchievements.includes(item.id) ? <span className="reward">Abgeholt</span> : <button className="button small" onClick={() => claimAchievement(item.id)} data-testid={`button-claim-${item.id}`}>Abholen</button> : null}</div>)}</div></section>}
+        {page === 'achievements' && <>
+          <section className="panel"><div className="panel-head"><h2 className="panel-title">Herausforderungen</h2><Target size={18}/></div><p className="subline" style={{ marginTop: 0 }}>Werden automatisch beim Erreichen belohnt, jede genau einmal.</p><div className="page-grid">{CHALLENGES.map((c) => <div className={`achievement ${data.challenges[c.id] ? '' : 'locked'}`} key={c.id} data-testid={`challenge-${c.id}`}><div className="item-icon">{data.challenges[c.id] ? <Check size={18}/> : <Target size={18}/>}</div><div className="item-info"><div className="item-title">{c.title}</div><div className="item-meta">{GAMES.find((g) => g.id === c.game)?.name} · {c.coins} Münzen · {c.xp} XP</div></div>{data.challenges[c.id] ? <span className="reward">Geschafft</span> : <button className="button small" onClick={() => openGame(c.game)} data-testid={`button-try-${c.id}`}>Versuchen</button>}</div>)}</div></section>
+          <section className="panel" style={{ marginTop: 16 }}><div className="panel-head"><h2 className="panel-title">Kleine große Momente</h2><Award size={18}/></div><div className="page-grid">{achievements.map((item) => <div className={`achievement ${item.progress < item.goal ? 'locked' : ''}`} key={item.id} data-testid={`achievement-${item.id}`}><div className="item-icon">{item.progress >= item.goal ? item.icon : '·'}</div><div className="item-info"><div className="item-title">{item.title}</div><div className="item-meta">{item.detail}</div><div className="progress-track"><span style={{ width: `${Math.min(100, item.progress / item.goal * 100)}%` }}/></div><div className="item-meta">{Math.min(item.progress, item.goal)} / {item.goal} · Belohnung {item.rewardCoins} Münzen</div></div>{item.progress >= item.goal ? data.claimedAchievements.includes(item.id) ? <span className="reward">Abgeholt</span> : <button className="button small" onClick={() => claimAchievement(item.id)} data-testid={`button-claim-${item.id}`}>Abholen</button> : null}</div>)}</div></section>
+        </>}
       </main>
     </div>
-    <nav className="mobile-nav" aria-label="Hauptnavigation">{nav.map(({ id, label, icon: Icon }) => <button key={id} className={page === id ? 'active' : ''} onClick={() => { setPage(id); setGame(null); }} data-testid={`mobile-nav-${id}`}><Icon/><span>{label}</span></button>)}</nav>
+    <nav className="mobile-nav" aria-label="Hauptnavigation">{nav.map(({ id, label, icon: Icon }) => <button key={id} className={page === id ? 'active' : ''} onClick={() => { setPage(id); setActiveGame(null); }} data-testid={`mobile-nav-${id}`}><Icon/><span>{label}</span></button>)}</nav>
 
     {modal === 'settings' && <div className="dialog-backdrop" onClick={() => setModal(null)}><section className="dialog" onClick={(e) => e.stopPropagation()}><div className="panel-head"><h2>Einstellungen & Spielstand</h2><button className="button small ghost" onClick={() => setModal(null)} data-testid="button-close-settings"><X/></button></div><div className="settings-stack">
       <div className="setting-row"><div><strong>Spielklänge</strong><small>Werden direkt im Browser erzeugt</small></div><button className={`switch ${data.settings.sound ? 'on' : ''}`} onClick={() => setData((old) => ({ ...old, settings: { ...old.settings, sound: !old.settings.sound } }))} aria-label="Spielklänge umschalten" data-testid="switch-sound">{data.settings.sound ? <Volume2 size={14}/> : <VolumeX size={14}/>}</button></div>
@@ -662,11 +477,11 @@ function App() {
       <div className="setting-row"><div><strong>Spielstand exportieren</strong><small>Versionierter JSON-Spielstand</small></div><button className="button small" onClick={exportSave} data-testid="button-export"><Download size={14}/> Export</button></div>
       <div className="setting-row"><div><strong>Spielstand importieren</strong><small>Vorhandene tamascottchi-JSON laden</small></div><button className="button small" onClick={() => setModal('import')} data-testid="button-import"><Plus size={14}/> Import</button></div>
       <div className="setting-row"><div><strong>Neu anfangen</strong><small>Löscht diesen lokalen Spielstand</small></div><button className="button small orange" onClick={() => setModal('reset')} data-testid="button-reset">Zurücksetzen</button></div>
-      <p className="subline">Autospeicherung ist aktiv. Dein Spielstand bleibt auf diesem Gerät.</p>
+      <p className="subline">Autospeicherung ist aktiv. Dein Spielstand bleibt auf diesem Gerät. Vor dem 2.0-Update wurde eine Sicherung angelegt.</p>
     </div></section></div>}
-    {modal === 'name' && <div className="dialog-backdrop" onClick={() => setModal(null)}><section className="dialog" onClick={(e) => e.stopPropagation()}><h2>Wie soll Wuschel heißen?</h2><input className="input" value={nameDraft} maxLength={18} onChange={(e) => setNameDraft(e.target.value)} data-testid="input-pet-name"/><div className="dialog-actions"><button className="button ghost" onClick={() => setModal(null)} data-testid="button-cancel-rename">Abbrechen</button><button className="button orange" onClick={() => { setData((old) => ({ ...old, name: nameDraft.trim() || 'Wuschel' })); setModal(null); }} data-testid="button-save-name">Speichern</button></div></section></div>}
+    {modal === 'name' && <div className="dialog-backdrop" onClick={() => setModal(null)}><section className="dialog" onClick={(e) => e.stopPropagation()}><h2>Wie soll Scottchi heißen?</h2><input className="input" value={nameDraft} maxLength={18} onChange={(e) => setNameDraft(e.target.value)} data-testid="input-pet-name"/><div className="dialog-actions"><button className="button ghost" onClick={() => setModal(null)} data-testid="button-cancel-rename">Abbrechen</button><button className="button orange" onClick={() => { setData((old) => ({ ...old, name: nameDraft.trim() || 'Wuschel' })); setModal(null); }} data-testid="button-save-name">Speichern</button></div></section></div>}
     {modal === 'import' && <div className="dialog-backdrop" onClick={() => setModal(null)}><section className="dialog" onClick={(e) => e.stopPropagation()}><h2>Spielstand importieren</h2><p>Wähle die JSON-Datei, die du zuvor exportiert hast.</p><input ref={fileRef} type="file" accept="application/json,.json" className="input" data-testid="input-import-file" onChange={(e) => { const file = e.target.files?.[0]; if (file) void file.text().then(setFileText); }}/><div className="dialog-actions"><button className="button ghost" onClick={() => setModal(null)} data-testid="button-cancel-import">Abbrechen</button><button className="button orange" onClick={importSave} disabled={!fileText} data-testid="button-confirm-import">Spielstand laden</button></div></section></div>}
-    {modal === 'reset' && <div className="dialog-backdrop" onClick={() => setModal(null)}><section className="dialog" onClick={(e) => e.stopPropagation()}><h2>Wirklich von vorn?</h2><p>Wuschel, Münzen, Ergebnisse und alle Gegenstände auf diesem Gerät werden gelöscht. Diese Aktion lässt sich nicht rückgängig machen.</p><div className="dialog-actions"><button className="button ghost" onClick={() => setModal(null)} data-testid="button-cancel-reset">Abbrechen</button><button className="button orange" onClick={resetGame} data-testid="button-confirm-reset">Spielstand löschen</button></div></section></div>}
+    {modal === 'reset' && <div className="dialog-backdrop" onClick={() => setModal(null)}><section className="dialog" onClick={(e) => e.stopPropagation()}><h2>Wirklich von vorn?</h2><p>Scottchi, Münzen, Ergebnisse und alle Gegenstände auf diesem Gerät werden gelöscht. Diese Aktion lässt sich nicht rückgängig machen.</p><div className="dialog-actions"><button className="button ghost" onClick={() => setModal(null)} data-testid="button-cancel-reset">Abbrechen</button><button className="button orange" onClick={resetGame} data-testid="button-confirm-reset">Spielstand löschen</button></div></section></div>}
     {toast && <div className="toast" role="status" data-testid="status-toast">{toast}</div>}
   </div>;
 }

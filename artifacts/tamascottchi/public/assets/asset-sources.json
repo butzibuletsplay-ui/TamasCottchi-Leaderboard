@@ -1,0 +1,392 @@
+{
+  "characters/scottchi-happy.png": {
+    "source": "9594FB82-D911-4CFC-AD4D-0E9979DB54EA_1794587791938.png",
+    "bounds": [
+      26,
+      18,
+      454,
+      497
+    ],
+    "size": [
+      436,
+      487
+    ]
+  },
+  "characters/scottchi-hungry.png": {
+    "source": "9594FB82-D911-4CFC-AD4D-0E9979DB54EA_1794587791938.png",
+    "bounds": [
+      496,
+      20,
+      927,
+      493
+    ],
+    "size": [
+      439,
+      481
+    ]
+  },
+  "characters/scottchi-tired.png": {
+    "source": "9594FB82-D911-4CFC-AD4D-0E9979DB54EA_1794587791938.png",
+    "bounds": [
+      960,
+      26,
+      1422,
+      491
+    ],
+    "size": [
+      470,
+      473
+    ]
+  },
+  "characters/scottchi-dirty.png": {
+    "source": "9594FB82-D911-4CFC-AD4D-0E9979DB54EA_1794587791938.png",
+    "bounds": [
+      19,
+      543,
+      465,
+      1058
+    ],
+    "size": [
+      424,
+      488
+    ]
+  },
+  "characters/scottchi-sad.png": {
+    "source": "9594FB82-D911-4CFC-AD4D-0E9979DB54EA_1794587791938.png",
+    "bounds": [
+      485,
+      551,
+      931,
+      1035
+    ],
+    "size": [
+      450,
+      488
+    ]
+  },
+  "characters/scottchi-excited.png": {
+    "source": "9594FB82-D911-4CFC-AD4D-0E9979DB54EA_1794587791938.png",
+    "bounds": [
+      956,
+      560,
+      1429,
+      1039
+    ],
+    "size": [
+      481,
+      487
+    ]
+  },
+  "clothing/hats/baseballcap.png": {
+    "source": "32C40271-80C7-4B59-8A46-09DE49755517_1794587791938.png",
+    "bounds": [
+      27,
+      222,
+      378,
+      463
+    ],
+    "size": [
+      359,
+      249
+    ]
+  },
+  "clothing/hats/beanie.png": {
+    "source": "32C40271-80C7-4B59-8A46-09DE49755517_1794587791938.png",
+    "bounds": [
+      403,
+      202,
+      722,
+      475
+    ],
+    "size": [
+      327,
+      281
+    ]
+  },
+  "clothing/hats/party-hat.png": {
+    "source": "32C40271-80C7-4B59-8A46-09DE49755517_1794587791938.png",
+    "bounds": [
+      742,
+      133,
+      1050,
+      480
+    ],
+    "size": [
+      316,
+      355
+    ]
+  },
+  "clothing/hats/crown.png": {
+    "source": "32C40271-80C7-4B59-8A46-09DE49755517_1794587791938.png",
+    "bounds": [
+      1075,
+      183,
+      1419,
+      477
+    ],
+    "size": [
+      352,
+      302
+    ]
+  },
+  "clothing/hats/wizard-hat.png": {
+    "source": "32C40271-80C7-4B59-8A46-09DE49755517_1794587791938.png",
+    "bounds": [
+      12,
+      553,
+      392,
+      919
+    ],
+    "size": [
+      388,
+      374
+    ]
+  },
+  "clothing/hats/sleep-cap.png": {
+    "source": "32C40271-80C7-4B59-8A46-09DE49755517_1794587791938.png",
+    "bounds": [
+      366,
+      592,
+      669,
+      960
+    ],
+    "size": [
+      311,
+      376
+    ]
+  },
+  "clothing/hats/cowboy-hat.png": {
+    "source": "32C40271-80C7-4B59-8A46-09DE49755517_1794587791938.png",
+    "bounds": [
+      683,
+      597,
+      1085,
+      850
+    ],
+    "size": [
+      410,
+      261
+    ]
+  },
+  "clothing/hats/bucket-hat.png": {
+    "source": "32C40271-80C7-4B59-8A46-09DE49755517_1794587791938.png",
+    "bounds": [
+      1066,
+      607,
+      1435,
+      895
+    ],
+    "size": [
+      377,
+      296
+    ]
+  },
+  "clothing/outfits/hoodie.png": {
+    "source": "0E357A34-3407-471C-A831-99645D6C9FCB_1794587791938.png",
+    "bounds": [
+      38,
+      9,
+      472,
+      387
+    ],
+    "size": [
+      442,
+      386
+    ]
+  },
+  "clothing/outfits/striped-shirt.png": {
+    "source": "0E357A34-3407-471C-A831-99645D6C9FCB_1794587791938.png",
+    "bounds": [
+      493,
+      80,
+      924,
+      390
+    ],
+    "size": [
+      439,
+      318
+    ]
+  },
+  "clothing/outfits/raincoat.png": {
+    "source": "0E357A34-3407-471C-A831-99645D6C9FCB_1794587791938.png",
+    "bounds": [
+      973,
+      13,
+      1429,
+      386
+    ],
+    "size": [
+      464,
+      381
+    ]
+  },
+  "clothing/outfits/cape.png": {
+    "source": "0E357A34-3407-471C-A831-99645D6C9FCB_1794587791938.png",
+    "bounds": [
+      404,
+      414,
+      909,
+      722
+    ],
+    "size": [
+      488,
+      301
+    ]
+  },
+  "clothing/outfits/pajamas.png": {
+    "source": "0E357A34-3407-471C-A831-99645D6C9FCB_1794587791938.png",
+    "bounds": [
+      938,
+      413,
+      1409,
+      747
+    ],
+    "size": [
+      479,
+      342
+    ]
+  },
+  "clothing/outfits/tuxedo.png": {
+    "source": "0E357A34-3407-471C-A831-99645D6C9FCB_1794587791938.png",
+    "bounds": [
+      230,
+      744,
+      699,
+      1083
+    ],
+    "size": [
+      477,
+      347
+    ]
+  },
+  "toys/bone.png": {
+    "source": "795CAEDF-364E-4E37-B2C1-71A456687F6B_1794587791938.png",
+    "bounds": [
+      34,
+      200,
+      403,
+      481
+    ],
+    "size": [
+      377,
+      289
+    ]
+  },
+  "toys/tennisball.png": {
+    "source": "795CAEDF-364E-4E37-B2C1-71A456687F6B_1794587791938.png",
+    "bounds": [
+      430,
+      229,
+      677,
+      479
+    ],
+    "size": [
+      255,
+      258
+    ]
+  },
+  "toys/duck.png": {
+    "source": "795CAEDF-364E-4E37-B2C1-71A456687F6B_1794587791938.png",
+    "bounds": [
+      685,
+      172,
+      1017,
+      494
+    ],
+    "size": [
+      340,
+      330
+    ]
+  },
+  "toys/rope.png": {
+    "source": "795CAEDF-364E-4E37-B2C1-71A456687F6B_1794587791938.png",
+    "bounds": [
+      1035,
+      132,
+      1430,
+      525
+    ],
+    "size": [
+      403,
+      401
+    ]
+  },
+  "toys/frisbee.png": {
+    "source": "795CAEDF-364E-4E37-B2C1-71A456687F6B_1794587791938.png",
+    "bounds": [
+      22,
+      642,
+      377,
+      952
+    ],
+    "size": [
+      363,
+      318
+    ]
+  },
+  "toys/teddy.png": {
+    "source": "795CAEDF-364E-4E37-B2C1-71A456687F6B_1794587791938.png",
+    "bounds": [
+      364,
+      564,
+      717,
+      1001
+    ],
+    "size": [
+      361,
+      445
+    ]
+  },
+  "toys/bowl.png": {
+    "source": "795CAEDF-364E-4E37-B2C1-71A456687F6B_1794587791938.png",
+    "bounds": [
+      725,
+      700,
+      1102,
+      948
+    ],
+    "size": [
+      385,
+      256
+    ]
+  },
+  "toys/shampoo.png": {
+    "source": "795CAEDF-364E-4E37-B2C1-71A456687F6B_1794587791938.png",
+    "bounds": [
+      1131,
+      574,
+      1430,
+      991
+    ],
+    "size": [
+      307,
+      425
+    ]
+  },
+  "clothing/accessories/scarf.png": {
+    "source": "0E357A34-3407-471C-A831-99645D6C9FCB_1794587791938.png",
+    "bounds": [
+      61,
+      419,
+      351,
+      735
+    ],
+    "size": [
+      298,
+      324
+    ]
+  },
+  "clothing/accessories/collar.png": {
+    "source": "0E357A34-3407-471C-A831-99645D6C9FCB_1794587791938.png",
+    "bounds": [
+      820,
+      796,
+      1181,
+      1065
+    ],
+    "size": [
+      369,
+      277
+    ]
+  }
+}
