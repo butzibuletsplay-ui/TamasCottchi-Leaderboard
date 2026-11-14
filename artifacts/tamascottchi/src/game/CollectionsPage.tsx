@@ -3,7 +3,7 @@ import { Check, LockKeyhole, Sparkles, X } from 'lucide-react';
 import type { FullPetData } from './data';
 import { itemById } from './data';
 import { assetUrl } from './assets';
-import { COLLECTION_ITEMS, COLLECTION_CATEGORIES, COLLECTION_ITEM_LINKS, COLLECTION_REWARDS, RARITIES, RARITY_LABEL } from './collectionWorld';
+import { COLLECTION_ITEMS, COLLECTION_CATEGORIES, COLLECTION_ITEM_LINKS, COLLECTION_REWARDS, RARITIES, RARITY_FRAME_ASSETS, RARITY_LABEL } from './collectionWorld';
 import { ARTIFACTS, artifactBonusPercent, artifactUpgradeCost, equippedArtifactBonuses, playerArtifactSlots } from './artifactSystem';
 
 type Props = {
@@ -109,8 +109,9 @@ export function CollectionsPage({ data, playerLevel, onClaim, onUpgradeArtifact,
         return <button key={entry.id} className={`collection-card rarity-${entry.rarity.toLowerCase()} ${has ? 'found' : 'unknown'}`}
           onClick={() => setSelected(entry.id)} data-testid={`collection-item-${entry.id}`}
           aria-label={has ? entry.name : 'Unentdecktes Sammelstück'}>
-          <span className="collection-sprite" style={{ backgroundImage: `url("${assetUrl(`rewards/frames/${entry.rarity.toLowerCase()}.png`)}")` }}>
-            <img src={assetUrl(`collections/items/${entry.id}.png`)} alt="" loading="lazy" decoding="async"/>
+          <span className="collection-sprite">
+            <img className="collection-rarity-frame" src={RARITY_FRAME_ASSETS[entry.rarity]} alt="" aria-hidden="true" loading="lazy" decoding="async"/>
+            <img className="collection-item-art" src={assetUrl(`collections/items/${entry.id}.png`)} alt="" loading="lazy" decoding="async"/>
           </span>
           <strong>{has ? entry.name : '???'}</strong><small>{RARITY_LABEL[entry.rarity]}</small>
           {has ? <Check className="collection-check" size={13}/> : <LockKeyhole className="collection-check" size={13}/>}
@@ -120,9 +121,10 @@ export function CollectionsPage({ data, playerLevel, onClaim, onUpgradeArtifact,
 
     {item && <div className="quest-backdrop" role="presentation" onClick={() => setSelected(null)}>
       <section className={`collection-detail panel rarity-${item.rarity.toLowerCase()}`} role="dialog" aria-modal="true" aria-labelledby="collection-detail-title" onClick={(event) => event.stopPropagation()}>
-        <button className="button small collection-close" onClick={() => setSelected(null)} aria-label="Schließen"><X size={16}/></button>
-        <div className="collection-detail-preview" style={{ backgroundImage: `url("${assetUrl(`rewards/frames/${item.rarity.toLowerCase()}.png`)}")` }}>
-          <img src={assetUrl(`collections/items/${item.id}.png`)} alt={item.name}/>
+        <button className="button small collection-close collection-detail-close" onClick={() => setSelected(null)} aria-label="Schließen"><X size={16}/></button>
+        <div className="collection-detail-preview">
+          <img className="collection-rarity-frame" src={RARITY_FRAME_ASSETS[item.rarity]} alt="" aria-hidden="true"/>
+          <img className="collection-item-art" src={assetUrl(`collections/items/${item.id}.png`)} alt={item.name}/>
         </div>
         <div className="eyebrow">{item.category}</div><h3 id="collection-detail-title">{hasItem(item.id) ? item.name : 'Unbekannter Fund'}</h3>
         <span className={`rarity-label rarity-${item.rarity.toLowerCase()}`}>{RARITY_LABEL[item.rarity]}</span>

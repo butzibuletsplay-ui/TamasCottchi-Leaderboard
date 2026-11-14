@@ -263,10 +263,12 @@
 @media(max-width:600px){.world-marker small{font-size:7px}.world-marker>span{width:29px;height:29px}.world-map-tip{font-size:8px;max-width:68%}.world-zoom{flex-direction:column}.collection-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.collection-card{padding:5px 3px}.collection-filters select{min-width:130px;max-width:45vw}.quest-dialog{padding:12px}.quest-scene{aspect-ratio:1.1}}
 
 /* 6.1: use the supplied rarity frames and keep game-result actions reachable. */
-.collection-sprite{position:relative;aspect-ratio:1.55;background-color:#f8f0df;background-size:100% 100%;background-position:center;background-repeat:no-repeat}
-.collection-sprite img{width:68%;height:66%;object-fit:contain}
-.collection-detail-preview{width:min(300px,82%);aspect-ratio:1.6;margin:8px auto 14px;display:grid;place-items:center;background-color:#f8f0df;background-position:center;background-repeat:no-repeat;background-size:100% 100%}
-.collection-detail-preview img{width:66%;height:66%;object-fit:contain}
+.collection-sprite{position:relative;aspect-ratio:1.55;background-color:#f8f0df;background-image:none;background-size:auto;background-position:center;background-repeat:no-repeat}
+.collection-sprite>.collection-rarity-frame,.collection-detail-preview>.collection-rarity-frame{position:absolute;inset:0;z-index:0;width:100%;height:100%;object-fit:fill;pointer-events:none}
+.collection-sprite>.collection-item-art,.collection-detail-preview>.collection-item-art{position:relative;z-index:1;width:68%;height:66%;object-fit:contain}
+.collection-detail-preview{position:relative;width:min(300px,82%);aspect-ratio:1.6;margin:8px auto 14px;display:grid;place-items:center;overflow:hidden;background-color:transparent;background-image:none;background-position:center;background-repeat:no-repeat;background-size:auto}
+.collection-detail-preview>.collection-item-art{width:66%;height:66%}
+.collection-detail-close{top:max(12px,env(safe-area-inset-top,0px));right:max(12px,env(safe-area-inset-right,0px));z-index:10;width:44px;height:44px;min-width:44px;min-height:44px;padding:0;display:grid;place-items:center;touch-action:manipulation}
 .overlay-result{position:fixed;inset:0;z-index:50;border-radius:0;padding:calc(10px + env(safe-area-inset-top)) 12px calc(10px + env(safe-area-inset-bottom));overflow:hidden}
 .result-card{width:min(520px,100%);max-height:100%;min-height:0;padding:0;display:flex;flex-direction:column;align-items:stretch;overflow:hidden}
 .result-scroll{min-height:0;overflow-y:auto;overscroll-behavior:contain;flex:1;padding:16px 20px 10px;display:grid;justify-items:center;align-content:start;gap:6px;-webkit-overflow-scrolling:touch}

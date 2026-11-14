@@ -1,6 +1,15 @@
+import { assetUrl } from './assets';
+
 export type CollectionCategory = 'Hüte' | 'Outfits' | 'Accessoires' | 'Spielzeug' | 'Kristalle' | 'Magische Eier' | 'Trophäen' | 'Besondere Dekorationen';
 export type Rarity = 'Common' | 'Uncommon' | 'Rare' | 'Epic' | 'Legendary';
 export type CollectionItem = { id: string; name: string; category: CollectionCategory; rarity: Rarity; where: string; condition: string };
+export const RARITY_FRAME_ASSETS: Record<Rarity, string> = {
+  Common: assetUrl('rewards/frames/common.png'),
+  Uncommon: assetUrl('rewards/frames/uncommon.png'),
+  Rare: assetUrl('rewards/frames/rare.png'),
+  Epic: assetUrl('rewards/frames/epic.png'),
+  Legendary: assetUrl('rewards/frames/legendary.png'),
+};
 export const COLLECTION_ITEM_LINKS: Record<string, string> = {
   'cap-red': 'baseballcap', 'beanie-dark': 'beanie', 'cowboy-star': 'cowboy-hat', 'crown-ruby': 'crown',
   'wizard-purple': 'wizard-hat', 'sleep-cap-blue': 'sleep-cap', 'hoodie-dark': 'hoodie', 'raincoat-gold': 'raincoat',
