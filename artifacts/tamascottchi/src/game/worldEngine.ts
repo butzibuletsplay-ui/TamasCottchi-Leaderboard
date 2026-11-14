@@ -1,7 +1,8 @@
-import { LOCATIONS, WORLD_QUESTS, itemById, type FullPetData, type WorldEventState } from './data';
+import { LOCATIONS, WORLD_QUESTS, itemById, type FullPetData, type RewardChestTier, type WorldEventState } from './data';
 import { recordJournal } from './journal';
 import { hoursRemaining } from './worldClock';
 import { worldDayKey, worldWeekKey } from './worldClock';
+import { applicableArtifactBonus, applyArtifactBonus, applyArtifactQuantityBonus, grantChest, grantMilestoneChest, grantRegularChest, tierForMastery } from './artifactSystem';
 
 export type ResourceNode = {
   id: string;
@@ -66,13 +67,23 @@ export const DAILY_WORLD_GOALS: DailyWorldGoal[] = [
   { id: 'rare-find', metric: 'rare', title: 'Seltenes Glück', description: 'Finde ein seltenes Material.', target: 1, minLevel: 5, coins: 18, xp: 16 },
 ];
 
-export type WeeklyGoalMetric = 'gather' | 'craft' | 'daily';
+export type WeeklyGoalMetric = 'materials' | 'activities' | 'craft' | 'daily';
 export type WeeklyWorldGoal = { id: string; metric: WeeklyGoalMetric; title: string; description: string; target: number; coins: number; xp: number };
 export const WEEKLY_WORLD_GOALS: WeeklyWorldGoal[] = [
-  { id: 'weekly-gather', metric: 'gather', title: 'Pfoten auf vielen Wegen', description: 'Sammle 20 Materialien oder Fische.', target: 20, coins: 45, xp: 35 },
-  { id: 'weekly-craft', metric: 'craft', title: 'Werkstatt-Woche', description: 'Stelle drei Gegenstände her.', target: 3, coins: 50, xp: 40 },
-  { id: 'weekly-daily', metric: 'daily', title: 'Jeden Tag ein kleiner Schritt', description: 'Schließe fünf Tagesziele oder NPC-Aufträge ab.', target: 5, coins: 40, xp: 35 },
+  { id: 'weekly-materials', metric: 'materials', title: 'Vorrat für die Werkstatt', description: 'Sammle 100 Materialien oder Fische.', target: 100, coins: 55, xp: 45 },
+  { id: 'weekly-activities', metric: 'activities', title: 'Auf vielen Pfotenwegen', description: 'Schließe 12 Weltaktivitäten ab.', target: 12, coins: 60, xp: 45 },
+  { id: 'weekly-craft', metric: 'craft', title: 'Werkstatt-Woche', description: 'Stelle drei Gegenstände her.', target: 3, coins: 65, xp: 50 },
+  { id: 'weekly-daily', metric: 'daily', title: 'Jeden Tag ein kleiner Schritt', description: 'Schließe fünf Tagesziele oder Weltaufträge ab.', target: 5, coins: 55, xp: 45 },
 ];
+
+export const REGION_DAILY_TASKS: Record<string, { materials: number; activities: number; rare: number; rewardMaterial: string }> = {
+  park: { materials: 4, activities: 2, rare: 0, rewardMaterial: 'bone-scrap' },
+  city: { materials: 4, activities: 2, rare: 0, rewardMaterial: 'cloth' },
+  forest: { materials: 8, activities: 2, rare: 1, rewardMaterial: 'leaf' },
+  beach: { materials: 6, activities: 2, rare: 1, rewardMaterial: 'shell' },
+  cave: { materials: 2, activities: 2, rare: 1, rewardMaterial: 'crystal-shard' },
+  mountain: { materials: 3, activities: 2, rare: 1, rewardMaterial: 'ore' },
+};
 
 export type WorldNpcRequest = {
   id: string;
@@ -168,9 +179,14 @@ export function ensureWorldDay(data: FullPetData, now = Date.now(), level = 1, a
       dailyMasteryGained: needsDaySetup ? 0 : data.world.dailyMasteryGained || 0,
       fishingRewardsToday: needsDaySetup ? 0 : data.world.fishingRewardsToday || 0,
       worldEventClaimedDay: needsDaySetup ? '' : data.world.worldEventClaimedDay || '',
+      dailyChestCount: needsDaySetup ? 0 : data.world.dailyChestCount || 0,
+      dailyChestLocations: needsDaySetup ? [] : data.world.dailyChestLocations || [],
+      regionDailyProgress: needsDaySetup ? {} : data.world.regionDailyProgress || {},
+      openedChestIds: data.world.openedChestIds || [],
       weeklyKey: week,
       weeklyMetrics: needsWeekSetup ? {} : data.world.weeklyMetrics || {},
       weeklyClaimed: needsWeekSetup ? [] : data.world.weeklyClaimed || [],
+      weeklyChestClaimed: needsWeekSetup ? false : data.world.weeklyChestClaimed || false,
       lastKnownWorldTime: time,
     },
   };
@@ -181,7 +197,7 @@ function addMastery(data: FullPetData, locationId: string, amount: number, now: 
   const remaining = Math.max(0, MAX_MASTERY_PER_DAY - (current.world.dailyMasteryGained || 0));
   const earned = Math.min(Math.max(0, Math.floor(amount)), remaining);
   if (!earned) return current;
-  return {
+  let next: FullPetData = {
     ...current,
     world: {
       ...current.world,
@@ -190,6 +206,13 @@ function addMastery(data: FullPetData, locationId: string, amount: number, now: 
       lastKnownWorldTime: effectiveNow(current, now, authoritativeClock),
     },
   };
+  const level = masteryLevel(next.world.areaMastery[locationId] || 0);
+  if (level >= 10) next = grantMilestoneChest(next, `${locationId}:mastery-10`, 'rare', now);
+  if (level >= 20) next = grantMilestoneChest(next, `${locationId}:mastery-20`, 'legendary', now);
+  if (LOCATIONS.every((location) => masteryLevel(next.world.areaMastery[location.id] || 0) >= 20)) {
+    next = grantMilestoneChest(next, 'all-regions-mastered', 'legendary', now);
+  }
+  return next;
 }
 
 export function applyWeeklyMetric(data: FullPetData, metric: WeeklyGoalMetric, amount = 1, now = Date.now(), level = 1, authoritativeClock = false): FullPetData {
@@ -204,13 +227,87 @@ export function applyWeeklyMetric(data: FullPetData, metric: WeeklyGoalMetric, a
     if (goal.metric !== metric || value < goal.target || next.world.weeklyClaimed.includes(goal.id)) continue;
     next = {
       ...next,
-      coins: next.coins + goal.coins,
-      xp: next.xp + goal.xp,
+      coins: next.coins + applyArtifactBonus(goal.coins, applicableArtifactBonus(next, 'coins', 'world')),
+      xp: next.xp + applyArtifactBonus(goal.xp, applicableArtifactBonus(next, 'xp', 'world')),
       world: { ...next.world, weeklyClaimed: [...new Set([...next.world.weeklyClaimed, goal.id])] },
     };
     next = recordJournal(next, `world-weekly-${next.world.weeklyKey}-${goal.id}`, '🏅', `Wochenziel geschafft: ${goal.title}`, `+${goal.coins} Münzen · +${goal.xp} XP`);
   }
+  const allWeeklyGoalsComplete = WEEKLY_WORLD_GOALS.every((goal) => (next.world.weeklyMetrics[goal.metric] || 0) >= goal.target);
+  if (allWeeklyGoalsComplete && !next.world.weeklyChestClaimed) {
+    next = grantChest(next, 'rare', `weekly:${next.world.weeklyKey}`, now);
+    next = { ...next, world: { ...next.world, weeklyChestClaimed: true } };
+    next = recordJournal(next, `world-weekly-chest-${next.world.weeklyKey}`, '🎁', 'Wochenkiste verdient', 'Eine seltene Kiste wurde in den Tresor gelegt.');
+  }
   return next;
+}
+
+function regionTaskComplete(data: FullPetData, locationId: string) {
+  const goal = REGION_DAILY_TASKS[locationId];
+  const progress = data.world.regionDailyProgress[locationId] || { materials: 0, activities: 0, rare: 0 };
+  return !!goal && progress.materials >= goal.materials && progress.activities >= goal.activities && progress.rare >= goal.rare;
+}
+
+export function recordRegionActivity(
+  data: FullPetData,
+  locationId: string,
+  materials: number,
+  activities: number,
+  rare: number,
+  now = Date.now(),
+  level = 1,
+  authoritativeClock = false,
+): FullPetData {
+  if (!REGION_DAILY_TASKS[locationId]) return data;
+  const current = ensureWorldDay(data, now, level, authoritativeClock);
+  const old = current.world.regionDailyProgress[locationId] || { materials: 0, activities: 0, rare: 0 };
+  let next: FullPetData = {
+    ...current,
+    world: {
+      ...current.world,
+      regionDailyProgress: {
+        ...current.world.regionDailyProgress,
+        [locationId]: {
+          materials: Math.min(1000, old.materials + Math.max(0, Math.floor(materials))),
+          activities: Math.min(1000, old.activities + Math.max(0, Math.floor(activities))),
+          rare: Math.min(100, old.rare + Math.max(0, Math.floor(rare))),
+        },
+      },
+    },
+  };
+  const claimId = `region-daily:${locationId}`;
+  if (!regionTaskComplete(next, locationId) || next.world.dailyClaimed.includes(claimId)) return next;
+  const reward = REGION_DAILY_TASKS[locationId];
+  const coins = applyArtifactBonus(20 + LOCATIONS.findIndex((entry) => entry.id === locationId) * 5, applicableArtifactBonus(next, 'coins', 'world'));
+  const xp = applyArtifactBonus(15 + LOCATIONS.findIndex((entry) => entry.id === locationId) * 4, applicableArtifactBonus(next, 'xp', 'world'));
+  const materialQuantity = applyArtifactQuantityBonus(2, applicableArtifactBonus(next, 'materials', locationId));
+  next = {
+    ...next,
+    coins: next.coins + coins,
+    xp: next.xp + xp,
+    inventory: { ...next.inventory, [reward.rewardMaterial]: (next.inventory[reward.rewardMaterial] || 0) + materialQuantity },
+    world: { ...next.world, dailyClaimed: [...next.world.dailyClaimed, claimId] },
+  };
+  next = recordJournal(next, `region-daily-${next.world.worldDay}-${locationId}`, '🧭', 'Weltauftrag abgeschlossen', `+${coins} Münzen · +${xp} XP · +${materialQuantity} ${itemById(reward.rewardMaterial)?.name || 'Materialien'}`);
+  return applyWeeklyMetric(next, 'daily', 1, now, level, authoritativeClock);
+}
+
+export function claimRegionDailyChest(
+  data: FullPetData,
+  locationId: string,
+  now = Date.now(),
+  level = 1,
+  authoritativeClock = false,
+  random: () => number = Math.random,
+): { data: FullPetData; outcome: 'claimed' | 'not-ready' | 'already-claimed' | 'daily-limit' | 'invalid'; tier?: RewardChestTier } {
+  const current = ensureWorldDay(data, now, level, authoritativeClock);
+  if (!REGION_DAILY_TASKS[locationId]) return { data: current, outcome: 'invalid' };
+  if (current.world.dailyChestLocations.includes(locationId)) return { data: current, outcome: 'already-claimed' };
+  if (!regionTaskComplete(current, locationId)) return { data: current, outcome: 'not-ready' };
+  if (current.world.dailyChestCount >= 3) return { data: current, outcome: 'daily-limit' };
+  const tier = tierForMastery(masteryLevel(current.world.areaMastery[locationId] || 0), random);
+  const next = grantRegularChest(current, tier, `world:${current.world.worldDay}:${locationId}`, now, locationId);
+  return next === current ? { data: current, outcome: 'daily-limit' } : { data: next, outcome: 'claimed', tier };
 }
 
 export function applyWorldMetric(data: FullPetData, metric: DailyWorldGoal['metric'], amount = 1, now = Date.now(), level = 1, authoritativeClock = false): FullPetData {
@@ -226,8 +323,8 @@ export function applyWorldMetric(data: FullPetData, metric: DailyWorldGoal['metr
     if (!goal || goal.metric !== metric || value < goal.target || next.world.dailyClaimed?.includes(id)) continue;
     next = {
       ...next,
-      coins: next.coins + goal.coins,
-      xp: next.xp + goal.xp,
+      coins: next.coins + applyArtifactBonus(goal.coins, applicableArtifactBonus(next, 'coins', 'world')),
+      xp: next.xp + applyArtifactBonus(goal.xp, applicableArtifactBonus(next, 'xp', 'world')),
       world: { ...next.world, dailyClaimed: [...new Set([...(next.world.dailyClaimed || []), id])] },
     };
     next = recordJournal(next, `world-daily-${next.world.worldDay}-${id}`, '🏅', `Tagesziel geschafft: ${goal.title}`, `+${goal.coins} Münzen · +${goal.xp} XP`);
@@ -246,9 +343,10 @@ export function collectResource(data: FullPetData, nodeId: string, now = Date.no
   const collectedAt = current.world.resourceCollectedAt?.[node.id];
   if (hoursRemaining(collectedAt, node.respawnHours, effectiveNow(current, now, authoritativeClock)) > 0) return { data: current, outcome: 'cooldown' };
 
+  const quantity = applyArtifactQuantityBonus(node.quantity, applicableArtifactBonus(current, 'materials', node.locationId));
   current = {
     ...current,
-    inventory: { ...current.inventory, [node.resourceId]: (current.inventory[node.resourceId] || 0) + node.quantity },
+    inventory: { ...current.inventory, [node.resourceId]: (current.inventory[node.resourceId] || 0) + quantity },
     world: {
       ...current.world,
       resourceCollectedAt: { ...current.world.resourceCollectedAt, [node.id]: effectiveNow(current, now, authoritativeClock) },
@@ -256,25 +354,30 @@ export function collectResource(data: FullPetData, nodeId: string, now = Date.no
     },
   };
   current = addMastery(current, node.locationId, node.rarity === 'Selten' ? 16 : node.rarity === 'Ungewöhnlich' ? 10 : 6, now, authoritativeClock);
+  current = recordRegionActivity(current, node.locationId, quantity, 1, node.rarity === 'Selten' ? 1 : 0, now, level, authoritativeClock);
   current = applyWorldMetric(current, node.activity === 'excavate' ? 'excavate' : 'gather', 1, now, level, authoritativeClock);
   if (node.rarity === 'Selten') current = applyWorldMetric(current, 'rare', 1, now, level, authoritativeClock);
-  current = applyWeeklyMetric(current, 'gather', 1, now, level, authoritativeClock);
+  current = applyWeeklyMetric(current, 'materials', quantity, now, level, authoritativeClock);
+  current = applyWeeklyMetric(current, 'activities', 1, now, level, authoritativeClock);
   const item = itemById(node.resourceId)!;
-  current = recordJournal(current, `world-node-${node.id}-${effectiveNow(current, now)}`, '✦', `Fund gesammelt: ${item.name}`, `+${node.quantity} · erneuert sich in ${node.respawnHours} Stunden`);
-  return { data: current, outcome: 'collected', quantity: node.quantity };
+  current = recordJournal(current, `world-node-${node.id}-${effectiveNow(current, now)}`, '✦', `Fund gesammelt: ${item.name}`, `+${quantity} · erneuert sich in ${node.respawnHours} Stunden`);
+  return { data: current, outcome: 'collected', quantity };
 }
 
 export function catchFish(data: FullPetData, fishId: 'fish-common' | 'fish-rare', now = Date.now(), level = 8, authoritativeClock = false): { data: FullPetData; outcome: 'caught' | 'practice' } {
   let current = ensureWorldDay(data, now, level, authoritativeClock);
   if ((current.world.fishingRewardsToday || 0) >= MAX_REWARDED_FISH_PER_DAY) return { data: current, outcome: 'practice' };
+  const quantity = applyArtifactQuantityBonus(1, applicableArtifactBonus(current, 'materials', 'beach'));
   current = {
     ...current,
-    inventory: { ...current.inventory, [fishId]: (current.inventory[fishId] || 0) + 1 },
+    inventory: { ...current.inventory, [fishId]: (current.inventory[fishId] || 0) + quantity },
     world: { ...current.world, fishingRewardsToday: (current.world.fishingRewardsToday || 0) + 1 },
   };
   current = addMastery(current, 'beach', fishId === 'fish-rare' ? 16 : 10, now, authoritativeClock);
+  current = recordRegionActivity(current, 'beach', quantity, 1, fishId === 'fish-rare' ? 1 : 0, now, level, authoritativeClock);
   current = applyWorldMetric(current, 'fish', 1, now, level, authoritativeClock);
-  current = applyWeeklyMetric(current, 'gather', 1, now, level, authoritativeClock);
+  current = applyWeeklyMetric(current, 'materials', quantity, now, level, authoritativeClock);
+  current = applyWeeklyMetric(current, 'activities', 1, now, level, authoritativeClock);
   current = recordJournal(current, `world-fish-${current.world.worldDay}-${current.world.fishingRewardsToday}`, '✦', `Angelfund: ${itemById(fishId)?.name || 'Fisch'}`, 'Ein Fang vom Scottchi Beach');
   return { data: current, outcome: 'caught' };
 }
@@ -286,15 +389,18 @@ export function claimWorldEvent(data: FullPetData, now = Date.now(), level = 1, 
   if (current.world.worldEventClaimedDay === event.day) return { data: current, outcome: 'already-claimed' };
   const place = LOCATIONS.find((entry) => entry.id === event.locationId);
   if (!place || level < place.level) return { data: current, outcome: 'unavailable' };
+  const quantity = applyArtifactQuantityBonus(event.quantity, applicableArtifactBonus(current, 'materials', event.locationId));
   current = {
     ...current,
-    inventory: { ...current.inventory, [event.resourceId]: (current.inventory[event.resourceId] || 0) + event.quantity },
+    inventory: { ...current.inventory, [event.resourceId]: (current.inventory[event.resourceId] || 0) + quantity },
     world: { ...current.world, worldEventClaimedDay: event.day },
   };
   current = addMastery(current, event.locationId, 14, now, authoritativeClock);
+  current = recordRegionActivity(current, event.locationId, quantity, 1, 1, now, level, authoritativeClock);
   current = applyWorldMetric(current, 'event', 1, now, level, authoritativeClock);
-  current = applyWeeklyMetric(current, 'gather', event.quantity, now, level, authoritativeClock);
-  current = recordJournal(current, `world-event-${event.day}-${event.id}`, '✦', `Ereignis entdeckt: ${eventForDay(event.day, level).title}`, `+${event.quantity} ${itemById(event.resourceId)?.name || 'Fundstück'}`);
+  current = applyWeeklyMetric(current, 'materials', quantity, now, level, authoritativeClock);
+  current = applyWeeklyMetric(current, 'activities', 1, now, level, authoritativeClock);
+  current = recordJournal(current, `world-event-${event.day}-${event.id}`, '✦', `Ereignis entdeckt: ${eventForDay(event.day, level).title}`, `+${quantity} ${itemById(event.resourceId)?.name || 'Fundstück'}`);
   return { data: current, outcome: 'claimed' };
 }
 
@@ -305,10 +411,10 @@ export function claimNpcRequest(data: FullPetData, locationId: string, now = Dat
   if (!npc || !place || level < place.level || !itemById(npc.itemId)) return { data: current, outcome: 'invalid' };
   if (current.world.dailyClaimed.includes(npc.id)) return { data: current, outcome: 'already-claimed' };
   if ((current.inventory[npc.itemId] || 0) < 1) return { data: current, outcome: 'missing' };
-  const next: FullPetData = {
+  let next: FullPetData = {
     ...current,
-    coins: current.coins + npc.rewardCoins,
-    xp: current.xp + npc.rewardXp,
+    coins: current.coins + applyArtifactBonus(npc.rewardCoins, applicableArtifactBonus(current, 'coins', 'world')),
+    xp: current.xp + applyArtifactBonus(npc.rewardXp, applicableArtifactBonus(current, 'xp', 'world')),
     inventory: { ...current.inventory, [npc.itemId]: current.inventory[npc.itemId] - 1 },
     world: {
       ...current.world,
@@ -316,6 +422,8 @@ export function claimNpcRequest(data: FullPetData, locationId: string, now = Dat
       lastKnownWorldTime: effectiveNow(current, now, authoritativeClock),
     },
   };
+  next = recordRegionActivity(next, locationId, 0, 1, 0, now, level, authoritativeClock);
+  next = applyWeeklyMetric(next, 'activities', 1, now, level, authoritativeClock);
   const rewarded = applyWeeklyMetric(next, 'daily', 1, now, level, authoritativeClock);
   return {
     data: recordJournal(rewarded, `world-npc-${next.world.worldDay}-${npc.id}`, '✦', `Auftrag erledigt: ${npc.name}`, `+${npc.rewardCoins} Münzen · +${npc.rewardXp} XP`),
@@ -339,7 +447,11 @@ export function visitWorldLocation(data: FullPetData, locationId: string, now = 
       dailyVisitedLocations: newToday ? [...(current.world.dailyVisitedLocations || []), locationId] : current.world.dailyVisitedLocations,
     },
   };
-  if (newToday) current = applyWorldMetric(current, 'visit', 1, now, level, authoritativeClock);
+  if (newToday) {
+    current = recordRegionActivity(current, locationId, 0, 1, 0, now, level, authoritativeClock);
+    current = applyWorldMetric(current, 'visit', 1, now, level, authoritativeClock);
+    current = applyWeeklyMetric(current, 'activities', 1, now, level, authoritativeClock);
+  }
   if (firstVisit) current = recordJournal(current, `location-${locationId}`, `🗺️`, `Ort entdeckt: ${place.name}`, place.desc);
   return { data: current, outcome: 'entered' };
 }

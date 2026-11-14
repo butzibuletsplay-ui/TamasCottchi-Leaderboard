@@ -1,5 +1,7 @@
 import { WORLD_QUESTS, itemById, type FullPetData } from './data';
 import { recordJournal } from './journal';
+import { applicableArtifactBonus, applyArtifactBonus, grantMilestoneChest, unlockArtifact } from './artifactSystem';
+import { applyWeeklyMetric, recordRegionActivity } from './worldEngine';
 
 export type QuestId = (typeof WORLD_QUESTS)[number]['id'];
 export type QuestOutcome = 'started' | 'found' | 'already-found' | 'wrong-order' | 'awaiting-action' | 'completed' | 'already-completed' | 'invalid';
@@ -23,8 +25,8 @@ function completeQuest(data: FullPetData, id: string): FullPetData {
   if (!quest || data.world.completedQuests.includes(id)) return data;
   let next: FullPetData = {
     ...data,
-    coins: data.coins + quest.coins,
-    xp: data.xp + quest.xp,
+    coins: data.coins + applyArtifactBonus(quest.coins, applicableArtifactBonus(data, 'coins', 'world')),
+    xp: data.xp + applyArtifactBonus(quest.xp, applicableArtifactBonus(data, 'xp', 'quests')),
     world: {
       ...data.world,
       activeQuests: (data.world.activeQuests || []).filter((active) => active !== id),
@@ -35,6 +37,12 @@ function completeQuest(data: FullPetData, id: string): FullPetData {
     },
     collectionIds: [...new Set([...data.collectionIds, ...quest.discoveries])],
   };
+  for (const id of quest.discoveries) next = unlockArtifact(next, id);
+  next = recordRegionActivity(next, quest.place, 0, 1, 0);
+  next = applyWeeklyMetric(next, 'activities', 1);
+  if (WORLD_QUESTS.every((entry) => next.world.completedQuests.includes(entry.id))) {
+    next = grantMilestoneChest(next, 'all-world-quests', 'legendary', Date.now());
+  }
   next = recordJournal(next, `quest-done-${id}`, '🏆', `Aufgabe abgeschlossen: ${quest.name}`, `+${quest.coins} Münzen · +${quest.xp} XP`);
   return next;
 }
@@ -69,6 +77,10 @@ export function pickQuestPoint(data: FullPetData, id: string, point: number): { 
       questFinds: { ...(w.questFinds || {}), [id]: [...finds, point] },
     },
   };
+  if (!sequenceQuest) {
+    next = recordRegionActivity(next, quest.place, 1, 0, 0);
+    next = applyWeeklyMetric(next, 'materials', 1);
+  }
   next = recordJournal(next, `find-${id}-${point}`, '🔎', `Fund entdeckt: ${quest.name}`, sequenceQuest ? 'Ein Lichtpunkt in der richtigen Reihenfolge.' : `+1 ${quest.loot.replaceAll('-', ' ')}`);
   const reachedTarget = progress + 1 >= quest.target;
   if (!reachedTarget) return { data: next, outcome: 'found' };
@@ -84,7 +96,10 @@ export function pickQuestPoint(data: FullPetData, id: string, point: number): { 
     next = recordJournal(next, `quest-step-${id}`, '🧸', 'Letzter Schritt freigeschaltet', detail);
     return { data: next, outcome: 'awaiting-action' };
   }
-  if (sequenceQuest) next = { ...next, inventory: { ...next.inventory, [quest.loot]: (next.inventory[quest.loot] || 0) + 1 } };
+  if (sequenceQuest) {
+    next = { ...next, inventory: { ...next.inventory, [quest.loot]: (next.inventory[quest.loot] || 0) + 1 } };
+    next = applyWeeklyMetric(next, 'materials', 1);
+  }
   return { data: completeQuest(next, id), outcome: 'completed' };
 }
 
@@ -102,6 +117,7 @@ export function completeQuestAction(data: FullPetData, action: string): { data: 
       ...prepared,
       inventory: { ...prepared.inventory, [lootId]: (prepared.inventory[lootId] || 0) + quest.actionLoot.quantity },
     };
+    prepared = applyWeeklyMetric(prepared, 'materials', quest.actionLoot.quantity);
     prepared = recordJournal(prepared, `quest-action-${id}`, '🎁', 'Schatztruhe geöffnet', `${quest.actionLoot.quantity}× ${itemById(lootId)?.name || lootId}`);
   }
   return { data: completeQuest(prepared, id), outcome: 'completed' };

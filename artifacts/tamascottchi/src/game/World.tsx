@@ -5,7 +5,7 @@ import { COLLECTION_ITEMS } from './collectionWorld';
 import { assetUrl, CHARACTER } from './assets';
 import { completeQuestAction, pickQuestPoint, startQuest } from './questEngine';
 import { MaterialArt } from './MaterialArt';
-import { catchFish, claimNpcRequest, claimWorldEvent, collectResource, DAILY_WORLD_GOALS, ensureWorldDay, getWorldEvent, masteryLevel, masteryProgress, placeQuestCounts, RESOURCE_NODES, visitWorldLocation, WEEKLY_WORLD_GOALS, WORLD_NPCS } from './worldEngine';
+import { catchFish, claimNpcRequest, claimRegionDailyChest, claimWorldEvent, collectResource, DAILY_WORLD_GOALS, ensureWorldDay, getWorldEvent, masteryLevel, masteryProgress, placeQuestCounts, REGION_DAILY_TASKS, RESOURCE_NODES, visitWorldLocation, WEEKLY_WORLD_GOALS, WORLD_NPCS } from './worldEngine';
 import { formatRemaining, hoursRemaining } from './worldClock';
 
 const MAP = assetUrl('world/scottchi-world-map.webp');
@@ -47,6 +47,11 @@ export function World({ data, level, serverClockOffsetMs, onChange, onNotice, on
   const questCount = placeQuestCounts(location, w.completedQuests);
   const locationDiscoveries = new Set(placeQuests.flatMap((entry) => entry.discoveries).filter((id) => foundItems.has(id))).size;
   const locationNodes = RESOURCE_NODES.filter((node) => node.locationId === location);
+  const regionTask = REGION_DAILY_TASKS[location];
+  const regionProgress = w.regionDailyProgress[location] || { materials: 0, activities: 0, rare: 0 };
+  const regionTaskComplete = !!regionTask && regionProgress.materials >= regionTask.materials && regionProgress.activities >= regionTask.activities && regionProgress.rare >= regionTask.rare;
+  const regionChestClaimed = w.dailyChestLocations.includes(location);
+  const regionTaskRewardClaimed = w.dailyClaimed.includes(`region-daily:${location}`);
 
   useEffect(() => {
     setNow(Date.now() + (serverClockOffsetMs || 0));
@@ -159,6 +164,20 @@ export function World({ data, level, serverClockOffsetMs, onChange, onNotice, on
     }
   }
 
+  function claimRegionChest() {
+    const result = claimRegionDailyChest(data, location, now, level, authoritativeClock);
+    if (result.outcome === 'claimed') {
+      onChange(result.data);
+      onNotice(`${place.name}: ${result.tier}e Weltkiste liegt im Tresor.`);
+    } else if (result.outcome === 'daily-limit') {
+      onNotice('Das Tageslimit von drei Welt- und Challenge-Kisten ist erreicht. Deine übrigen Weltbelohnungen bleiben erhalten.');
+    } else if (result.outcome === 'already-claimed') {
+      onNotice('Die Weltkiste für diesen Ort wurde heute bereits abgeholt.');
+    } else if (result.outcome === 'not-ready') {
+      onNotice('Erledige zuerst alle drei Teile des Tagesauftrags.');
+    }
+  }
+
   function openQuest(id: string) {
     const definition = WORLD_QUESTS.find((entry) => entry.id === id);
     if (!definition) return;
@@ -242,6 +261,26 @@ export function World({ data, level, serverClockOffsetMs, onChange, onNotice, on
           <div className="world-mastery-bar"><i style={{ width: `${masteryProgress(locationMastery)}%` }}/></div>
           <small>{locationMastery} Meisterschafts-XP · {questCount.completed}/{questCount.total} Hauptquests · {locationDiscoveries} dauerhafte Geheimnisse</small>
         </section>
+        <section className="world-region-daily" data-testid={`region-daily-${location}`}>
+          <div className="world-section-heading"><Sparkles size={15}/><b>Tagesauftrag · {place.name}</b><small>Kisten {w.dailyChestCount}/3</small></div>
+          <div className="region-task-progress">
+            <span><b>Materialien</b><small>{Math.min(regionTask.materials, regionProgress.materials)}/{regionTask.materials}</small></span>
+            <span><b>Aktivitäten</b><small>{Math.min(regionTask.activities, regionProgress.activities)}/{regionTask.activities}</small></span>
+            <span><b>Besondere Funde</b><small>{Math.min(regionTask.rare, regionProgress.rare)}/{regionTask.rare}</small></span>
+          </div>
+          <small className={`region-task-status ${regionChestClaimed ? 'done' : regionTaskComplete ? w.dailyChestCount >= 3 ? 'capped' : 'ready' : ''}`}>
+            {regionChestClaimed ? 'Heute abgeholt'
+              : regionTaskComplete && w.dailyChestCount >= 3 ? 'Tageslimit erreicht · Münzen, XP und Material bleiben erhalten'
+                : regionTaskComplete ? 'Kiste bereit · Qualität steigt mit der Gebietsmeisterschaft'
+                  : regionTaskRewardClaimed ? 'Auftrag erledigt · Deine Belohnung bleibt erhalten'
+                    : 'Aufgaben noch offen'}
+          </small>
+          <button className="button orange small" onClick={claimRegionChest}
+            disabled={!regionTaskComplete || regionChestClaimed || w.dailyChestCount >= 3}
+            data-testid={`button-region-chest-${location}`}>
+            {regionChestClaimed ? 'Heute abgeholt' : w.dailyChestCount >= 3 && regionTaskComplete ? 'Tageslimit erreicht' : 'Weltkiste abholen'}
+          </button>
+        </section>
         {npc && <section className={`world-npc ${npcClaimed ? 'done' : ''}`} data-testid={`world-npc-${npc.id}`}>
           <div className="world-section-heading"><MapPin size={15}/><b>{npc.name} · {npc.role}</b><small>Wiederkehrender Auftrag</small></div>
           <p>{npc.dialogue}</p>
@@ -271,6 +310,9 @@ export function World({ data, level, serverClockOffsetMs, onChange, onNotice, on
               <span><b>{goal.title}</b><small>{goal.description}</small></span><strong>{done ? 'Erledigt' : `${count}/${goal.target}`}</strong>
             </div>;
           })}
+          <div className={`weekly-chest-status ${w.weeklyChestClaimed ? 'earned' : ''}`} data-testid="weekly-chest-status">
+            <b>Rare-Wochenkiste</b><span>{w.weeklyChestClaimed ? 'Verdient · unabhängig vom Tageslimit' : 'Wird nach allen vier Wochenzielen vergeben'}</span>
+          </div>
           <small className="world-daily-foot">Keine Strafe für verpasste Tage · Belohnungen pro Woche nur einmal.</small>
         </section>
         <section className="world-resources" data-testid="world-resource-nodes">

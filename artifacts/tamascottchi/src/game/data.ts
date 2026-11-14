@@ -3,12 +3,14 @@ import { hatUrl, neckUrl, outfitUrl, toyUrl } from './assets';
 import type { GameId } from './engine';
 import { absenceDecay, initialPersonality, type Personality } from './personality';
 import { worldDayKey, worldWeekKey } from './worldClock';
+import { COLLECTION_ITEMS, COLLECTION_ITEM_LINKS } from './collectionWorld';
 
 export type Room = 'Wohnzimmer' | 'Küche' | 'Bad' | 'Schlafzimmer' | 'Spielzimmer';
 export type NeedKey = 'hunger' | 'glueck' | 'energie' | 'sauberkeit';
 export type GameRecord = { id: string; game: GameId; score: number; date: number };
 export type ItemType = 'food' | 'toy' | 'accessory' | 'room' | 'background' | 'material';
 export type RewardChestTier = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
+export type RewardChestInstance = { id: string; tier: RewardChestTier; source: string; earnedAt: number };
 export type Item = {
   id: string; name: string; icon: string; price: number; type: ItemType; effect?: NeedKey; amount?: number;
   effects?: Partial<Record<NeedKey, number>>; unlockLevel?: number; img?: string; desc?: string;
@@ -61,15 +63,28 @@ export type PetData = {
     fishingRewardsToday?: number;
     lastKnownWorldTime?: number;
     rewardChests?: Partial<Record<RewardChestTier, number>>;
+    chestInstances?: RewardChestInstance[];
+    openedChestIds?: string[];
+    dailyChestCount?: number;
+    dailyChestLocations?: string[];
+    regionDailyProgress?: Record<string, { materials: number; activities: number; rare: number }>;
+    weeklyChestClaimed?: boolean;
+    milestoneChestsClaimed?: string[];
     petPosition: { x: number; y: number };
   };
   collectionIds?: string[];
+  artifactLevels?: Record<string, number>;
+  equippedArtifacts?: string[];
+  artifactUpgradeCount?: number;
 };
 export type FullPetData = PetData
   & Required<Pick<PetData, 'personality' | 'visitedRooms' | 'routine' | 'stylesWorn' | 'world' | 'collectionIds' | 'journal' | 'roomPlacements' | 'tutorialSeen'>>
+  & Required<Pick<PetData, 'artifactLevels' | 'equippedArtifacts' | 'artifactUpgradeCount'>>
   & { world: Required<NonNullable<PetData['world']>> & Required<Pick<NonNullable<PetData['world']>,
     'resourceCollectedAt' | 'worldDay' | 'dailyGoals' | 'dailyMetrics' | 'dailyClaimed' | 'dailyVisitedLocations' |
-    'dailyMasteryGained' | 'weeklyKey' | 'weeklyMetrics' | 'weeklyClaimed' | 'areaMastery' | 'worldEvent' | 'worldEventClaimedDay' | 'fishingRewardsToday' | 'lastKnownWorldTime' | 'rewardChests'>> };
+    'dailyMasteryGained' | 'weeklyKey' | 'weeklyMetrics' | 'weeklyClaimed' | 'areaMastery' | 'worldEvent' | 'worldEventClaimedDay' |
+    'fishingRewardsToday' | 'lastKnownWorldTime' | 'rewardChests' | 'chestInstances' | 'openedChestIds' | 'dailyChestCount' | 'dailyChestLocations' |
+    'regionDailyProgress' | 'weeklyChestClaimed' | 'milestoneChestsClaimed'>> };
 
 export const STORE_KEY = 'tamascottchi-save-v1';
 export const BACKUP_KEY = 'tamascottchi-save-v1-backup-before-2.0';
@@ -78,7 +93,8 @@ export const BACKUP_KEY_30 = 'tamascottchi-save-v1-backup-before-3.0';
 export const BACKUP_KEY_40 = 'tamascottchi-save-v1-backup-before-4.0';
 export const BACKUP_KEY_60 = 'tamascottchi-save-v1-backup-before-6.0';
 export const BACKUP_KEY_61 = 'tamascottchi-save-v1-backup-before-6.1';
-export const SAVE_SCHEMA = 7;
+export const BACKUP_KEY_62 = 'tamascottchi-save-v1-backup-before-6.2';
+export const SAVE_SCHEMA = 8;
 export const LOCATIONS = [
   { id: 'park', name: 'Scottchi Park', level: 1, point: { x: 25, y: 29 }, desc: 'Der erste Spaziergang: Wege, Wiesen und verlorene Knochen.' },
   { id: 'city', name: 'Scottchi City', level: 3, point: { x: 45, y: 53 }, desc: 'Ein lebendiger Platz für kleine Besorgungen.' },
@@ -179,6 +195,9 @@ export const ITEMS: Item[] = [
   { id: 'berry', name: 'Waldbeere', icon: '●', price: 0, type: 'material', rarity: 'Gewöhnlich', origin: 'Scottchi Forest', purpose: 'Zutat für Scottchi-Leckerlis', stackable: true },
   { id: 'fish-common', name: 'Silberfisch', icon: '◆', price: 0, type: 'material', rarity: 'Gewöhnlich', origin: 'Scottchi Beach · Angeln', purpose: 'Zutat für nahrhafte Leckerlis', stackable: true },
   { id: 'fish-rare', name: 'Mondfisch', icon: '◆', price: 0, type: 'material', rarity: 'Selten', origin: 'Scottchi Beach · Angeln', purpose: 'Seltene Zutat für besondere Leckerlis', stackable: true },
+  { id: 'artifact-dust', name: 'Artefaktstaub', icon: '✧', price: 0, type: 'material', rarity: 'Selten', origin: 'Doppelte Artefakte und Wochenaufträge', purpose: 'Wird für Artefakt-Upgrades eingesetzt.', stackable: true },
+  { id: 'epic-essence', name: 'Epische Essenz', icon: '✦', price: 0, type: 'material', rarity: 'Episch', origin: 'Epische Artefakt-Duplikate und Meilensteine', purpose: 'Wertvolle Zutat für epische Artefakt-Upgrades.', stackable: true },
+  { id: 'legendary-essence', name: 'Legendäre Essenz', icon: '✧', price: 0, type: 'material', rarity: 'Legendär', origin: 'Legendäre Artefakt-Duplikate und langfristige Erfolge', purpose: 'Seltene Zutat für legendäre Artefakt-Upgrades.', stackable: true },
   { id: 'crafted-toy', name: 'Wald-Wurfseil', icon: '🪢', price: 0, type: 'toy', img: toyUrl('rope'), desc: 'Ein handgemachtes Zerrspielzeug aus Holz und Stoff.', rarity: 'Ungewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: false, craftOnly: true },
   { id: 'shell-decor', name: 'Muschel-Mobile', icon: '🐚', price: 0, type: 'room', desc: 'Ein selbstgemachtes Mobile aus Strandfunden.', rarity: 'Selten', origin: 'Werkstatt · Crafting', purpose: 'Dekoration für dein Zimmer', stackable: false, craftOnly: true },
   { id: 'magic-treat', name: 'Kristall-Leckerli', icon: '✨', price: 0, type: 'food', amount: 1, effects: { glueck: 18, energie: 8 }, desc: 'Ein glitzernder Snack, der Scottchi aufmuntert.', rarity: 'Episch', origin: 'Werkstatt · Crafting', purpose: 'Einmalig Laune und Energie auffüllen', stackable: true, craftOnly: true },
@@ -205,13 +224,13 @@ export const ITEMS: Item[] = [
 ];
 export const itemById = (id: string) => ITEMS.find((i) => i.id === id);
 
-export const CHALLENGES: { id: string; game: GameId; title: string; test: (score: number, m: Record<string, number>) => boolean; coins: number; xp: number; chestTier: RewardChestTier }[] = [
-  { id: 'catch-30', game: 'catch', title: 'Fange 30 Snacks ohne Fehler', test: (_s, m) => (m.maxClean || 0) >= 30, coins: 30, xp: 25, chestTier: 'rare' },
-  { id: 'catch-600', game: 'catch', title: 'Knacke 600 Punkte in Snack Catch', test: (s) => s >= 600, coins: 25, xp: 20, chestTier: 'common' },
-  { id: 'turbo-15', game: 'turbo', title: 'Erreiche 15 Treffer hintereinander', test: (_s, m) => (m.maxCombo || 0) >= 15, coins: 30, xp: 25, chestTier: 'epic' },
-  { id: 'memory-12', game: 'memory', title: 'Gewinne Memory mit weniger als 12 Versuchen', test: (_s, m) => m.won === 1 && m.attempts < 12, coins: 30, xp: 25, chestTier: 'epic' },
-  { id: 'run-60', game: 'run', title: 'Überlebe 60 Sekunden in Scottchi Run', test: (_s, m) => (m.seconds || 0) >= 60, coins: 35, xp: 30, chestTier: 'legendary' },
-  { id: 'bone-5', game: 'bone', title: 'Finde den Knochen 5-mal in Folge', test: (_s, m) => (m.maxStreak || 0) >= 5, coins: 30, xp: 25, chestTier: 'uncommon' },
+export const CHALLENGES: { id: string; game: GameId; title: string; test: (score: number, m: Record<string, number>) => boolean; coins: number; xp: number; dust: number; chestTier?: RewardChestTier }[] = [
+  { id: 'catch-30', game: 'catch', title: 'Fange 30 Snacks ohne Fehler', test: (_s, m) => (m.maxClean || 0) >= 30, coins: 30, xp: 25, dust: 8 },
+  { id: 'catch-600', game: 'catch', title: 'Knacke 600 Punkte in Snack Catch', test: (s) => s >= 600, coins: 25, xp: 20, dust: 5 },
+  { id: 'turbo-15', game: 'turbo', title: 'Erreiche 15 Treffer hintereinander', test: (_s, m) => (m.maxCombo || 0) >= 15, coins: 30, xp: 25, dust: 8 },
+  { id: 'memory-12', game: 'memory', title: 'Gewinne Memory mit weniger als 12 Versuchen', test: (_s, m) => m.won === 1 && m.attempts < 12, coins: 30, xp: 25, dust: 8 },
+  { id: 'run-60', game: 'run', title: 'Überlebe 60 Sekunden in Scottchi Run', test: (_s, m) => (m.seconds || 0) >= 60, coins: 35, xp: 30, dust: 10 },
+  { id: 'bone-5', game: 'bone', title: 'Finde den Knochen 5-mal in Folge', test: (_s, m) => (m.maxStreak || 0) >= 5, coins: 30, xp: 25, dust: 6 },
 ];
 
 /** Bounded rewards per round: coins and XP grow with score but are capped; after 15 rounds a day they are halved. */
@@ -246,9 +265,12 @@ export const initialData = (): FullPetData => ({
     worldDay: worldDayKey(Date.now()), dailyGoals: [], dailyMetrics: {}, dailyClaimed: [], dailyVisitedLocations: [],
      dailyMasteryGained: 0, weeklyKey: worldWeekKey(Date.now()), weeklyMetrics: {}, weeklyClaimed: [],
      areaMastery: {}, worldEvent: null, worldEventClaimedDay: '',
-    fishingRewardsToday: 0, lastKnownWorldTime: Date.now(), rewardChests: {}, petPosition: { x: 32, y: 38 },
+       fishingRewardsToday: 0, lastKnownWorldTime: Date.now(), rewardChests: {}, chestInstances: [], openedChestIds: [],
+      dailyChestCount: 0, dailyChestLocations: [], regionDailyProgress: {}, weeklyChestClaimed: false,
+      milestoneChestsClaimed: [], petPosition: { x: 32, y: 38 },
    },
   journal: [], roomPlacements: {}, tutorialSeen: false, collectionIds: [],
+  artifactLevels: {}, equippedArtifacts: [], artifactUpgradeCount: 0,
 });
 
 const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
@@ -265,6 +287,39 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
   for (const r of records) highscores[r.game] = Math.max(highscores[r.game] || 0, r.score);
   const needs = parsed.needs || d.needs;
   const inventory = Object.fromEntries(Object.entries(parsed.inventory || d.inventory).map(([id, count]) => [id, Math.max(0, Math.floor(num(count, 0)))]));
+  const collectionIds = [...new Set([
+    ...(Array.isArray(parsed.collectionIds) ? parsed.collectionIds : []),
+    ...(Array.isArray(parsed.world?.discoveries) ? parsed.world.discoveries : []),
+    ...Object.entries(COLLECTION_ITEM_LINKS)
+      .filter(([, linkedId]) => parsed.owned?.includes(linkedId) || Number(inventory[linkedId] || 0) > 0)
+      .map(([collectionId]) => collectionId),
+  ])].filter((id) => COLLECTION_ITEMS.some((item) => item.id === id));
+  const artifactLevels = Object.fromEntries(
+    Object.entries({ ...Object.fromEntries(collectionIds.map((id) => [id, 1])), ...(parsed.artifactLevels || {}) })
+      .filter(([id, level]) => COLLECTION_ITEMS.some((item) => item.id === id) && Number.isFinite(level) && Number(level) >= 1)
+      .map(([id, level]) => [id, Math.min(20, Math.floor(Number(level)))]),
+  );
+  const savedWeeklyMetrics = { ...(parsed.world?.weeklyMetrics || {}) };
+  if (savedWeeklyMetrics.materials === undefined) savedWeeklyMetrics.materials = Math.max(0, num(savedWeeklyMetrics.gather, 0));
+  if (savedWeeklyMetrics.activities === undefined) savedWeeklyMetrics.activities = Math.max(0, num(savedWeeklyMetrics.gather, 0));
+  const validTiers: RewardChestTier[] = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
+  const chestInstances = Array.isArray(parsed.world?.chestInstances) && parsed.world.chestInstances.length > 0
+    ? parsed.world.chestInstances
+      .filter((chest) => chest && typeof chest.id === 'string' && typeof chest.source === 'string' && validTiers.includes(chest.tier) && Number.isFinite(chest.earnedAt))
+      .map((chest) => ({ id: chest.id.slice(0, 160), source: chest.source.slice(0, 160), tier: chest.tier, earnedAt: Math.max(0, chest.earnedAt) }))
+      .filter((chest, index, all) => all.findIndex((candidate) => candidate.id === chest.id) === index)
+    : validTiers.flatMap((tier) => Array.from(
+      { length: Math.max(0, Math.min(1000, Math.floor(num(parsed.world?.rewardChests?.[tier], 0)))) },
+      (_, index) => ({ id: `legacy-${tier}-${index + 1}`, source: `legacy-${tier}-${index + 1}`, tier, earnedAt: now }),
+    ));
+  const chestCounts = Object.fromEntries(validTiers.map((tier) => [tier, chestInstances.filter((chest) => chest.tier === tier).length])) as Record<RewardChestTier, number>;
+  const milestoneChestsClaimed = new Set(
+    Array.isArray(parsed.world?.milestoneChestsClaimed) ? parsed.world.milestoneChestsClaimed.filter((id) => typeof id === 'string') : [],
+  );
+  if ((parsed.saveSchema || 0) < 8) {
+    if (Object.values(highscores).some((score) => (score || 0) >= 1000)) milestoneChestsClaimed.add('score-1000');
+    if (Object.values(highscores).some((score) => (score || 0) >= 5000)) milestoneChestsClaimed.add('score-5000');
+  }
   // Older saves stored reusable shampoo as an owned toy. Give it one usable dose
   // rather than deleting the purchase when migrating to the 4.0 consumable model.
   if (parsed.owned?.includes('shampoo') && !inventory.shampoo) inventory.shampoo = 1;
@@ -315,7 +370,7 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
       dailyVisitedLocations: [...new Set(parsed.world?.dailyVisitedLocations || [])],
       dailyMasteryGained: Math.max(0, Math.floor(num(parsed.world?.dailyMasteryGained, 0))),
       weeklyKey: typeof parsed.world?.weeklyKey === 'string' ? parsed.world.weeklyKey : worldWeekKey(Math.max(now, num(parsed.world?.lastKnownWorldTime, now))),
-      weeklyMetrics: Object.fromEntries(Object.entries(parsed.world?.weeklyMetrics || {}).filter(([, value]) => Number.isFinite(value) && Number(value) >= 0).map(([id, value]) => [id, Math.floor(Number(value))])),
+      weeklyMetrics: Object.fromEntries(Object.entries(savedWeeklyMetrics).filter(([, value]) => Number.isFinite(value) && Number(value) >= 0).map(([id, value]) => [id, Math.floor(Number(value))])),
       weeklyClaimed: [...new Set(parsed.world?.weeklyClaimed || [])],
       areaMastery: Object.fromEntries(Object.entries(parsed.world?.areaMastery || {}).filter(([, value]) => Number.isFinite(value) && Number(value) >= 0).map(([id, value]) => [id, Math.floor(Number(value))])),
       worldEvent: parsed.world?.worldEvent && typeof parsed.world.worldEvent.id === 'string' && typeof parsed.world.worldEvent.day === 'string'
@@ -325,13 +380,28 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
       worldEventClaimedDay: typeof parsed.world?.worldEventClaimedDay === 'string' ? parsed.world.worldEventClaimedDay : '',
       fishingRewardsToday: Math.max(0, Math.floor(num(parsed.world?.fishingRewardsToday, 0))),
       lastKnownWorldTime: Math.max(num(parsed.world?.lastKnownWorldTime, now), num(parsed.lastUpdated, now)),
-      rewardChests: Object.fromEntries((['common', 'uncommon', 'rare', 'epic', 'legendary'] as const).map((tier) => [tier, Math.max(0, Math.floor(num(parsed.world?.rewardChests?.[tier], 0)))])),
+      rewardChests: chestCounts,
+      chestInstances,
+       openedChestIds: [...new Set(Array.isArray(parsed.world?.openedChestIds) ? parsed.world.openedChestIds.filter((id) => typeof id === 'string') : [])],
+      dailyChestCount: Math.max(0, Math.min(3, Math.floor(num(parsed.world?.dailyChestCount, 0)))),
+      dailyChestLocations: [...new Set(Array.isArray(parsed.world?.dailyChestLocations) ? parsed.world.dailyChestLocations.filter((id) => typeof id === 'string') : [])],
+      regionDailyProgress: Object.fromEntries(Object.entries(parsed.world?.regionDailyProgress || {}).map(([id, progress]) => [id, {
+        materials: Math.max(0, Math.floor(num(progress?.materials, 0))),
+        activities: Math.max(0, Math.floor(num(progress?.activities, 0))),
+        rare: Math.max(0, Math.floor(num(progress?.rare, 0))),
+      }])),
+      weeklyChestClaimed: Boolean(parsed.world?.weeklyChestClaimed),
+      milestoneChestsClaimed: [...milestoneChestsClaimed],
       petPosition: {
         x: Math.max(3, Math.min(97, num(parsed.world?.petPosition?.x, d.world.petPosition.x))),
         y: Math.max(3, Math.min(97, num(parsed.world?.petPosition?.y, d.world.petPosition.y))),
       },
     },
-    collectionIds: [...new Set(parsed.collectionIds || [])],
+    collectionIds,
+    artifactLevels,
+    equippedArtifacts: [...new Set((Array.isArray(parsed.equippedArtifacts) ? parsed.equippedArtifacts : []).filter((id) => artifactLevels[id]))]
+      .slice(0, levelFor(num(parsed.xp, d.xp)) >= 20 ? 4 : levelFor(num(parsed.xp, d.xp)) >= 10 ? 3 : 2),
+    artifactUpgradeCount: Math.max(0, Math.floor(num(parsed.artifactUpgradeCount, 0))),
     journal: Array.isArray(parsed.journal) ? parsed.journal.filter((entry) => entry && typeof entry.id === 'string' && typeof entry.icon === 'string' && typeof entry.title === 'string' && typeof entry.detail === 'string' && Number.isFinite(entry.date)).slice(-100) : [],
     roomPlacements: Object.fromEntries(Object.entries(roomPlacements).filter(([, pos]) => pos && Number.isFinite(pos.x) && Number.isFinite(pos.y)).map(([id, pos]) => [id, { x: Math.max(4, Math.min(96, pos.x)), y: Math.max(42, Math.min(88, pos.y)) }])),
     tutorialSeen: Boolean(parsed.tutorialSeen),
@@ -366,6 +436,7 @@ export function loadData(): FullPetData {
     if ((parsed.saveSchema || 0) < 5 && !localStorage.getItem(BACKUP_KEY_40)) localStorage.setItem(BACKUP_KEY_40, raw);
     if ((parsed.saveSchema || 0) < 6 && !localStorage.getItem(BACKUP_KEY_60)) localStorage.setItem(BACKUP_KEY_60, raw);
     if ((parsed.saveSchema || 0) < 7 && !localStorage.getItem(BACKUP_KEY_61)) localStorage.setItem(BACKUP_KEY_61, raw);
+    if ((parsed.saveSchema || 0) < 8 && !localStorage.getItem(BACKUP_KEY_62)) localStorage.setItem(BACKUP_KEY_62, raw);
     return normalize(parsed);
   } catch (cause) {
     // Never replace an unreadable save with a new game through the autosave effect.

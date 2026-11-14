@@ -46,6 +46,12 @@ const chestBuild = await build({
   define: { 'import.meta.env.BASE_URL': '"/"' },
 });
 const chestModule = await import(`data:text/javascript;base64,${Buffer.from(chestBuild.outputFiles[0].text).toString('base64')}`);
+const artifactBuild = await build({
+  entryPoints: ['artifacts/tamascottchi/src/game/artifactSystem.ts'],
+  bundle: true, write: false, format: 'esm', platform: 'node',
+  define: { 'import.meta.env.BASE_URL': '"/"' },
+});
+const artifactModule = await import(`data:text/javascript;base64,${Buffer.from(artifactBuild.outputFiles[0].text).toString('base64')}`);
 const timeBuild = await build({
   entryPoints: ['artifacts/tamascottchi/src/game/worldClock.ts'],
   bundle: true, write: false, format: 'esm', platform: 'node',
@@ -197,9 +203,9 @@ test('schema 6 saves keep a raw 6.1 backup and migrate unopened chest counts', (
   assert.equal(next.coins, 275);
   assert.deepEqual(next.owned, ['ball']);
 });
-test('challenge chests consume once, award collection finds and convert duplicates to materials', () => {
+test('challenge rewards no longer issue repeatable chests and stored chest instances open once', () => {
   const chestTiers = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
-  assert.deepEqual([...new Set(dataModule.CHALLENGES.map((challenge) => challenge.chestTier))].sort(), [...chestTiers].sort());
+  assert.ok(dataModule.CHALLENGES.every((challenge) => !challenge.chestTier && challenge.dust > 0));
   let data = normalize({ ...initialData(), world: { ...initialData().world, rewardChests: Object.fromEntries(chestTiers.map((tier) => [tier, 1])) } });
   for (const tier of chestTiers) {
     const opened = chestModule.openRewardChest(data, tier, () => 0);
@@ -207,6 +213,7 @@ test('challenge chests consume once, award collection finds and convert duplicat
     assert.equal(opened.data.world.rewardChests[tier], 0);
     assert.equal(opened.data.coins, data.coins + chestModule.CHEST_DEFINITIONS[tier].coins);
     assert.equal(opened.data.xp, data.xp + chestModule.CHEST_DEFINITIONS[tier].xp);
+    assert.equal(opened.data.world.chestInstances.length, data.world.chestInstances.length - 1);
     assert.ok(opened.reward.itemName);
     data = opened.data;
   }
@@ -216,9 +223,69 @@ test('challenge chests consume once, award collection finds and convert duplicat
   });
   const duplicate = chestModule.openRewardChest(fullAlbum, 'common', () => 0);
   assert.equal(duplicate.reward.isCollectionFind, false);
-  assert.equal(duplicate.reward.itemId, 'wood');
-  assert.equal(duplicate.data.inventory.wood, (fullAlbum.inventory.wood || 0) + 2);
+  assert.equal(duplicate.reward.isDuplicate, true);
+  assert.equal(duplicate.reward.duplicateDust, 5);
+  assert.equal(duplicate.data.inventory['artifact-dust'], (fullAlbum.inventory['artifact-dust'] || 0) + 5);
   assert.equal(chestModule.openRewardChest(duplicate.data, 'common'), null);
+});
+test('all rarity tables total 100 percent and 100,000 chest simulations match their configured weights', () => {
+  const rarities = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary'];
+  for (const [tier, weights] of Object.entries(artifactModule.RARITY_CHEST_WEIGHTS)) {
+    assert.equal(Object.values(weights).reduce((sum, weight) => sum + weight, 0), 100, `${tier} total`);
+    let state = 0x12345678;
+    const random = () => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return state / 0x1_0000_0000;
+    };
+    const counts = Object.fromEntries(rarities.map((rarity) => [rarity, 0]));
+    for (let draw = 0; draw < 100_000; draw += 1) counts[chestModule.chooseRarity(tier, random)] += 1;
+    for (const rarity of rarities) {
+      const expected = weights[rarity] / 100;
+      const actual = counts[rarity] / 100_000;
+      const tolerance = expected === 0 ? 0 : Math.max(0.0012, 6 * Math.sqrt(expected * (1 - expected) / 100_000));
+      assert.ok(Math.abs(actual - expected) <= tolerance, `${tier}/${rarity}: expected ${expected}, got ${actual}`);
+    }
+  }
+});
+test('legacy collection finds migrate to level-one artifacts without losing balances or chests', () => {
+  storage.clear();
+  const old = {
+    ...initialData(), saveSchema: 7, coins: 875, xp: 920, collectionIds: ['clover'],
+    inventory: { wood: 23, shell: 7 }, owned: ['ball'],
+    world: { ...initialData().world, discoveries: ['clover'], rewardChests: { rare: 2 } },
+  };
+  const raw = JSON.stringify(old);
+  storage.set(STORE_KEY, raw);
+  const migrated = loadData();
+  assert.equal(storage.get(dataModule.BACKUP_KEY_62), raw);
+  assert.equal(migrated.artifactLevels.clover, 1);
+  assert.deepEqual(migrated.equippedArtifacts, []);
+  assert.equal(migrated.coins, 875);
+  assert.equal(migrated.inventory.wood, 23);
+  assert.equal(migrated.inventory.shell, 7);
+  assert.equal(migrated.world.rewardChests.rare, 2);
+  assert.equal(migrated.world.chestInstances.length, 2);
+});
+test('artifact upgrades consume the configured coins and materials and equipped bonuses obey caps', () => {
+  let data = normalize({
+    ...initialData(), coins: 5000, artifactLevels: { 'cap-red': 1, 'clover': 1, 'key-gold': 1 },
+    inventory: { wood: 8, wildflower: 8, 'artifact-dust': 30 },
+  });
+  const cost = artifactModule.artifactUpgradeCost(artifactModule.artifactById('cap-red'), 1);
+  assert.equal(cost.coins, 100);
+  const upgraded = artifactModule.upgradeArtifact(data, 'cap-red');
+  assert.equal(upgraded.ok, true);
+  assert.equal(upgraded.data.artifactLevels['cap-red'], 2);
+  assert.equal(upgraded.data.coins, data.coins - 100);
+  assert.equal(upgraded.data.inventory.wood, 7);
+  const broke = artifactModule.upgradeArtifact({ ...data, coins: 1 }, 'cap-red');
+  assert.equal(broke.reason, 'not-enough-coins');
+  data = { ...data, equippedArtifacts: ['key-gold', 'clover'] };
+  assert.ok(artifactModule.equippedArtifactBonuses(data).coins <= artifactModule.ARTIFACT_BONUS_LIMITS.coins);
+  assert.equal(artifactModule.applicableArtifactBonus({ ...data, equippedArtifacts: [] }, 'coins', 'world'), 0);
+  assert.equal(artifactModule.playerArtifactSlots(1), 2);
+  assert.equal(artifactModule.playerArtifactSlots(10), 3);
+  assert.equal(artifactModule.playerArtifactSlots(20), 4);
 });
 test('malformed quantities are clamped without dropping valid possessions', () => {
   const next = normalize({ ...initialData(), inventory: { wood: -5, cloth: 1.8, kibble: 'bad' }, owned: ['ball'] });
@@ -369,6 +436,41 @@ test('resource nodes award once, stay exhausted until their configured respawn, 
   assert.equal(respawn.data.inventory['bone-scrap'], (base.inventory['bone-scrap'] || 0) + 4);
 });
 
+test('regional daily tasks pay once, offer one chest per region, and share the three-chest cap', () => {
+  const start = Date.now() + 60_000;
+  let data = worldDataAt(start);
+  data = worldEngine.recordRegionActivity(data, 'park', 4, 2, 0, start, 1);
+  assert.ok(data.world.dailyClaimed.includes('region-daily:park'));
+  assert.equal(data.inventory['bone-scrap'], 2);
+  const coins = data.coins;
+  data = worldEngine.recordRegionActivity(data, 'park', 4, 2, 0, start, 1);
+  assert.equal(data.coins, coins);
+
+  const readyRegions = ['park', 'city', 'forest', 'beach'];
+  data = {
+    ...data,
+    world: {
+      ...data.world,
+      regionDailyProgress: Object.fromEntries(readyRegions.map((id) => [id, {
+        materials: worldEngine.REGION_DAILY_TASKS[id].materials,
+        activities: worldEngine.REGION_DAILY_TASKS[id].activities,
+        rare: worldEngine.REGION_DAILY_TASKS[id].rare,
+      }])),
+    },
+  };
+  for (const region of readyRegions.slice(0, 3)) {
+    const result = worldEngine.claimRegionDailyChest(data, region, start, 1, false, () => 0);
+    assert.equal(result.outcome, 'claimed');
+    data = result.data;
+  }
+  assert.equal(data.world.dailyChestCount, 3);
+  assert.equal(worldEngine.claimRegionDailyChest(data, 'beach', start, 1).outcome, 'daily-limit');
+  assert.equal(worldEngine.claimRegionDailyChest(data, 'park', start, 1).outcome, 'already-claimed');
+  const nextDay = worldEngine.ensureWorldDay(data, start + 26 * 60 * 60 * 1000, 1);
+  assert.equal(nextDay.world.dailyChestCount, 0);
+  assert.deepEqual(nextDay.world.dailyChestLocations, []);
+});
+
 test('area mastery unlocks rare resource nodes instead of only showing a progress bar', () => {
   const start = Date.now() + 60_000;
   const base = worldDataAt(start);
@@ -392,19 +494,26 @@ test('daily world reset is idempotent and keeps permanent progress and resources
   assert.equal(secondReset.world.areaMastery.park, earned.world.areaMastery.park);
 });
 
-test('weekly goals reward once and reset separately from permanent progress', () => {
+test('weekly goals award one rare chest once and reset separately from permanent progress', () => {
   const start = Date.now() + 60_000;
   const base = worldEngine.ensureWorldDay(worldDataAt(start), start, 1);
   let progress = base;
-  for (let i = 0; i < 20; i += 1) progress = worldEngine.applyWeeklyMetric(progress, 'gather', 1, start, 1);
+  progress = worldEngine.applyWeeklyMetric(progress, 'materials', 100, start, 1);
+  progress = worldEngine.applyWeeklyMetric(progress, 'activities', 12, start, 1);
+  progress = worldEngine.applyWeeklyMetric(progress, 'craft', 3, start, 1);
+  progress = worldEngine.applyWeeklyMetric(progress, 'daily', 5, start, 1);
   const rewardedCoins = progress.coins;
-  assert.ok(progress.world.weeklyClaimed.includes('weekly-gather'));
-  progress = worldEngine.applyWeeklyMetric(progress, 'gather', 1, start, 1);
+  assert.ok(progress.world.weeklyClaimed.includes('weekly-materials'));
+  assert.equal(progress.world.weeklyChestClaimed, true);
+  assert.equal(progress.world.rewardChests.rare, 1);
+  progress = worldEngine.applyWeeklyMetric(progress, 'materials', 1, start, 1);
   assert.equal(progress.coins, rewardedCoins);
   const nextWeek = worldEngine.ensureWorldDay(progress, start + 8 * 24 * 60 * 60 * 1000, 1);
   assert.notEqual(nextWeek.world.weeklyKey, progress.world.weeklyKey);
   assert.deepEqual(nextWeek.world.weeklyMetrics, {});
   assert.deepEqual(nextWeek.world.weeklyClaimed, []);
+  assert.equal(nextWeek.world.weeklyChestClaimed, false);
+  assert.equal(nextWeek.world.rewardChests.rare, 1);
   assert.equal(nextWeek.coins, progress.coins);
 });
 

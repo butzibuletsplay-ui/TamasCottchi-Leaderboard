@@ -6,6 +6,8 @@ import { hasMaterialArt, MaterialArt } from './MaterialArt';
 import { CHEST_DEFINITIONS, CHEST_TIERS, type ChestOpenReward } from './rewardChests';
 import { RewardChestArt } from './RewardChestArt';
 import { assetUrl } from './assets';
+import { ARTIFACTS, artifactBonusPercent } from './artifactSystem';
+import { RARITY_LABEL } from './collectionWorld';
 
 type Props = {
   data: FullPetData;
@@ -72,12 +74,12 @@ export function InventoryPage({ data, onUse, onEquip, onPlace, onOpenChest }: Pr
     <div className="panel-head"><div><div className="eyebrow">DEINE GESAMTEN FUNDSTÜCKE</div><h2 className="panel-title">Inventar</h2></div><span className="stat-pill"><Box size={15}/>{ITEMS.filter((it) => quantity(data, it) > 0).length} Gegenstände</span></div>
     <p className="subline">Tippe einen Gegenstand an, um Herkunft, Seltenheit, Menge und verfügbare Aktionen zu sehen.</p>
     {pendingChests.length > 0 && <section className="chest-vault" aria-label="Belohnungskisten" data-testid="reward-chest-vault">
-      <div className="chest-vault-head"><div><div className="eyebrow">HERAUSFORDERUNGSBELOHNUNGEN</div><h3>Belohnungskisten</h3></div><Sparkles size={18}/></div>
+       <div className="chest-vault-head"><div><div className="eyebrow">WELT- & MEILENSTEINBELOHNUNGEN</div><h3>Belohnungskisten</h3></div><Sparkles size={18}/></div>
       <div className="chest-vault-grid">{pendingChests.map((tier) => {
         const count = data.world.rewardChests[tier] || 0;
         return <article className={`chest-vault-item rarity-${tier}`} key={tier} data-testid={`reward-chest-${tier}`}>
           <RewardChestArt tier={tier}/>
-          <div className="chest-vault-info"><strong>{CHEST_DEFINITIONS[tier].label}</strong><small>{count} {count === 1 ? 'Kiste' : 'Kisten'} · garantiert ein neuer Fund oder Material</small></div>
+           <div className="chest-vault-info"><strong>{CHEST_DEFINITIONS[tier].label}</strong><small>{count} {count === 1 ? 'Kiste' : 'Kisten'} · Artefakt nach Seltenheitswurf oder Duplikatstaub</small></div>
           <button className="button orange small" onClick={() => openChest(tier)} data-testid={`button-open-chest-${tier}`}>Öffnen</button>
         </article>;
       })}</div>
@@ -97,20 +99,35 @@ export function InventoryPage({ data, onUse, onEquip, onPlace, onOpenChest }: Pr
       <div className="dialog-actions">{actionFor(item)}<button className="button ghost" onClick={() => setSelected(null)}><Check size={15}/> Fertig</button></div>
       {item.type === 'material' && <div className="inventory-readonly"><Sparkles size={15}/> Kein direkter Einsatz. Dieses Material wird in Rezepten verbraucht.</div>}
     </section></div>}
-    {chestReveal && <div className="quest-backdrop" role="presentation" onClick={() => setChestReveal(null)}><section className={`chest-reveal panel rarity-${chestReveal.tier}`} role="dialog" aria-modal="true" aria-labelledby="chest-reveal-title" onClick={(event) => event.stopPropagation()} data-testid="chest-reveal">
+     {chestReveal && <div className="quest-backdrop chest-reveal-backdrop" role="presentation" onClick={() => setChestReveal(null)}><section className={`chest-reveal panel rarity-${chestReveal.rarity.toLowerCase()}`} role="dialog" aria-modal="true" aria-labelledby="chest-reveal-title" onClick={(event) => event.stopPropagation()} data-testid="chest-reveal">
       <button className="button small collection-close" onClick={() => setChestReveal(null)} aria-label="Schließen"><X size={16}/></button>
-      <RewardChestArt tier={chestReveal.tier} open className="chest-reveal-art"/>
-      <div className="eyebrow">KISTE GEÖFFNET</div><h3 id="chest-reveal-title">{chestReveal.chestName}</h3>
-      <div className="chest-reward-preview">
-        {chestReveal.isCollectionFind
-          ? <img src={assetUrl(`collections/items/${chestReveal.itemId}.png`)} alt="" />
+       <div className="chest-reveal-body">
+       <RewardChestArt tier={chestReveal.tier} open className="chest-reveal-art"/>
+       <div className="eyebrow">KISTE GEÖFFNET · {RARITY_LABEL[chestReveal.rarity]}</div><h3 id="chest-reveal-title">{chestReveal.collectionItem?.name || chestReveal.itemName}</h3>
+       <div className="chest-reward-preview">
+        {chestReveal.collectionItem
+          ? <img src={assetUrl(`collections/items/${chestReveal.collectionItem.id}.png`)} alt="" />
           : itemById(chestReveal.itemId) && hasMaterialArt(itemById(chestReveal.itemId)!)
             ? <MaterialArt item={itemById(chestReveal.itemId)!} size={64}/>
             : <Sparkles size={40}/>}
-        <div><strong>{chestReveal.itemName}{chestReveal.quantity > 1 ? ` ×${chestReveal.quantity}` : ''}</strong><small>{chestReveal.isCollectionFind ? 'Neuer Fund im Sammelalbum' : 'Material dem Inventar hinzugefügt'}</small></div>
+        <div>
+          <strong>{chestReveal.collectionItem?.name || chestReveal.itemName}{!chestReveal.collectionItem && chestReveal.quantity > 1 ? ` ×${chestReveal.quantity}` : ''}</strong>
+          <small>{chestReveal.isCollectionFind ? 'Neues Artefakt · Stufe 1'
+            : chestReveal.isDuplicate ? `Bereits entdeckt! Umgewandelt in ${chestReveal.duplicateDust} Artefaktstaub${chestReveal.epicEssence ? ` und ${chestReveal.epicEssence} Epische Essenz` : ''}${chestReveal.legendaryEssence ? ` und ${chestReveal.legendaryEssence} Legendäre Essenz` : ''}.`
+              : 'Material dem Inventar hinzugefügt'}</small>
+        </div>
       </div>
-      <p className="chest-reveal-bonus">+{chestReveal.coins} Münzen · +{chestReveal.xp} XP</p>
-      <div className="dialog-actions"><button className="button orange" onClick={() => setChestReveal(null)}>Weiter</button></div>
+      {chestReveal.collectionItem && <div className="chest-reveal-artifact-bonus">
+        <span className={`rarity-label rarity-${chestReveal.rarity.toLowerCase()}`}>{RARITY_LABEL[chestReveal.rarity]}</span>
+        {(() => {
+          const artifact = ARTIFACTS.find((entry) => entry.id === chestReveal.collectionItem?.id);
+          return artifact ? <p>+{artifactBonusPercent(artifact, 1)}% {artifact.effect.label} · Maximallevel 20 · Fundquelle: {chestReveal.source}</p> : null;
+        })()}
+      </div>}
+       <p className="chest-reveal-source">Fundquelle: {chestReveal.source}</p>
+       <p className="chest-reveal-bonus">+{chestReveal.coins} Münzen · +{chestReveal.xp} XP</p>
+       </div>
+       <div className="chest-reveal-actions"><button className="button orange" onClick={() => setChestReveal(null)}>Weiter</button></div>
     </section></div>}
   </section>;
 }

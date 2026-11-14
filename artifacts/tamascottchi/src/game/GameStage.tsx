@@ -11,6 +11,8 @@ import { TurboGame } from './games/TurboGame';
 import { RewardChestArt } from './RewardChestArt';
 import { CHEST_DEFINITIONS, type ChestOpenReward } from './rewardChests';
 import { hasMaterialArt, MaterialArt } from './MaterialArt';
+import { ARTIFACTS, artifactBonusPercent } from './artifactSystem';
+import { RARITY_LABEL } from './collectionWorld';
 
 export type ChallengeChestReward = { id: string; title: string; tier: RewardChestTier };
 export type RewardSummary = { coins: number; xp: number; newBest: boolean; best: number; challenges: string[]; challengeChests: ChallengeChestReward[]; reduced: boolean };
@@ -96,10 +98,21 @@ export function GameStage({ id, name, rules, best, difficulty, extras, sound, on
               <span>Herausforderung geschafft: {chest.title}</span>
               <div className="challenge-chest-reward">
                 <RewardChestArt tier={chest.tier} open={Boolean(opened)}/>
-                {opened?.isCollectionFind && <img className="challenge-loot-art" src={assetUrl(`collections/items/${opened.itemId}.png`)} alt="" />}
-                {opened && !opened.isCollectionFind && itemById(opened.itemId) && hasMaterialArt(itemById(opened.itemId)!) && <MaterialArt item={itemById(opened.itemId)!} size={30}/>}
-                <span>{opened ? `${opened.itemName}${opened.quantity > 1 ? ` ×${opened.quantity}` : ''} · +${opened.coins} Münzen` : `Belohnung: ${CHEST_DEFINITIONS[chest.tier].label}`}</span>
+                {opened?.collectionItem && <img className="challenge-loot-art" src={assetUrl(`collections/items/${opened.collectionItem.id}.png`)} alt="" />}
+                {opened && !opened.collectionItem && itemById(opened.itemId) && hasMaterialArt(itemById(opened.itemId)!) && <MaterialArt item={itemById(opened.itemId)!} size={30}/>}
+                <span>{opened
+                  ? opened.isDuplicate
+                    ? `Bereits entdeckt · +${opened.duplicateDust} Artefaktstaub${opened.epicEssence ? ` · +${opened.epicEssence} Epische Essenz` : ''}${opened.legendaryEssence ? ` · +${opened.legendaryEssence} Legendäre Essenz` : ''} · +${opened.coins} Münzen`
+                    : `${opened.itemName}${opened.quantity > 1 ? ` ×${opened.quantity}` : ''} · +${opened.coins} Münzen`
+                  : `Belohnung: ${CHEST_DEFINITIONS[chest.tier].label}`}</span>
               </div>
+              {opened?.collectionItem && <small className="challenge-artifact-detail">
+                {opened.isCollectionFind ? `Neues Artefakt · Stufe 1 · ${RARITY_LABEL[opened.rarity]}` : `Duplikat · ${RARITY_LABEL[opened.rarity]}`}
+                {(() => {
+                  const artifact = ARTIFACTS.find((entry) => entry.id === opened.collectionItem?.id);
+                  return artifact ? ` · +${artifactBonusPercent(artifact, 1)}% ${artifact.effect.label}` : '';
+                })()}
+              </small>}
             </div>;
           })}
           {result.reward.challenges.filter((title) => !result.reward.challengeChests.some((chest) => chest.title === title)).map((title) => <p key={title} className="challenge-pop">Herausforderung geschafft: {title}</p>)}
