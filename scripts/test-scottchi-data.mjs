@@ -208,6 +208,20 @@ test('schema 6 saves keep a raw 6.1 backup and migrate unopened chest counts', (
   assert.equal(next.coins, 275);
   assert.deepEqual(next.owned, ['ball']);
 });
+test('schema 8 saves get a raw 6.3 backup while retaining old chests and purchases', () => {
+  storage.clear();
+  const old = { ...initialData(), saveSchema: 8, coins: 820, xp: 760, owned: ['ball', 'teddy'], world: { ...initialData().world, rewardChests: { rare: 2 } } };
+  const raw = JSON.stringify(old);
+  storage.set(STORE_KEY, raw);
+  const next = loadData();
+  assert.equal(storage.get(dataModule.BACKUP_KEY_63), raw);
+  assert.equal(next.saveSchema, SAVE_SCHEMA);
+  assert.equal(next.coins, 820);
+  assert.equal(next.xp, 760);
+  assert.deepEqual(next.owned, ['ball', 'teddy']);
+  assert.equal(next.world.rewardChests.rare, 2);
+  assert.deepEqual(next.world.keys, { common: 0, uncommon: 0, rare: 0, epic: 0, legendary: 0 });
+});
 test('keyed chests open once and consume one matching key', () => {
   const chestTiers = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
   assert.ok(dataModule.CHALLENGES.every((challenge) => !challenge.chestTier && challenge.dust > 0));
@@ -234,6 +248,20 @@ test('keyed chests open once and consume one matching key', () => {
   assert.equal(duplicate.data.inventory['artifact-dust'], (fullAlbum.inventory['artifact-dust'] || 0) + 5);
   assert.equal(chestModule.openRewardChest(duplicate.data, 'common'), null);
   assert.equal(chestModule.openRewardChest(normalize({ ...initialData(), world: { ...initialData().world, rewardChests: { common: 1 } } }), 'common'), null, 'a chest without its key stays unopened');
+});
+test('key purchases charge exact prices and enforce unlock levels and sufficient coins', () => {
+  for (const tier of economy.CHEST_TIERS) {
+    const level = economy.CHEST_UNLOCK_LEVEL[tier];
+    const base = normalize({ ...initialData(), coins: economy.CHEST_KEY_PRICES[tier], xp: (level - 1) * 100 });
+    const purchased = chestModule.buyChestKey(base, tier, level);
+    assert.equal(purchased.ok, true, `${tier} purchase should work at its unlock level`);
+    assert.equal(purchased.data.coins, 0);
+    assert.equal(purchased.data.world.keys[tier], 1);
+    const short = normalize({ ...initialData(), coins: economy.CHEST_KEY_PRICES[tier] - 1, xp: (level - 1) * 100 });
+    assert.deepEqual(chestModule.buyChestKey(short, tier, level), { ok: false, reason: 'not-enough-coins' });
+    if (level > 1) assert.deepEqual(chestModule.buyChestKey(base, tier, level - 1), { ok: false, reason: 'locked' });
+  }
+  assert.deepEqual(economy.CHEST_KEY_PRICES, { common: 50, uncommon: 150, rare: 400, epic: 1000, legendary: 2500 });
 });
 test('world rarity tables match configured weights and all boosted chests total 100 percent', () => {
   const rarities = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary'];
@@ -265,6 +293,26 @@ test('world rarity tables match configured weights and all boosted chests total 
   assert.equal(economy.worldLevelDropChances(1).Legendary, 0);
   assert.equal(economy.chestDropChances('legendary', 2).Legendary, 0);
   assert.equal(economy.dailyWorldChestTier(21, () => 0), 'common', 'daily chests never award epic or legendary tiers');
+  for (const rarity of rarities) {
+    const clientIds = worldModule.COLLECTION_ITEMS.filter((item) => item.rarity === rarity).map((item) => item.id).sort();
+    assert.deepEqual([...economy.COLLECTION_RARITY_POOLS[rarity]].sort(), clientIds, `${rarity} server pool matches the album`);
+  }
+});
+test('server-side chest bonuses stay identical to equipped artifact bonuses', () => {
+  const ids = worldModule.COLLECTION_ITEMS.map((item) => item.id);
+  for (const activity of ['world', 'games', 'quests']) {
+    for (const kind of ['coins', 'xp']) {
+      for (let offset = 0; offset < 7; offset += 1) {
+        const equippedArtifacts = ids.filter((_, index) => index % 7 === offset);
+        const artifactLevels = Object.fromEntries(equippedArtifacts.map((id, index) => [id, (index % 20) + 1]));
+        assert.equal(
+          economy.artifactBonusForEquipped(equippedArtifacts, artifactLevels, kind, activity),
+          artifactModule.applicableArtifactBonus({ equippedArtifacts, artifactLevels }, kind, activity),
+          `${kind}/${activity}/${offset}`,
+        );
+      }
+    }
+  }
 });
 test('legacy collection finds migrate to level-one artifacts without losing balances or chests', () => {
   storage.clear();

@@ -113,6 +113,57 @@ export const UpdateOnlineSaveResponse = zod.object({
 
 
 /**
+ * @summary Buy a chest key using the server-owned coin balance
+ */
+export const PurchaseOnlineChestKeyBody = zod.object({
+  "tier": zod.enum(['common', 'uncommon', 'rare', 'epic', 'legendary']),
+  "requestId": zod.string().uuid()
+})
+
+export const PurchaseOnlineChestKeyResponse = zod.object({
+  "saveData": zod.record(zod.string(), zod.unknown()),
+  "revision": zod.number().int(),
+  "updatedAt": zod.coerce.date(),
+  "outcome": zod.enum(['key-purchased', 'chest-opened', 'daily-chest-claimed']),
+  "reward": zod.record(zod.string(), zod.unknown()).optional()
+})
+
+
+/**
+ * @summary Open one stored chest with a matching key and server randomness
+ */
+export const OpenOnlineRewardChestBody = zod.object({
+  "tier": zod.enum(['common', 'uncommon', 'rare', 'epic', 'legendary']),
+  "requestId": zod.string().uuid()
+})
+
+export const OpenOnlineRewardChestResponse = zod.object({
+  "saveData": zod.record(zod.string(), zod.unknown()),
+  "revision": zod.number().int(),
+  "updatedAt": zod.coerce.date(),
+  "outcome": zod.enum(['key-purchased', 'chest-opened', 'daily-chest-claimed']),
+  "reward": zod.record(zod.string(), zod.unknown()).optional()
+})
+
+
+/**
+ * @summary Claim one completed daily chest for an unlocked world
+ */
+export const ClaimOnlineDailyWorldChestBody = zod.object({
+  "locationId": zod.enum(['park', 'city', 'forest', 'beach', 'cave', 'mountain']),
+  "requestId": zod.string().uuid()
+})
+
+export const ClaimOnlineDailyWorldChestResponse = zod.object({
+  "saveData": zod.record(zod.string(), zod.unknown()),
+  "revision": zod.number().int(),
+  "updatedAt": zod.coerce.date(),
+  "outcome": zod.enum(['key-purchased', 'chest-opened', 'daily-chest-claimed']),
+  "reward": zod.record(zod.string(), zod.unknown()).optional()
+})
+
+
+/**
  * @summary Import a local game save once
  */
 export const importOnlineSaveBodyExpectedRevisionMin = 0;

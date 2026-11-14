@@ -17,6 +17,76 @@ export const COLLECTION_RARITY_POOLS: Record<CollectionRarity, string[]> = {
   Epic: ['royal-cape', 'royal-armor', 'crystal-rainbow', 'egg-crystal', 'egg-lava', 'gem-flower', 'portal-orb'],
   Legendary: ['scottchi-statue'],
 };
+export const COLLECTION_ITEM_LINKS: Record<string, string> = {
+  'cap-red': 'baseballcap', 'beanie-dark': 'beanie', 'cowboy-star': 'cowboy-hat', 'crown-ruby': 'crown',
+  'wizard-purple': 'wizard-hat', 'sleep-cap-blue': 'sleep-cap', 'hoodie-dark': 'hoodie', 'raincoat-gold': 'raincoat',
+  tuxedo: 'tuxedo', 'hero-cape-blue': 'cape', 'royal-cape': 'cape', 'royal-armor': 'tuxedo',
+  'scarf-red': 'scarf', 'collar-bone': 'collar', 'glasses-dark': 'sunglasses',
+  'bone-cream': 'bone-toy', 'tennisball-green': 'ball', duck: 'duck', 'frisbee-red': 'frisbee',
+  'rope-red': 'rope', teddy: 'teddy', bowl: 'bowl', 'bottle-pink': 'shampoo', 'flower-pot': 'plant',
+};
+const collectionCategories: Record<string, string[]> = {
+  Hüte: ['cap-red', 'beanie-dark', 'cowboy-star', 'chef-hat', 'party-cone', 'sleep-cap-blue', 'ranger-cap', 'crown-ruby', 'wizard-purple', 'crown-gold'],
+  Outfits: ['hoodie-dark', 'raincoat-gold', 'varsity-jacket', 'tuxedo', 'hero-cape-blue', 'sweater-cream', 'shirt-floral', 'explorer-jacket', 'royal-cape', 'royal-armor'],
+  Accessoires: ['scarf-red', 'scarf-blue', 'scarf-green', 'scarf-purple', 'collar-bone', 'collar-spikes', 'collar-gem', 'bandana', 'harness-blue', 'wings-gold', 'glasses-dark', 'monocle', 'glasses-square', 'snorkel-goggles', 'heart-glasses', 'spiral-glasses', 'headphones', 'halo', 'wings-white', 'devil-horns'],
+  Spielzeug: ['bone-cream', 'tennisball-green', 'frisbee-red', 'rope-red', 'duck', 'teddy', 'shark-plush', 'burger', 'gamepad', 'bone-magic', 'bowl', 'bottle-pink', 'cheese', 'brush', 'mud-pile', 'paper-roll', 'leek'],
+  Kristalle: ['crystal-rainbow', 'egg-crystal', 'egg-lava', 'gem-flower', 'portal-orb'],
+  'Magische Eier': ['egg-common', 'egg-galaxy', 'egg-wings'],
+  Trophäen: ['treasure-chest', 'bell-trophy', 'scottchi-statue'],
+  'Besondere Dekorationen': ['clover', 'key-gold'],
+};
+const itemCategory = Object.fromEntries(
+  Object.entries(collectionCategories).flatMap(([category, ids]) => ids.map((id) => [id, category])),
+);
+const categoryEffects: Record<string, Array<{ kind: 'coins' | 'xp' | 'materials' | 'fun' | 'energy'; scope: string; amountPerLevel: number }>> = {
+  Hüte: [{ kind: 'coins', scope: 'world', amountPerLevel: 0.6 }, { kind: 'xp', scope: 'games', amountPerLevel: 0.7 }],
+  Outfits: [{ kind: 'xp', scope: 'quests', amountPerLevel: 0.8 }, { kind: 'energy', scope: 'world', amountPerLevel: 0.35 }],
+  Accessoires: [{ kind: 'coins', scope: 'games', amountPerLevel: 0.55 }, { kind: 'materials', scope: 'world', amountPerLevel: 0.45 }],
+  Spielzeug: [{ kind: 'fun', scope: 'play', amountPerLevel: 1.2 }, { kind: 'xp', scope: 'games', amountPerLevel: 0.55 }],
+  Kristalle: [{ kind: 'materials', scope: 'cave', amountPerLevel: 0.8 }, { kind: 'xp', scope: 'world', amountPerLevel: 0.65 }],
+  'Magische Eier': [{ kind: 'xp', scope: 'quests', amountPerLevel: 0.9 }, { kind: 'materials', scope: 'world', amountPerLevel: 0.4 }],
+  Trophäen: [{ kind: 'xp', scope: 'quests', amountPerLevel: 1 }, { kind: 'coins', scope: 'world', amountPerLevel: 0.7 }],
+  'Besondere Dekorationen': [{ kind: 'coins', scope: 'world', amountPerLevel: 0.8 }, { kind: 'materials', scope: 'forest', amountPerLevel: 0.6 }],
+};
+const artifactEffectOverrides: Record<string, { kind: 'coins' | 'xp' | 'materials' | 'fun' | 'energy'; scope: string; amountPerLevel: number }> = {
+  'bone-cream': { kind: 'fun', scope: 'play', amountPerLevel: 1.5 },
+  'key-gold': { kind: 'coins', scope: 'world', amountPerLevel: 1.2 },
+  'crystal-rainbow': { kind: 'materials', scope: 'cave', amountPerLevel: 1.1 },
+  'egg-crystal': { kind: 'materials', scope: 'cave', amountPerLevel: 0.9 },
+  'egg-lava': { kind: 'xp', scope: 'world', amountPerLevel: 1 },
+  clover: { kind: 'materials', scope: 'forest', amountPerLevel: 0.9 },
+  'crown-ruby': { kind: 'xp', scope: 'quests', amountPerLevel: 1.2 },
+  'crown-gold': { kind: 'xp', scope: 'quests', amountPerLevel: 1.4 },
+  'scottchi-statue': { kind: 'coins', scope: 'all', amountPerLevel: 1 },
+  'treasure-chest': { kind: 'materials', scope: 'world', amountPerLevel: 0.9 },
+  'bell-trophy': { kind: 'xp', scope: 'world', amountPerLevel: 0.9 },
+  'pearl-shell': { kind: 'materials', scope: 'beach', amountPerLevel: 1 },
+  'wings-gold': { kind: 'energy', scope: 'world', amountPerLevel: 0.5 },
+  'wings-white': { kind: 'energy', scope: 'world', amountPerLevel: 0.4 },
+};
+const rarityBonusScale: Record<CollectionRarity, number> = { Common: 1, Uncommon: 1.1, Rare: 1.25, Epic: 1.4, Legendary: 1.6 };
+const artifactIdHash = (id: string) => [...id].reduce((value, char) => (value * 31 + char.charCodeAt(0)) >>> 0, 7);
+const artifactBonusLimits = { coins: 25, xp: 25, materials: 20, fun: 25, energy: 20 };
+
+export function artifactBonusForEquipped(
+  equippedIds: string[],
+  levels: Record<string, unknown>,
+  kind: 'coins' | 'xp' | 'materials' | 'fun' | 'energy',
+  activity: string,
+): number {
+  let total = 0;
+  for (const id of equippedIds) {
+    const rarity = RARITIES.find((entry) => COLLECTION_RARITY_POOLS[entry].includes(id));
+    const category = itemCategory[id];
+    const level = Math.floor(Number(levels[id]) || 0);
+    if (!rarity || !category || level < 1) continue;
+    const effect = artifactEffectOverrides[id] || categoryEffects[category][artifactIdHash(id) % categoryEffects[category].length];
+    if (effect.kind !== kind) continue;
+    if (effect.scope !== 'all' && effect.scope !== activity && !(activity === 'world' && ['cave', 'beach', 'forest'].includes(effect.scope))) continue;
+    total += Math.round(effect.amountPerLevel * level * rarityBonusScale[rarity] * 10) / 10;
+  }
+  return Math.min(artifactBonusLimits[kind], total);
+}
 
 export const CHEST_KEY_PRICES: Record<RewardChestTier, number> = {
   common: 50,

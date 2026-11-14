@@ -30,11 +30,15 @@ import { JournalPage } from './game/JournalPage';
 import { recordJournal } from './game/journal';
 import { completeQuestAction } from './game/questEngine';
 import { hasMaterialArt, MaterialArt } from './game/MaterialArt';
-import { getGetOnlineProfileQueryKey, getGetOnlineSaveQueryKey, useGetOnlineProfile, useGetOnlineSave, useUpdateOnlineSave } from '@workspace/api-client-react';
+import {
+  getGetOnlineProfileQueryKey, getGetOnlineSaveQueryKey, useClaimOnlineDailyWorldChest, useGetOnlineProfile, useGetOnlineSave,
+  useOpenOnlineRewardChest, usePurchaseOnlineChestKey, useUpdateOnlineSave,
+} from '@workspace/api-client-react';
 import { OnlinePage } from './game/OnlinePage';
 import { buyChestKey, CHEST_DEFINITIONS, CHEST_TIERS, openRewardChest } from './game/rewardChests';
+import type { ChestOpenReward } from './game/rewardChests';
 import {
-  applicableArtifactBonus, applyArtifactBonus, equipArtifact, grantRegularChest, unlockArtifact,
+  applicableArtifactBonus, applyArtifactBonus, ARTIFACTS, equipArtifact, grantRegularChest, unlockArtifact,
   grantMilestoneChest, MINIGAME_SCORE_CHEST_MILESTONES, upgradeArtifact,
 } from './game/artifactSystem';
 import { COLLECTION_ITEM_LINKS } from './game/collectionWorld';
@@ -161,11 +165,19 @@ function Game({ initial }: { initial: PetData }) {
     query: { enabled: !!onlineUserId && !!onlineProfileQuery.data, queryKey: getGetOnlineSaveQueryKey(), refetchOnWindowFocus: true },
   });
   const updateOnlineSave = useUpdateOnlineSave();
+  const purchaseOnlineKey = usePurchaseOnlineChestKey();
+  const openOnlineChest = useOpenOnlineRewardChest();
+  const claimOnlineWorldChest = useClaimOnlineDailyWorldChest();
   const [cloudLink, setCloudLink] = useState<CloudLink | null>(null);
+  const cloudLinkRef = useRef<CloudLink | null>(null);
+  cloudLinkRef.current = cloudLink;
   const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>('offline');
   const cloudSyncBusy = useRef(false);
+  const chestActionBusy = useRef(new Set<string>());
+  const chestRequestIds = useRef(new Map<string, string>());
   const [page, setPage] = useState('home');
   const [shopTab, setShopTab] = useState<Item['type'] | 'keys'>('food');
+  const [pendingKeyPurchase, setPendingKeyPurchase] = useState<RewardChestTier | null>(null);
   const [selectedFood, setSelectedFood] = useState('kibble');
   const [modal, setModal] = useState<'settings' | 'reset' | 'import' | 'name' | null>(null);
   const [nameDraft, setNameDraft] = useState(data.name);
@@ -231,6 +243,7 @@ function Game({ initial }: { initial: PetData }) {
     const remote = onlineSaveQuery.data;
     if (!remote.saveData) {
       setCloudLink(null);
+      cloudLinkRef.current = null;
       setCloudSyncStatus('unlinked');
       return;
     }
@@ -249,14 +262,17 @@ function Game({ initial }: { initial: PetData }) {
     if (cloudLink?.userId === onlineUserId && cloudLink.revision > remote.revision) return;
     if (cloudLink?.userId === onlineUserId && remote.revision > cloudLink.revision) {
       setCloudLink(null);
+      cloudLinkRef.current = null;
       setCloudSyncStatus('conflict');
       return;
     }
     if (marker && marker.revision === remote.revision) {
       setCloudLink(marker);
+      cloudLinkRef.current = marker;
       setCloudSyncStatus('synced');
     } else {
       setCloudLink(null);
+      cloudLinkRef.current = null;
       setCloudSyncStatus(marker ? 'conflict' : 'unlinked');
     }
   }, [onlineUserId, onlineProfileQuery.data, onlineSaveQuery.data, cloudLink]);
@@ -265,6 +281,7 @@ function Game({ initial }: { initial: PetData }) {
     if (!onlineUserId) return;
     const link = { userId: onlineUserId, revision, fingerprint: saveFingerprint(snapshot) };
     localStorage.setItem(`tamascottchi-cloud-link:${onlineUserId}`, JSON.stringify(link));
+    cloudLinkRef.current = link;
     setCloudLink(link);
     setCloudSyncStatus('synced');
   };
@@ -281,6 +298,65 @@ function Game({ initial }: { initial: PetData }) {
     }
   };
 
+  const syncCloudBeforeEconomy = async (): Promise<boolean> => {
+    for (let attempt = 0; cloudSyncBusy.current && attempt < 40; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
+    }
+    const link = cloudLinkRef.current;
+    if (!onlineUserId || !link || link.userId !== onlineUserId || cloudSyncBusy.current) return false;
+    const snapshot = dataRef.current;
+    const fingerprint = saveFingerprint(snapshot);
+    if (fingerprint === link.fingerprint) return true;
+    cloudSyncBusy.current = true;
+    setCloudSyncStatus('syncing');
+    try {
+      const saved = await updateOnlineSave.mutateAsync({
+        data: { expectedRevision: link.revision, saveData: snapshot },
+      });
+      const nextLink = { userId: onlineUserId, revision: saved.revision, fingerprint };
+      localStorage.setItem(`tamascottchi-cloud-link:${onlineUserId}`, JSON.stringify(nextLink));
+      cloudLinkRef.current = nextLink;
+      setCloudLink(nextLink);
+      setCloudSyncStatus('synced');
+      queryClient.setQueryData(getGetOnlineSaveQueryKey(), (current) => current
+        ? { ...current, saveData: snapshot, revision: saved.revision, updatedAt: saved.updatedAt }
+        : current);
+      return true;
+    } catch (error) {
+      const status = typeof error === 'object' && error !== null && 'status' in error
+        ? (error as { status?: number }).status
+        : undefined;
+      if (status === 409) {
+        cloudLinkRef.current = null;
+        setCloudLink(null);
+        setCloudSyncStatus('conflict');
+        void onlineSaveQuery.refetch();
+      } else {
+        setCloudSyncStatus('error');
+      }
+      return false;
+    } finally {
+      cloudSyncBusy.current = false;
+    }
+  };
+
+  const applyOnlineEconomyResponse = (response: { saveData: Record<string, unknown>; revision: number; updatedAt: string | Date }) => {
+    const restored = normalize(response.saveData as Partial<PetData>);
+    assertSave(restored);
+    dataRef.current = restored;
+    setData(restored);
+    if (onlineUserId) {
+      linkCloudToCurrentSave(response.revision, restored);
+      queryClient.setQueryData(getGetOnlineSaveQueryKey(), (current) => current
+        ? { ...current, saveData: restored, revision: response.revision, updatedAt: response.updatedAt }
+        : current);
+      queryClient.setQueryData(getGetOnlineProfileQueryKey(), (current) => current
+        ? { ...current, petName: restored.name, level: levelFor(restored.xp) }
+        : current);
+    }
+    return restored;
+  };
+
   useEffect(() => {
     if (!onlineUserId || !onlineProfileQuery.data || !onlineSaveQuery.data?.saveData || cloudLink?.userId !== onlineUserId) return;
     const snapshot = data;
@@ -295,6 +371,7 @@ function Game({ initial }: { initial: PetData }) {
       }).then((result) => {
         const nextLink = { userId: onlineUserId, revision: result.revision, fingerprint };
         localStorage.setItem(`tamascottchi-cloud-link:${onlineUserId}`, JSON.stringify(nextLink));
+        cloudLinkRef.current = nextLink;
         setCloudLink(nextLink);
         setCloudSyncStatus('synced');
         queryClient.setQueryData(getGetOnlineSaveQueryKey(), (current) => current
@@ -308,6 +385,7 @@ function Game({ initial }: { initial: PetData }) {
           ? (error as { status?: number }).status
           : undefined;
         if (status === 409) {
+          cloudLinkRef.current = null;
           setCloudLink(null);
           setCloudSyncStatus('conflict');
           void onlineSaveQuery.refetch();
@@ -585,6 +663,11 @@ function Game({ initial }: { initial: PetData }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sound]);
   const openChest = useCallback((tier: RewardChestTier) => {
+    if (onlineUserId && cloudLinkRef.current?.userId === onlineUserId) {
+      setPage('collections');
+      notify('Öffne verknüpfte Kisten im Sammeln-Menü, damit Schlüssel und Belohnungen serverseitig geprüft werden.');
+      return null;
+    }
     const opened = openRewardChest(dataRef.current, tier, Math.random, levelFor(dataRef.current.xp));
     if (!opened) {
       notify((dataRef.current.world.keys[tier] || 0) < 1 ? `Für diese Kiste brauchst du einen ${CHEST_DEFINITIONS[tier].label}-Schlüssel.` : 'Diese Kiste ist noch nicht verfügbar.');
@@ -600,7 +683,7 @@ function Game({ initial }: { initial: PetData }) {
     });
     if (opened.reward.rarity === 'Legendary') cheer(3000);
     return opened.reward;
-  }, [sound]);
+  }, [onlineUserId, notify, sound, cheer]);
   function purchaseChestKey(tier: RewardChestTier): boolean {
     const result = buyChestKey(dataRef.current, tier, levelFor(dataRef.current.xp));
     if (!result.ok) {
@@ -612,6 +695,144 @@ function Game({ initial }: { initial: PetData }) {
     notify(`${CHEST_DEFINITIONS[tier].label}-Schlüssel gekauft.`);
     sound(760);
     return true;
+  }
+  function serverActionError(error: unknown) {
+    if (typeof error === 'object' && error !== null && 'data' in error) {
+      const payload = (error as { data?: { error?: unknown } }).data;
+      if (typeof payload?.error === 'string') return payload.error;
+    }
+    return error instanceof Error ? error.message : 'Die Serveraktion konnte nicht abgeschlossen werden.';
+  }
+  function requestIdFor(actionKey: string) {
+    let requestId = chestRequestIds.current.get(actionKey);
+    if (!requestId) {
+      requestId = crypto.randomUUID();
+      chestRequestIds.current.set(actionKey, requestId);
+    }
+    return requestId;
+  }
+  async function withChestAction<T>(actionKey: string, operation: () => Promise<T>): Promise<T | null> {
+    if (chestActionBusy.current.has(actionKey)) return null;
+    chestActionBusy.current.add(actionKey);
+    try {
+      return await operation();
+    } finally {
+      chestActionBusy.current.delete(actionKey);
+    }
+  }
+  async function purchaseChestKeyAction(tier: RewardChestTier): Promise<boolean> {
+    const actionKey = `key:${tier}`;
+    if (chestActionBusy.current.has(actionKey)) return false;
+    setPendingKeyPurchase(tier);
+    try {
+    return (await withChestAction(actionKey, async () => {
+      if (onlineUserId && cloudLinkRef.current?.userId === onlineUserId) {
+        if (!await syncCloudBeforeEconomy()) {
+          notify('Der Cloud-Spielstand ist gerade nicht synchron. Bitte versuche es gleich noch einmal.');
+          return false;
+        }
+        try {
+          const result = await purchaseOnlineKey.mutateAsync({ data: { tier, requestId: requestIdFor(actionKey) } });
+          applyOnlineEconomyResponse(result);
+          chestRequestIds.current.delete(actionKey);
+          notify(`${CHEST_DEFINITIONS[tier].label}-Schlüssel gekauft.`);
+          sound(760);
+          return true;
+        } catch (error) {
+          notify(serverActionError(error));
+          return false;
+        }
+      }
+      if (onlineUserId && onlineSaveQuery.data?.saveData) {
+        notify('Verbinde zuerst den Cloud-Spielstand, damit dieser Kauf abgesichert wird.');
+        return false;
+      }
+      return purchaseChestKey(tier);
+    })) ?? false;
+    } finally {
+      setPendingKeyPurchase(null);
+    }
+  }
+  async function openChestFromCollection(tier: RewardChestTier): Promise<ChestOpenReward | null> {
+    return (await withChestAction(`open:${tier}`, async () => {
+      const actionKey = `open:${tier}`;
+      if (onlineUserId && cloudLinkRef.current?.userId === onlineUserId) {
+        if (!await syncCloudBeforeEconomy()) {
+          notify('Der Cloud-Spielstand ist gerade nicht synchron. Bitte versuche es gleich noch einmal.');
+          return null;
+        }
+        try {
+          const result = await openOnlineChest.mutateAsync({ data: { tier, requestId: requestIdFor(actionKey) } });
+          applyOnlineEconomyResponse(result);
+          chestRequestIds.current.delete(actionKey);
+          const reward = result.reward || {};
+          const itemId = typeof reward.itemId === 'string' ? reward.itemId : '';
+          const artifact = ARTIFACTS.find((entry) => entry.id === itemId);
+          if (!artifact) {
+            notify('Die Kiste wurde geöffnet, aber die Fundanzeige konnte nicht geladen werden.');
+            return null;
+          }
+          const openedReward: ChestOpenReward = {
+            tier,
+            chestName: CHEST_DEFINITIONS[tier].label,
+            itemId,
+            itemName: artifact.name,
+            quantity: 1,
+            coins: Number(reward.coins) || 0,
+            xp: Number(reward.xp) || 0,
+            isCollectionFind: Boolean(reward.isCollectionFind),
+            collectionItem: artifact,
+            rarity: artifact.rarity,
+            isDuplicate: Boolean(reward.isDuplicate),
+            duplicateDust: Number(reward.duplicateDust) || 0,
+            epicEssence: Number(reward.epicEssence) || 0,
+            legendaryEssence: Number(reward.legendaryEssence) || 0,
+            inventoryItemId: COLLECTION_ITEM_LINKS[itemId] || itemId,
+            source: typeof reward.source === 'string' ? reward.source : 'Scottchi World',
+          };
+          sound(openedReward.rarity === 'Legendary' ? 520 : 900, { dur: openedReward.rarity === 'Legendary' ? 0.42 : 0.18, slide: 1320 });
+          if (openedReward.rarity === 'Legendary') cheer(3000);
+          return openedReward;
+        } catch (error) {
+          notify(serverActionError(error));
+          return null;
+        }
+      }
+      if (onlineUserId && onlineSaveQuery.data?.saveData) {
+        notify('Verbinde zuerst den Cloud-Spielstand, damit diese Kiste serverseitig geöffnet wird.');
+        return null;
+      }
+      return openChest(tier);
+    })) ?? null;
+  }
+  async function claimDailyWorldChest(locationId: string): Promise<boolean> {
+    return (await withChestAction(`daily:${locationId}`, async () => {
+      const actionKey = `daily:${locationId}`;
+      if (onlineUserId && cloudLinkRef.current?.userId === onlineUserId) {
+        if (!await syncCloudBeforeEconomy()) {
+          notify('Der Cloud-Spielstand ist gerade nicht synchron. Bitte versuche es gleich noch einmal.');
+          return false;
+        }
+        try {
+          const result = await claimOnlineWorldChest.mutateAsync({
+            data: { locationId: locationId as 'park' | 'city' | 'forest' | 'beach' | 'cave' | 'mountain', requestId: requestIdFor(actionKey) },
+          });
+          applyOnlineEconomyResponse(result);
+          chestRequestIds.current.delete(actionKey);
+          const tier = typeof result.reward?.tier === 'string' ? result.reward.tier : '';
+          const tierLabel = CHEST_TIERS.includes(tier as RewardChestTier) ? CHEST_DEFINITIONS[tier as RewardChestTier].label : 'Weltkiste';
+          notify(`${locationId}: ${tierLabel} liegt im Tresor.`);
+          return true;
+        } catch (error) {
+          notify(serverActionError(error));
+          return false;
+        }
+      }
+      notify(onlineUserId && onlineSaveQuery.data?.saveData
+        ? 'Verbinde zuerst den Cloud-Spielstand, um die Weltkiste sicher abzuholen.'
+        : 'Die Tageskiste kann aus der lokalen Weltaufgabe abgeholt werden.');
+      return false;
+    })) ?? false;
   }
   function openGame(id: GameId) { setPage('games'); setActiveGame(id); }
 
@@ -1028,8 +1249,8 @@ function Game({ initial }: { initial: PetData }) {
           {!data.tutorialSeen && <section className="panel tutorial-card" data-testid="tutorial-card"><div className="panel-head"><div><div className="eyebrow">DEIN ERSTER TAG</div><h2 className="panel-title">So geht’s los</h2></div><Sparkles size={18}/></div><p>Versorge Scottchi, sammle Materialien bei den Weltaufgaben und stelle daraus in der Werkstatt neue Dinge her. Inventar und Tagebuch halten deine Funde fest.</p><div className="dialog-actions"><button className="button" onClick={() => { setPage('help'); setData((old) => ({ ...old, tutorialSeen: true })); }}>Kurze Hilfe öffnen</button><button className="button ghost" onClick={() => setData((old) => ({ ...old, tutorialSeen: true }))}>Verstanden</button></div></section>}
         </>}
 
-        {page === 'world' && <World data={data} level={level} serverClockOffsetMs={serverClockOffsetMs} onChange={changeWorld} onNotice={notify} onStore={(tab) => { setShopTab(tab); setPage('shop'); }}/>}
-        {page === 'collections' && <CollectionsPage data={data} playerLevel={level} onClaim={claimWorldReward} onUpgradeArtifact={upgradeCollectedArtifact} onToggleArtifact={toggleArtifactEquipment} onBuyChestKey={purchaseChestKey} onOpenChest={openChest}/>}
+        {page === 'world' && <World data={data} level={level} serverClockOffsetMs={serverClockOffsetMs} onChange={changeWorld} onNotice={notify} onStore={(tab) => { setShopTab(tab); setPage('shop'); }} onClaimDailyChest={onlineUserId && cloudLink?.userId === onlineUserId ? claimDailyWorldChest : undefined}/>}
+        {page === 'collections' && <CollectionsPage data={data} playerLevel={level} economySecured={!!onlineUserId && cloudLink?.userId === onlineUserId} onClaim={claimWorldReward} onUpgradeArtifact={upgradeCollectedArtifact} onToggleArtifact={toggleArtifactEquipment} onBuyChestKey={purchaseChestKeyAction} onOpenChest={openChestFromCollection}/>}
         {page === 'inventory' && <InventoryPage data={data} onUse={useInventoryItem} onEquip={equip} onPlace={equip} onOpenChest={openChest}/>}
         {page === 'crafting' && <CraftingPage data={data} onCraft={craft}/>}
         {page === 'journal' && <JournalPage data={data}/>}
@@ -1049,7 +1270,7 @@ function Game({ initial }: { initial: PetData }) {
           </article>)}</section>)}
 
         {page === 'shop' && <section className="panel"><div className="panel-head"><h2 className="panel-title">Ein paar gute Dinge</h2><span className="stat-pill"><Coins size={14}/>{data.coins}</span></div><div className="room-controls" style={{ position: 'static', margin: '0 0 14px', flexWrap: 'wrap' }}>{(['food', 'toy', 'accessory', 'room', 'background', 'keys'] as const).map((tab) => <button className={`room-chip ${shopTab === tab ? 'selected' : ''}`} key={tab} onClick={() => setShopTab(tab)} data-testid={`shop-tab-${tab}`}>{tab === 'food' ? 'Futter & Pflege' : tab === 'toy' ? 'Spielzeug' : tab === 'accessory' ? 'Kleidung & Hüte' : tab === 'room' ? 'Zimmer' : tab === 'background' ? 'Hintergründe' : 'Kistenschlüssel'}</button>)}</div>
-          {shopTab === 'keys' ? <div className="page-grid">{CHEST_TIERS.map((tier) => <div className="shop-item" key={tier} data-testid={`shop-key-${tier}`}><span className={`item-icon chest-key-icon rarity-${tier}`}><KeyRound size={24}/></span><div className="item-info"><div className="item-title">{CHEST_DEFINITIONS[tier].label}-Schlüssel</div><div className="item-meta">{data.world.keys[tier] || 0} vorhanden · ab Level {CHEST_UNLOCK_LEVEL[tier]}</div></div><button className="button small" onClick={() => purchaseChestKey(tier)} disabled={level < CHEST_UNLOCK_LEVEL[tier] || data.coins < CHEST_KEY_PRICES[tier]} data-testid={`button-buy-key-shop-${tier}`}><Coins size={13}/>{CHEST_KEY_PRICES[tier]}</button></div>)}</div>
+          {shopTab === 'keys' ? <div className="page-grid">{CHEST_TIERS.map((tier) => <div className="shop-item" key={tier} data-testid={`shop-key-${tier}`}><span className={`item-icon chest-key-icon rarity-${tier}`}><KeyRound size={24}/></span><div className="item-info"><div className="item-title">{CHEST_DEFINITIONS[tier].label}-Schlüssel</div><div className="item-meta">{data.world.keys[tier] || 0} vorhanden · ab Level {CHEST_UNLOCK_LEVEL[tier]}</div></div><button className="button small" onClick={() => void purchaseChestKeyAction(tier)} disabled={pendingKeyPurchase !== null || level < CHEST_UNLOCK_LEVEL[tier] || data.coins < CHEST_KEY_PRICES[tier]} data-testid={`button-buy-key-shop-${tier}`}><Coins size={13}/>{pendingKeyPurchase === tier ? 'Kaufe …' : CHEST_KEY_PRICES[tier]}</button></div>)}</div>
             : <div className="page-grid">{ITEMS.filter((item) => item.type === shopTab && !item.craftOnly).map((item) => <div className="shop-item" key={item.id} data-testid={`shop-item-${item.id}`}><ItemIcon item={item}/><div className="item-info"><div className="item-title">{item.name}</div><div className="item-meta">{item.unlockLevel && level < item.unlockLevel ? `Ab Level ${item.unlockLevel} freigeschaltet` : item.type === 'food' ? `${item.amount || 0}% ${NEEDS.find((n) => n.id === item.effect)?.name.toLowerCase() || 'Wirkung'} · Vorrat: ${data.inventory[item.id] || 0}` : item.type === 'room' ? 'Dekoration für dein Zuhause' : item.type === 'background' ? 'Ersetzt das Zimmerbild durch ein Motiv' : item.type === 'toy' ? item.desc : SLOT_OF[item.id] === 'hat' ? 'Kopfbedeckung' : SLOT_OF[item.id] === 'outfit' ? 'Kleidung' : 'Accessoire'}</div></div><button className="button small" onClick={() => buy(item)} disabled={(item.type !== 'food' && item.id !== 'shampoo' && data.owned.includes(item.id)) || (!!item.unlockLevel && level < item.unlockLevel)} data-testid={`button-buy-${item.id}`}><Coins size={13}/>{item.type !== 'food' && item.id !== 'shampoo' && data.owned.includes(item.id) ? 'Gekauft' : item.unlockLevel && level < item.unlockLevel ? `Level ${item.unlockLevel}` : item.price}</button></div>)}</div>}
         </section>}
 

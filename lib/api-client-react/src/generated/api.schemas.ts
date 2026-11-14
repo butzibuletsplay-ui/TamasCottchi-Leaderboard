@@ -83,3 +83,71 @@ export interface OnlineCloudSaveResult {
   updatedAt: string;
 }
 
+export type OnlineChestKeyPurchaseTier = typeof OnlineChestKeyPurchaseTier[keyof typeof OnlineChestKeyPurchaseTier];
+
+
+export const OnlineChestKeyPurchaseTier = {
+  common: 'common',
+  uncommon: 'uncommon',
+  rare: 'rare',
+  epic: 'epic',
+  legendary: 'legendary',
+} as const;
+
+export interface OnlineChestKeyPurchase {
+  tier: OnlineChestKeyPurchaseTier;
+  requestId: string;
+}
+
+export type OnlineChestOpenTier = typeof OnlineChestOpenTier[keyof typeof OnlineChestOpenTier];
+
+
+export const OnlineChestOpenTier = {
+  common: 'common',
+  uncommon: 'uncommon',
+  rare: 'rare',
+  epic: 'epic',
+  legendary: 'legendary',
+} as const;
+
+export interface OnlineChestOpen {
+  tier: OnlineChestOpenTier;
+  requestId: string;
+}
+
+export type OnlineDailyWorldChestClaimLocationId = typeof OnlineDailyWorldChestClaimLocationId[keyof typeof OnlineDailyWorldChestClaimLocationId];
+
+
+export const OnlineDailyWorldChestClaimLocationId = {
+  park: 'park',
+  city: 'city',
+  forest: 'forest',
+  beach: 'beach',
+  cave: 'cave',
+  mountain: 'mountain',
+} as const;
+
+export interface OnlineDailyWorldChestClaim {
+  locationId: OnlineDailyWorldChestClaimLocationId;
+  requestId: string;
+}
+
+export type OnlineEconomyActionResponseOutcome = typeof OnlineEconomyActionResponseOutcome[keyof typeof OnlineEconomyActionResponseOutcome];
+
+
+export const OnlineEconomyActionResponseOutcome = {
+  'key-purchased': 'key-purchased',
+  'chest-opened': 'chest-opened',
+  'daily-chest-claimed': 'daily-chest-claimed',
+} as const;
+
+export type OnlineEconomyActionResponseReward = { [key: string]: unknown };
+
+export interface OnlineEconomyActionResponse {
+  saveData: SaveData;
+  revision: number;
+  updatedAt: string;
+  outcome: OnlineEconomyActionResponseOutcome;
+  reward?: OnlineEconomyActionResponseReward;
+}
+

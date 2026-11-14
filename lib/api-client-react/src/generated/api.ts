@@ -27,10 +27,14 @@ import type {
 import type {
   ApiError,
   HealthStatus,
+  OnlineChestKeyPurchase,
+  OnlineChestOpen,
   OnlineCloudSave,
   OnlineCloudSaveImport,
   OnlineCloudSaveResult,
   OnlineCloudSaveUpdate,
+  OnlineDailyWorldChestClaim,
+  OnlineEconomyActionResponse,
   OnlineProfile,
   OnlineProfileInput,
   OnlineProfileUpdate
@@ -629,6 +633,270 @@ export const useUpdateOnlineSave = <TError = ErrorType<ApiError>,
         TContext
       > => {
       return useMutation(getUpdateOnlineSaveMutationOptions(options), queryClient);
+    }
+
+export const getPurchaseOnlineChestKeyUrl = () => {
+
+
+
+
+  return `/api/online/economy/keys/purchase`
+}
+
+/**
+ * @summary Buy a chest key using the server-owned coin balance
+ */
+export const purchaseOnlineChestKey = async (onlineChestKeyPurchase: OnlineChestKeyPurchase, options?: Parameters<typeof customFetch>[1]): Promise<OnlineEconomyActionResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<OnlineEconomyActionResponse>(getPurchaseOnlineChestKeyUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(onlineChestKeyPurchase)
+  }
+);}
+
+
+
+
+
+export const getPurchaseOnlineChestKeyMutationKey = () => ['purchaseOnlineChestKey'] as const;
+
+export const getPurchaseOnlineChestKeyMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof purchaseOnlineChestKey>>, TError,PurchaseOnlineChestKeyMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof purchaseOnlineChestKey>>, TError,PurchaseOnlineChestKeyMutationVariables, TContext> => {
+
+const mutationKey = getPurchaseOnlineChestKeyMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof purchaseOnlineChestKey>>, PurchaseOnlineChestKeyMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  purchaseOnlineChestKey(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PurchaseOnlineChestKeyMutationResult = NonNullable<Awaited<ReturnType<typeof purchaseOnlineChestKey>>>
+    export type PurchaseOnlineChestKeyMutationBody = BodyType<OnlineChestKeyPurchase>
+    export type PurchaseOnlineChestKeyMutationError = ErrorType<ApiError>
+    export type PurchaseOnlineChestKeyMutationVariables = {data: BodyType<OnlineChestKeyPurchase>}
+
+    /**
+ * @summary Buy a chest key using the server-owned coin balance
+ */
+export const usePurchaseOnlineChestKey = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof purchaseOnlineChestKey>>, TError,PurchaseOnlineChestKeyMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof purchaseOnlineChestKey>>,
+        TError,
+        PurchaseOnlineChestKeyMutationVariables,
+        TContext
+      > => {
+      return useMutation(getPurchaseOnlineChestKeyMutationOptions(options), queryClient);
+    }
+
+export const getOpenOnlineRewardChestUrl = () => {
+
+
+
+
+  return `/api/online/economy/chests/open`
+}
+
+/**
+ * @summary Open one stored chest with a matching key and server randomness
+ */
+export const openOnlineRewardChest = async (onlineChestOpen: OnlineChestOpen, options?: Parameters<typeof customFetch>[1]): Promise<OnlineEconomyActionResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<OnlineEconomyActionResponse>(getOpenOnlineRewardChestUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(onlineChestOpen)
+  }
+);}
+
+
+
+
+
+export const getOpenOnlineRewardChestMutationKey = () => ['openOnlineRewardChest'] as const;
+
+export const getOpenOnlineRewardChestMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof openOnlineRewardChest>>, TError,OpenOnlineRewardChestMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof openOnlineRewardChest>>, TError,OpenOnlineRewardChestMutationVariables, TContext> => {
+
+const mutationKey = getOpenOnlineRewardChestMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof openOnlineRewardChest>>, OpenOnlineRewardChestMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  openOnlineRewardChest(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type OpenOnlineRewardChestMutationResult = NonNullable<Awaited<ReturnType<typeof openOnlineRewardChest>>>
+    export type OpenOnlineRewardChestMutationBody = BodyType<OnlineChestOpen>
+    export type OpenOnlineRewardChestMutationError = ErrorType<ApiError>
+    export type OpenOnlineRewardChestMutationVariables = {data: BodyType<OnlineChestOpen>}
+
+    /**
+ * @summary Open one stored chest with a matching key and server randomness
+ */
+export const useOpenOnlineRewardChest = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof openOnlineRewardChest>>, TError,OpenOnlineRewardChestMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof openOnlineRewardChest>>,
+        TError,
+        OpenOnlineRewardChestMutationVariables,
+        TContext
+      > => {
+      return useMutation(getOpenOnlineRewardChestMutationOptions(options), queryClient);
+    }
+
+export const getClaimOnlineDailyWorldChestUrl = () => {
+
+
+
+
+  return `/api/online/economy/world-chests/claim`
+}
+
+/**
+ * @summary Claim one completed daily chest for an unlocked world
+ */
+export const claimOnlineDailyWorldChest = async (onlineDailyWorldChestClaim: OnlineDailyWorldChestClaim, options?: Parameters<typeof customFetch>[1]): Promise<OnlineEconomyActionResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<OnlineEconomyActionResponse>(getClaimOnlineDailyWorldChestUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(onlineDailyWorldChestClaim)
+  }
+);}
+
+
+
+
+
+export const getClaimOnlineDailyWorldChestMutationKey = () => ['claimOnlineDailyWorldChest'] as const;
+
+export const getClaimOnlineDailyWorldChestMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof claimOnlineDailyWorldChest>>, TError,ClaimOnlineDailyWorldChestMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof claimOnlineDailyWorldChest>>, TError,ClaimOnlineDailyWorldChestMutationVariables, TContext> => {
+
+const mutationKey = getClaimOnlineDailyWorldChestMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof claimOnlineDailyWorldChest>>, ClaimOnlineDailyWorldChestMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  claimOnlineDailyWorldChest(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ClaimOnlineDailyWorldChestMutationResult = NonNullable<Awaited<ReturnType<typeof claimOnlineDailyWorldChest>>>
+    export type ClaimOnlineDailyWorldChestMutationBody = BodyType<OnlineDailyWorldChestClaim>
+    export type ClaimOnlineDailyWorldChestMutationError = ErrorType<ApiError>
+    export type ClaimOnlineDailyWorldChestMutationVariables = {data: BodyType<OnlineDailyWorldChestClaim>}
+
+    /**
+ * @summary Claim one completed daily chest for an unlocked world
+ */
+export const useClaimOnlineDailyWorldChest = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof claimOnlineDailyWorldChest>>, TError,ClaimOnlineDailyWorldChestMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof claimOnlineDailyWorldChest>>,
+        TError,
+        ClaimOnlineDailyWorldChestMutationVariables,
+        TContext
+      > => {
+      return useMutation(getClaimOnlineDailyWorldChestMutationOptions(options), queryClient);
     }
 
 export const getImportOnlineSaveUrl = () => {

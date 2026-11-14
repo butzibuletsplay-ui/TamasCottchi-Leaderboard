@@ -396,6 +396,8 @@
 /* Scottchi 6.2 artifact workshop and region chest progression */
 .collection-view-tabs{display:flex;gap:7px;flex-wrap:wrap;margin:14px 0}
 .chest-collection{margin:16px 0}
+.chest-security-note{margin:8px 0;padding:8px 10px;border-left:3px solid #b8905a;border-radius:6px;background:#f8edd7;font-size:10px;line-height:1.45;color:#73532f}
+.chest-security-note.secure{border-color:#4f8754;background:#eef5e4;color:#386b43}
 .chest-collection-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:12px}
 .chest-collection-card{min-width:0;padding:12px;border:1.5px solid #c6aa7b;border-radius:13px;background:#fffaf0;box-shadow:0 4px 12px #51391c12}
 .chest-collection-card.locked{opacity:.76;background:#f4efe4}

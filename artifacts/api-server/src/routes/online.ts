@@ -1,20 +1,40 @@
 import { randomInt } from "node:crypto";
 import { clerkClient, getAuth } from "@clerk/express";
 import {
+  ClaimOnlineDailyWorldChestBody,
+  ClaimOnlineDailyWorldChestResponse,
   CreateOnlineProfileBody,
   GetOnlineProfileResponse,
   GetOnlineSaveResponse,
   ImportOnlineSaveBody,
   ImportOnlineSaveResponse,
+  OnlineEconomyActionResponse,
+  OpenOnlineRewardChestBody,
+  OpenOnlineRewardChestResponse,
+  PurchaseOnlineChestKeyBody,
+  PurchaseOnlineChestKeyResponse,
   UpdateOnlineProfileBody,
   UpdateOnlineProfileResponse,
   UpdateOnlineSaveBody,
   UpdateOnlineSaveResponse,
 } from "@workspace/api-zod";
-import { db, onlineCloudSavesTable, onlineProfilesTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, onlineCloudSavesTable, onlineEconomyTransactionsTable, onlineProfilesTable } from "@workspace/db";
+import { and, eq } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
+import {
+  CHEST_KEY_PRICES,
+  CHEST_TIERS,
+  CHEST_UNLOCK_LEVEL,
+  COLLECTION_ITEM_LINKS,
+  COLLECTION_RARITY_POOLS,
+  artifactBonusForEquipped,
+  chestDropChances,
+  chooseChance,
+  dailyWorldChestTier,
+  type CollectionRarity,
+  type RewardChestTier,
+} from "@workspace/game-economy";
 
 const router: IRouter = Router();
 const friendCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -105,6 +125,155 @@ function limitRequests(maximum: number, windowMs: number) {
 
 function playerId(res: Response): string {
   return String(res.locals.playerId);
+}
+
+type JsonRecord = Record<string, unknown>;
+const tiers = new Set<string>(CHEST_TIERS);
+const rarityDuplicateReward: Record<CollectionRarity, { dust: number; epicEssence?: number; legendaryEssence?: number }> = {
+  Common: { dust: 5 },
+  Uncommon: { dust: 12 },
+  Rare: { dust: 30 },
+  Epic: { dust: 75, epicEssence: 1 },
+  Legendary: { dust: 200, legendaryEssence: 1 },
+};
+const chestBonus: Record<RewardChestTier, { coins: number; xp: number }> = {
+  common: { coins: 10, xp: 5 },
+  uncommon: { coins: 16, xp: 8 },
+  rare: { coins: 25, xp: 13 },
+  epic: { coins: 42, xp: 22 },
+  legendary: { coins: 70, xp: 36 },
+};
+const locationUnlockLevel: Record<string, number> = { park: 1, city: 3, forest: 5, beach: 8, cave: 12, mountain: 20 };
+const regionTaskRequirements: Record<string, { materials: number; activities: number; rare: number }> = {
+  park: { materials: 4, activities: 2, rare: 0 },
+  city: { materials: 4, activities: 2, rare: 0 },
+  forest: { materials: 8, activities: 2, rare: 1 },
+  beach: { materials: 6, activities: 2, rare: 1 },
+  cave: { materials: 2, activities: 2, rare: 1 },
+  mountain: { materials: 3, activities: 2, rare: 1 },
+};
+const secureRandom = () => randomInt(1_000_000) / 1_000_000;
+const asRecord = (value: unknown): JsonRecord =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
+const integer = (value: unknown, fallback = 0) =>
+  Number.isFinite(Number(value)) ? Math.max(0, Math.floor(Number(value))) : fallback;
+const stringArray = (value: unknown) =>
+  Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string").slice(0, 10_000) : [];
+
+function worldDayKey(timestamp: number): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Berlin",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(timestamp));
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  let year = Number(values.year);
+  let month = Number(values.month);
+  let day = Number(values.day);
+  if (Number(values.hour) < 4) {
+    const previous = new Date(Date.UTC(year, month - 1, day - 1));
+    year = previous.getUTCFullYear();
+    month = previous.getUTCMonth() + 1;
+    day = previous.getUTCDate();
+  }
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function normalizeEconomySave(input: JsonRecord, now: number): JsonRecord {
+  const save = { ...input };
+  const world = { ...asRecord(save.world) };
+  const keys = Object.fromEntries(CHEST_TIERS.map((tier) => [tier, integer(asRecord(world.keys)[tier])]));
+  const instances = Array.isArray(world.chestInstances)
+    ? world.chestInstances.filter((entry) => {
+        const chest = asRecord(entry);
+        return typeof chest.id === "string" && typeof chest.source === "string" && tiers.has(String(chest.tier));
+      }).map((entry) => ({ ...asRecord(entry) }))
+    : [];
+  const counts = Object.fromEntries(CHEST_TIERS.map((tier) => [tier, integer(asRecord(world.rewardChests)[tier])]));
+  if (instances.length === 0) {
+    for (const tier of CHEST_TIERS) {
+      for (let index = 0; index < counts[tier]; index += 1) {
+        instances.push({
+          id: `legacy-${tier}-${index + 1}`,
+          source: `legacy-${tier}-${index + 1}`,
+          tier,
+          earnedAt: now,
+        });
+      }
+    }
+  }
+  const rewardChests = Object.fromEntries(
+    CHEST_TIERS.map((tier) => [tier, instances.filter((entry) => entry.tier === tier).length]),
+  );
+  const day = worldDayKey(now);
+  const sameDay = world.worldDay === day;
+  return {
+    ...save,
+    coins: integer(save.coins),
+    xp: integer(save.xp),
+    collectionIds: stringArray(save.collectionIds),
+    artifactLevels: { ...asRecord(save.artifactLevels) },
+    owned: stringArray(save.owned),
+    inventory: { ...asRecord(save.inventory) },
+    world: {
+      ...world,
+      keys,
+      chestInstances: instances,
+      rewardChests,
+      openedChestIds: stringArray(world.openedChestIds),
+      worldDay: day,
+      dailyChestCount: sameDay ? integer(world.dailyChestCount) : 0,
+      dailyChestLocations: sameDay ? stringArray(world.dailyChestLocations) : [],
+      regionDailyProgress: sameDay ? asRecord(world.regionDailyProgress) : {},
+      discoveries: stringArray(world.discoveries),
+    },
+  };
+}
+
+function preserveServerEconomy(incoming: JsonRecord, current: JsonRecord): JsonRecord {
+  if (integer(current.economyVersion) < 1) return incoming;
+  const oldWorld = asRecord(current.world);
+  const newWorld = asRecord(incoming.world);
+  const openedChestIds = stringArray(oldWorld.openedChestIds);
+  const chestInstances = [
+    ...(Array.isArray(oldWorld.chestInstances) ? oldWorld.chestInstances : []),
+    ...(Array.isArray(newWorld.chestInstances) ? newWorld.chestInstances : []),
+  ].map((entry) => ({ ...asRecord(entry) }))
+    .filter((entry) =>
+      typeof entry.id === "string"
+      && typeof entry.source === "string"
+      && tiers.has(String(entry.tier))
+      && !openedChestIds.includes(String(entry.id)),
+    )
+    .filter((entry, index, all) => all.findIndex((candidate) => candidate.id === entry.id) === index);
+  const rewardChests = Object.fromEntries(
+    CHEST_TIERS.map((tier) => [tier, chestInstances.filter((entry) => entry.tier === tier).length]),
+  );
+  return {
+    ...incoming,
+    economyVersion: 1,
+    world: {
+      ...newWorld,
+      keys: oldWorld.keys,
+      rewardChests,
+      chestInstances,
+      openedChestIds,
+      worldDay: oldWorld.worldDay,
+      dailyChestCount: oldWorld.dailyChestCount,
+      dailyChestLocations: oldWorld.dailyChestLocations,
+      milestoneChestsClaimed: [...new Set([
+        ...stringArray(oldWorld.milestoneChestsClaimed),
+        ...stringArray(newWorld.milestoneChestsClaimed),
+      ])],
+    },
+  };
+}
+
+function titleFromId(id: string): string {
+  return id.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 }
 
 function makeFriendCode(): string {
@@ -270,6 +439,317 @@ router.use((_req, res, next) => {
   res.setHeader("Vary", "Cookie");
   next();
 });
+
+type EconomyMutation =
+  | { ok: true; saveData: JsonRecord; outcome: "key-purchased" | "chest-opened" | "daily-chest-claimed"; reward?: JsonRecord }
+  | { ok: false; status: number; error: string };
+
+async function runEconomyAction(
+  userId: string,
+  requestId: string,
+  action: string,
+  mutate: (save: JsonRecord, now: number) => EconomyMutation,
+): Promise<{ ok: true; response: OnlineEconomyActionResponse } | { ok: false; status: number; error: string }> {
+  const result = await db.transaction(async (tx) => {
+    const [profile] = await tx
+      .select({ userId: onlineProfilesTable.userId })
+      .from(onlineProfilesTable)
+      .where(eq(onlineProfilesTable.userId, userId))
+      .for("update")
+      .limit(1);
+    if (!profile) return { kind: "failure" as const, status: 404, error: "Richte zuerst dein Online-Profil ein." };
+
+    const [prior] = await tx
+      .select()
+      .from(onlineEconomyTransactionsTable)
+      .where(and(
+        eq(onlineEconomyTransactionsTable.userId, userId),
+        eq(onlineEconomyTransactionsTable.requestId, requestId),
+      ))
+      .limit(1);
+    if (prior) {
+      if (prior.action !== action) {
+        return { kind: "failure" as const, status: 409, error: "Diese Anfrage-ID wurde bereits für eine andere Aktion verwendet." };
+      }
+      const [latest] = await tx
+        .select()
+        .from(onlineCloudSavesTable)
+        .where(eq(onlineCloudSavesTable.userId, userId))
+        .for("update")
+        .limit(1);
+      const previousResponse = PurchaseOnlineChestKeyResponse.parse(prior.response);
+      return {
+        kind: "success" as const,
+        response: PurchaseOnlineChestKeyResponse.parse(latest
+          ? { ...previousResponse, saveData: latest.saveData, revision: latest.revision, updatedAt: latest.updatedAt.toISOString() }
+          : previousResponse),
+      };
+    }
+
+    const [current] = await tx
+      .select()
+      .from(onlineCloudSavesTable)
+      .where(eq(onlineCloudSavesTable.userId, userId))
+      .for("update")
+      .limit(1);
+    if (!current) return { kind: "failure" as const, status: 404, error: "Verknüpfe zuerst einen Cloud-Spielstand." };
+
+    const now = Date.now();
+    const mutation = mutate(normalizeEconomySave(current.saveData, now), now);
+    if (!mutation.ok) return { kind: "failure" as const, status: mutation.status, error: mutation.error };
+
+    const revision = current.revision + 1;
+    const updatedAt = new Date(now);
+    const savedState: JsonRecord = { ...mutation.saveData, economyVersion: 1 };
+    const response = PurchaseOnlineChestKeyResponse.parse({
+      saveData: savedState,
+      revision,
+      updatedAt: updatedAt.toISOString(),
+      outcome: mutation.outcome,
+      ...(mutation.reward ? { reward: mutation.reward } : {}),
+    });
+    await tx
+      .update(onlineCloudSavesTable)
+      .set({ saveData: savedState, revision, updatedAt })
+      .where(eq(onlineCloudSavesTable.userId, userId));
+    await tx
+      .update(onlineProfilesTable)
+      .set({
+        level: Math.floor(integer(savedState.xp) / 100) + 1,
+        updatedAt,
+      })
+      .where(eq(onlineProfilesTable.userId, userId));
+    await tx.insert(onlineEconomyTransactionsTable).values({
+      userId,
+      requestId,
+      action,
+      response: response as unknown as Record<string, unknown>,
+    });
+    return { kind: "success" as const, response };
+  });
+  return result.kind === "success"
+    ? { ok: true, response: result.response }
+    : { ok: false, status: result.status, error: result.error };
+}
+
+router.post(
+  "/online/economy/keys/purchase",
+  requireSameOrigin,
+  limitRequests(30, 60_000),
+  async (req, res): Promise<void> => {
+    const parsed = PurchaseOnlineChestKeyBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Die Schlüsselanfrage ist ungültig." });
+      return;
+    }
+    const { tier, requestId } = parsed.data;
+    const result = await runEconomyAction(playerId(res), requestId, "key-purchase", (save) => {
+      const level = Math.floor(integer(save.xp) / 100) + 1;
+      if (level < CHEST_UNLOCK_LEVEL[tier]) return { ok: false, status: 409, error: `Dieser Schlüssel wird ab Level ${CHEST_UNLOCK_LEVEL[tier]} freigeschaltet.` };
+      const price = CHEST_KEY_PRICES[tier];
+      if (integer(save.coins) < price) return { ok: false, status: 409, error: "Dafür fehlen Münzen." };
+      const world = asRecord(save.world);
+      const keys = asRecord(world.keys);
+      const updated = {
+        ...save,
+        coins: integer(save.coins) - price,
+        world: {
+          ...world,
+          keys: { ...keys, [tier]: integer(keys[tier]) + 1 },
+        },
+      };
+      return { ok: true, saveData: updated, outcome: "key-purchased" };
+    });
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+    res.json(PurchaseOnlineChestKeyResponse.parse(result.response));
+  },
+);
+
+router.post(
+  "/online/economy/chests/open",
+  requireSameOrigin,
+  limitRequests(30, 60_000),
+  async (req, res): Promise<void> => {
+    const parsed = OpenOnlineRewardChestBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Die Kistenanfrage ist ungültig." });
+      return;
+    }
+    const { tier, requestId } = parsed.data;
+    const result = await runEconomyAction(playerId(res), requestId, "chest-open", (save, now) => {
+      const level = Math.floor(integer(save.xp) / 100) + 1;
+      if (level < CHEST_UNLOCK_LEVEL[tier]) return { ok: false, status: 409, error: "Diese Kiste ist noch nicht freigeschaltet." };
+      const world = asRecord(save.world);
+      const keys = asRecord(world.keys);
+      if (integer(keys[tier]) < 1) return { ok: false, status: 409, error: "Für diese Kiste fehlt der passende Schlüssel." };
+      const instances = Array.isArray(world.chestInstances) ? world.chestInstances.map((entry) => ({ ...asRecord(entry) })) : [];
+      const openedIds = stringArray(world.openedChestIds);
+      const index = instances.findIndex((instance) => instance.tier === tier && typeof instance.id === "string" && !openedIds.includes(instance.id));
+      if (index < 0) return { ok: false, status: 409, error: "Du hast keine passende Kiste im Tresor." };
+      const chest = instances[index];
+      const rarity = chooseChance(chestDropChances(tier, level), secureRandom) as CollectionRarity;
+      const pool = COLLECTION_RARITY_POOLS[rarity];
+      const itemId = pool[Math.floor(secureRandom() * pool.length)];
+      const artifactLevels = { ...asRecord(save.artifactLevels) };
+      const collectionIds = stringArray(save.collectionIds);
+      const wasOwned = integer(artifactLevels[itemId]) > 0 || collectionIds.includes(itemId);
+      const itemName = titleFromId(itemId);
+      const inventory = { ...asRecord(save.inventory) };
+      const owned = stringArray(save.owned);
+      const discoveries = stringArray(world.discoveries);
+      const milestoneChestsClaimed = stringArray(world.milestoneChestsClaimed);
+      const baseReward = chestBonus[tier];
+      const coins = Math.floor(baseReward.coins * (1 + artifactBonusForEquipped(
+        stringArray(save.equippedArtifacts), artifactLevels, "coins", "world",
+      ) / 100));
+      const xp = Math.floor(baseReward.xp * (1 + artifactBonusForEquipped(
+        stringArray(save.equippedArtifacts), artifactLevels, "xp", "world",
+      ) / 100));
+      let duplicate = { dust: 0, epicEssence: 0, legendaryEssence: 0 };
+      if (wasOwned) {
+        const duplicateReward = rarityDuplicateReward[rarity];
+        duplicate = {
+          dust: duplicateReward.dust,
+          epicEssence: duplicateReward.epicEssence || 0,
+          legendaryEssence: duplicateReward.legendaryEssence || 0,
+        };
+        inventory["artifact-dust"] = integer(inventory["artifact-dust"]) + duplicate.dust;
+        if (duplicate.epicEssence) inventory["epic-essence"] = integer(inventory["epic-essence"]) + duplicate.epicEssence;
+        if (duplicate.legendaryEssence) inventory["legendary-essence"] = integer(inventory["legendary-essence"]) + duplicate.legendaryEssence;
+      } else {
+        artifactLevels[itemId] = 1;
+        collectionIds.push(itemId);
+        discoveries.push(itemId);
+        const linked = COLLECTION_ITEM_LINKS[itemId];
+        if (linked && !owned.includes(linked)) owned.push(linked);
+      }
+
+      instances.splice(index, 1);
+      const nextOpened = [...new Set([...openedIds, String(chest.id)])];
+      const nextKeys = { ...keys, [tier]: integer(keys[tier]) - 1 };
+      const rewardChests = Object.fromEntries(
+        CHEST_TIERS.map((candidate) => [candidate, instances.filter((entry) => entry.tier === candidate).length]),
+      );
+      const nextWorld: JsonRecord = {
+        ...world,
+        keys: nextKeys,
+        chestInstances: instances,
+        rewardChests,
+        openedChestIds: nextOpened,
+        discoveries: [...new Set(discoveries)],
+      };
+      const nextSave: JsonRecord = {
+        ...save,
+        coins: integer(save.coins) + coins,
+        xp: integer(save.xp) + xp,
+        collectionIds: [...new Set(collectionIds)],
+        artifactLevels,
+        inventory,
+        owned,
+        world: nextWorld,
+        lastUpdated: now,
+      };
+      if (!wasOwned && Object.keys(artifactLevels).length > 0 && Object.keys(artifactLevels).filter((id) => integer(artifactLevels[id]) > 0).length >= Object.values(COLLECTION_RARITY_POOLS).flat().length && !milestoneChestsClaimed.includes("complete-artifact-collection")) {
+        const milestoneSource = "milestone:complete-artifact-collection";
+        instances.push({ id: `chest-${milestoneSource}`, source: milestoneSource, tier: "legendary", earnedAt: now });
+        nextWorld.chestInstances = instances;
+        nextWorld.rewardChests = {
+          ...rewardChests,
+          legendary: integer(rewardChests.legendary) + 1,
+        };
+        nextWorld.milestoneChestsClaimed = [...milestoneChestsClaimed, "complete-artifact-collection"];
+      }
+      return {
+        ok: true,
+        saveData: nextSave,
+        outcome: "chest-opened",
+        reward: {
+          tier,
+          itemId,
+          itemName,
+          rarity,
+          source: String(chest.source),
+          coins,
+          xp,
+          isCollectionFind: !wasOwned,
+          isDuplicate: wasOwned,
+          duplicateDust: duplicate.dust,
+          epicEssence: duplicate.epicEssence,
+          legendaryEssence: duplicate.legendaryEssence,
+        },
+      };
+    });
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+    res.json(OpenOnlineRewardChestResponse.parse(result.response));
+  },
+);
+
+router.post(
+  "/online/economy/world-chests/claim",
+  requireSameOrigin,
+  limitRequests(60, 60_000),
+  async (req, res): Promise<void> => {
+    const parsed = ClaimOnlineDailyWorldChestBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Die Weltkisten-Anfrage ist ungültig." });
+      return;
+    }
+    const { locationId, requestId } = parsed.data;
+    const result = await runEconomyAction(playerId(res), requestId, "daily-world-chest", (save, now) => {
+      const level = Math.floor(integer(save.xp) / 100) + 1;
+      const requiredLevel = locationUnlockLevel[locationId];
+      if (!requiredLevel || level < requiredLevel) return { ok: false, status: 409, error: "Dieses Weltgebiet ist noch gesperrt." };
+      const world = asRecord(save.world);
+      const day = worldDayKey(now);
+      const progressByLocation = asRecord(world.regionDailyProgress);
+      const progress = asRecord(progressByLocation[locationId]);
+      const target = regionTaskRequirements[locationId];
+      if (integer(progress.materials) < target.materials || integer(progress.activities) < target.activities || integer(progress.rare) < target.rare) {
+        return { ok: false, status: 409, error: "Erledige zuerst den aktiven Tagesauftrag in diesem Gebiet." };
+      }
+      const sameDay = world.worldDay === day;
+      const claims = sameDay ? stringArray(world.dailyChestLocations) : [];
+      if (claims.includes(locationId)) return { ok: false, status: 409, error: "Die Weltkiste für dieses Gebiet wurde heute schon abgeholt." };
+      const tier = dailyWorldChestTier(level, secureRandom);
+      const source = `region-daily:${locationId}:${day}`;
+      const instance = { id: `chest-${source}`, source, tier, earnedAt: now };
+      const instances = Array.isArray(world.chestInstances) ? world.chestInstances.map((entry) => ({ ...asRecord(entry) })) : [];
+      if (instances.some((entry) => entry.source === source)) return { ok: false, status: 409, error: "Diese Weltkiste wurde bereits abgeholt." };
+      instances.push(instance);
+      const rewardChests = Object.fromEntries(
+        CHEST_TIERS.map((candidate) => [candidate, instances.filter((entry) => entry.tier === candidate).length]),
+      );
+      return {
+        ok: true,
+        saveData: {
+          ...save,
+          world: {
+            ...world,
+            worldDay: day,
+            dailyChestCount: (sameDay ? integer(world.dailyChestCount) : 0) + 1,
+            dailyChestLocations: [...new Set([...claims, locationId])],
+            chestInstances: instances,
+            rewardChests,
+          },
+          lastUpdated: now,
+        },
+        outcome: "daily-chest-claimed",
+        reward: { tier, locationId, day, source },
+      };
+    });
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+    res.json(ClaimOnlineDailyWorldChestResponse.parse(result.response));
+  },
+);
 
 router.get("/online/profile", async (_req, res): Promise<void> => {
   const [profile] = await db
@@ -443,24 +923,27 @@ router.put(
       if (current && current.revision !== parsed.data.expectedRevision) {
         return { kind: "conflict" as const, revision: current.revision };
       }
+      const nextSaveData = current
+        ? preserveServerEconomy(saveData, current.saveData)
+        : saveData;
       const revision = (current?.revision ?? 0) + 1;
       const now = new Date();
       if (current) {
         await tx
           .update(onlineCloudSavesTable)
-          .set({ saveData: checked.value, revision, updatedAt: now })
+          .set({ saveData: nextSaveData, revision, updatedAt: now })
           .where(eq(onlineCloudSavesTable.userId, userId));
       } else {
         await tx.insert(onlineCloudSavesTable).values({
           userId,
-          saveData,
+          saveData: nextSaveData,
           revision,
           imported: false,
           updatedAt: now,
         });
       }
-      const xp = saveData.xp as number;
-      const name = saveData.name as string;
+      const xp = nextSaveData.xp as number;
+      const name = nextSaveData.name as string;
       await tx
         .update(onlineProfilesTable)
         .set({

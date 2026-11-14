@@ -125,6 +125,78 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /online/economy/keys/purchase:
+    post:
+      operationId: purchaseOnlineChestKey
+      tags: [online]
+      summary: Buy a chest key using the server-owned coin balance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OnlineChestKeyPurchase"
+      responses:
+        "200":
+          description: Key purchase applied or safely retried
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnlineEconomyActionResponse"
+        "409":
+          description: Insufficient coins or locked key tier
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /online/economy/chests/open:
+    post:
+      operationId: openOnlineRewardChest
+      tags: [online]
+      summary: Open one stored chest with a matching key and server randomness
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OnlineChestOpen"
+      responses:
+        "200":
+          description: Chest opened or safely retried
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnlineEconomyActionResponse"
+        "409":
+          description: No matching key, no chest, or locked tier
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /online/economy/world-chests/claim:
+    post:
+      operationId: claimOnlineDailyWorldChest
+      tags: [online]
+      summary: Claim one completed daily chest for an unlocked world
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OnlineDailyWorldChestClaim"
+      responses:
+        "200":
+          description: Daily world chest granted or safely retried
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnlineEconomyActionResponse"
+        "409":
+          description: Task incomplete or chest already claimed today
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /online/save/import:
     post:
       operationId: importOnlineSave
@@ -285,4 +357,51 @@ components:
           type: string
           format: date-time
       required: [revision, imported, duplicate, updatedAt]
+    OnlineChestKeyPurchase:
+      type: object
+      properties:
+        tier:
+          type: string
+          enum: [common, uncommon, rare, epic, legendary]
+        requestId:
+          type: string
+          format: uuid
+      required: [tier, requestId]
+    OnlineChestOpen:
+      type: object
+      properties:
+        tier:
+          type: string
+          enum: [common, uncommon, rare, epic, legendary]
+        requestId:
+          type: string
+          format: uuid
+      required: [tier, requestId]
+    OnlineDailyWorldChestClaim:
+      type: object
+      properties:
+        locationId:
+          type: string
+          enum: [park, city, forest, beach, cave, mountain]
+        requestId:
+          type: string
+          format: uuid
+      required: [locationId, requestId]
+    OnlineEconomyActionResponse:
+      type: object
+      properties:
+        saveData:
+          $ref: "#/components/schemas/SaveData"
+        revision:
+          type: integer
+        updatedAt:
+          type: string
+          format: date-time
+        outcome:
+          type: string
+          enum: [key-purchased, chest-opened, daily-chest-claimed]
+        reward:
+          type: object
+          additionalProperties: true
+      required: [saveData, revision, updatedAt, outcome]
 

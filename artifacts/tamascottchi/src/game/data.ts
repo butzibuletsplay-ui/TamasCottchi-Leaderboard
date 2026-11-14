@@ -22,7 +22,7 @@ export type DailyProgress = { feeds: number; games: number; baths: number; pets:
 export type JournalEntry = { id: string; date: number; icon: string; title: string; detail: string };
 export type WorldEventState = { id: string; day: string; locationId: string; resourceId: string; quantity: number };
 export type PetData = {
-  version: number; saveSchema?: number; name: string; needs: Record<NeedKey, number>; lastUpdated: number;
+  version: number; saveSchema?: number; economyVersion?: number; name: string; needs: Record<NeedKey, number>; lastUpdated: number;
   coins: number; xp: number; inventory: Record<string, number>; owned: string[];
   equipped: string[]; room: Room; roomItems: string[]; activeBackground: string; records: GameRecord[];
   sleepUntil: number | null;
@@ -96,7 +96,8 @@ export const BACKUP_KEY_40 = 'tamascottchi-save-v1-backup-before-4.0';
 export const BACKUP_KEY_60 = 'tamascottchi-save-v1-backup-before-6.0';
 export const BACKUP_KEY_61 = 'tamascottchi-save-v1-backup-before-6.1';
 export const BACKUP_KEY_62 = 'tamascottchi-save-v1-backup-before-6.2';
-export const SAVE_SCHEMA = 8;
+export const BACKUP_KEY_63 = 'tamascottchi-save-v1-backup-before-6.3';
+export const SAVE_SCHEMA = 9;
 export const LOCATIONS = [
   { id: 'park', name: 'Scottchi Park', level: 1, point: { x: 25, y: 29 }, desc: 'Der erste Spaziergang: Wege, Wiesen und verlorene Knochen.' },
   { id: 'city', name: 'Scottchi City', level: 3, point: { x: 45, y: 53 }, desc: 'Ein lebendiger Platz für kleine Besorgungen.' },
@@ -440,6 +441,7 @@ export function loadData(): FullPetData {
     if ((parsed.saveSchema || 0) < 6 && !localStorage.getItem(BACKUP_KEY_60)) localStorage.setItem(BACKUP_KEY_60, raw);
     if ((parsed.saveSchema || 0) < 7 && !localStorage.getItem(BACKUP_KEY_61)) localStorage.setItem(BACKUP_KEY_61, raw);
     if ((parsed.saveSchema || 0) < 8 && !localStorage.getItem(BACKUP_KEY_62)) localStorage.setItem(BACKUP_KEY_62, raw);
+    if ((parsed.saveSchema || 0) < 9 && !localStorage.getItem(BACKUP_KEY_63)) localStorage.setItem(BACKUP_KEY_63, raw);
     return normalize(parsed);
   } catch (cause) {
     // Never replace an unreadable save with a new game through the autosave effect.

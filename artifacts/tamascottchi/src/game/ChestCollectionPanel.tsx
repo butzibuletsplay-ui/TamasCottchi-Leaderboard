@@ -11,22 +11,36 @@ import { RARITY_LABEL } from './collectionWorld';
 type Props = {
   data: FullPetData;
   playerLevel: number;
-  onBuyKey: (tier: RewardChestTier) => boolean;
-  onOpenChest: (tier: RewardChestTier) => ChestOpenReward | null;
+  economySecured: boolean;
+  onBuyKey: (tier: RewardChestTier) => boolean | Promise<boolean>;
+  onOpenChest: (tier: RewardChestTier) => ChestOpenReward | null | Promise<ChestOpenReward | null>;
 };
 
-export function ChestCollectionPanel({ data, playerLevel, onBuyKey, onOpenChest }: Props) {
+export function ChestCollectionPanel({ data, playerLevel, economySecured, onBuyKey, onOpenChest }: Props) {
   const [reveal, setReveal] = useState<ChestOpenReward | null>(null);
   const [opening, setOpening] = useState<RewardChestTier | null>(null);
+  const [buying, setBuying] = useState<RewardChestTier | null>(null);
 
-  function open(tier: RewardChestTier) {
+  async function buyKey(tier: RewardChestTier) {
+    if (buying) return;
+    setBuying(tier);
+    try {
+      await onBuyKey(tier);
+    } finally {
+      setBuying(null);
+    }
+  }
+
+  async function open(tier: RewardChestTier) {
     if (opening) return;
     setOpening(tier);
-    window.setTimeout(() => {
-      const result = onOpenChest(tier);
+    try {
+      await new Promise((resolve) => window.setTimeout(resolve, 380));
+      const result = await onOpenChest(tier);
       if (result) setReveal(result);
+    } finally {
       setOpening(null);
-    }, 380);
+    }
   }
 
   return <>
@@ -36,6 +50,9 @@ export function ChestCollectionPanel({ data, playerLevel, onBuyKey, onOpenChest 
         <span className="stat-pill"><KeyRound size={14}/>{CHEST_TIERS.reduce((sum, tier) => sum + (data.world.keys[tier] || 0), 0)} Schlüssel</span>
       </div>
       <p className="subline">Kisten bleiben im Tresor, bis du einen passenden Schlüssel hast. Schlüssel kosten Münzen und werden beim Öffnen verbraucht.</p>
+      <p className={`chest-security-note ${economySecured ? 'secure' : ''}`} data-testid="chest-security-status">
+        {economySecured ? 'Servergeprüft: Schlüsselkäufe, Schlüsselverbrauch, Ziehungen und das Tageslimit für Weltkisten laufen über den Server.' : 'Lokaler Spielstand: Online-Schutz gilt erst, wenn du diesen Spielstand mit der Cloud verbindest.'}
+      </p>
       <div className="chest-collection-grid">
         {CHEST_TIERS.map((tier) => {
           const definition = CHEST_DEFINITIONS[tier];
@@ -63,8 +80,8 @@ export function ChestCollectionPanel({ data, playerLevel, onBuyKey, onOpenChest 
               <small>mögliche Artefakte nach deinem Weltlevel</small>
             </div>
             <div className="chest-collection-actions">
-              <button className="button small" onClick={() => onBuyKey(tier)} disabled={locked || data.coins < CHEST_KEY_PRICES[tier]} data-testid={`button-buy-key-${tier}`}>
-                <Coins size={13}/>{locked ? `Ab Level ${CHEST_UNLOCK_LEVEL[tier]}` : 'Schlüssel kaufen'}
+              <button className="button small" onClick={() => void buyKey(tier)} disabled={locked || buying !== null || data.coins < CHEST_KEY_PRICES[tier]} data-testid={`button-buy-key-${tier}`}>
+                <Coins size={13}/>{buying === tier ? 'Kaufe …' : locked ? `Ab Level ${CHEST_UNLOCK_LEVEL[tier]}` : 'Schlüssel kaufen'}
               </button>
               <button className="button orange small" onClick={() => open(tier)} disabled={locked || count < 1 || keys < 1 || opening !== null} data-testid={`button-open-chest-${tier}`}>
                 {opening === tier ? <><Sparkles size={13}/> Öffnet …</> : <><LockKeyhole size={13}/> Öffnen</>}

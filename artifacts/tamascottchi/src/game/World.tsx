@@ -14,8 +14,8 @@ const pickupPoints = [
   { x: 82, y: 44 }, { x: 76, y: 65 }, { x: 58, y: 67 }, { x: 39, y: 76 }, { x: 22, y: 60 },
 ];
 
-type Props = { data: FullPetData; level: number; serverClockOffsetMs?: number | null; onChange: (data: FullPetData) => void; onNotice: (message: string) => void; onStore: (tab: 'food' | 'accessory') => void };
-export function World({ data, level, serverClockOffsetMs, onChange, onNotice, onStore }: Props) {
+type Props = { data: FullPetData; level: number; serverClockOffsetMs?: number | null; onChange: (data: FullPetData) => void; onNotice: (message: string) => void; onStore: (tab: 'food' | 'accessory') => void; onClaimDailyChest?: (locationId: string) => Promise<boolean> };
+export function World({ data, level, serverClockOffsetMs, onChange, onNotice, onStore, onClaimDailyChest }: Props) {
   const [location, setLocation] = useState('park');
   const [quest, setQuest] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -164,7 +164,11 @@ export function World({ data, level, serverClockOffsetMs, onChange, onNotice, on
     }
   }
 
-  function claimRegionChest() {
+  async function claimRegionChest() {
+    if (onClaimDailyChest) {
+      await onClaimDailyChest(location);
+      return;
+    }
     const result = claimRegionDailyChest(data, location, now, level, authoritativeClock);
     if (result.outcome === 'claimed') {
       onChange(result.data);
