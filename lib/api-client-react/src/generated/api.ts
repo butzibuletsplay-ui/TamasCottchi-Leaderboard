@@ -27,6 +27,7 @@ import type {
 import type {
   ApiError,
   HealthStatus,
+  OnlineCharacterActivity,
   OnlineChestKeyPurchase,
   OnlineChestOpen,
   OnlineCloudSave,
@@ -35,6 +36,7 @@ import type {
   OnlineCloudSaveUpdate,
   OnlineDailyWorldChestClaim,
   OnlineEconomyActionResponse,
+  OnlineEvolutionPurchase,
   OnlineMinigameChestClaim,
   OnlineMinigameRound,
   OnlineProfile,
@@ -899,6 +901,182 @@ export const useClaimOnlineDailyWorldChest = <TError = ErrorType<ApiError>,
         TContext
       > => {
       return useMutation(getClaimOnlineDailyWorldChestMutationOptions(options), queryClient);
+    }
+
+export const getEarnOnlineCharacterPointsUrl = () => {
+
+
+
+
+  return `/api/online/economy/character/action`
+}
+
+/**
+ * @summary Award fixed character points for one completed activity
+ */
+export const earnOnlineCharacterPoints = async (onlineCharacterActivity: OnlineCharacterActivity, options?: Parameters<typeof customFetch>[1]): Promise<OnlineEconomyActionResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<OnlineEconomyActionResponse>(getEarnOnlineCharacterPointsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(onlineCharacterActivity)
+  }
+);}
+
+
+
+
+
+export const getEarnOnlineCharacterPointsMutationKey = () => ['earnOnlineCharacterPoints'] as const;
+
+export const getEarnOnlineCharacterPointsMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof earnOnlineCharacterPoints>>, TError,EarnOnlineCharacterPointsMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof earnOnlineCharacterPoints>>, TError,EarnOnlineCharacterPointsMutationVariables, TContext> => {
+
+const mutationKey = getEarnOnlineCharacterPointsMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof earnOnlineCharacterPoints>>, EarnOnlineCharacterPointsMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  earnOnlineCharacterPoints(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type EarnOnlineCharacterPointsMutationResult = NonNullable<Awaited<ReturnType<typeof earnOnlineCharacterPoints>>>
+    export type EarnOnlineCharacterPointsMutationBody = BodyType<OnlineCharacterActivity>
+    export type EarnOnlineCharacterPointsMutationError = ErrorType<ApiError>
+    export type EarnOnlineCharacterPointsMutationVariables = {data: BodyType<OnlineCharacterActivity>}
+
+    /**
+ * @summary Award fixed character points for one completed activity
+ */
+export const useEarnOnlineCharacterPoints = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof earnOnlineCharacterPoints>>, TError,EarnOnlineCharacterPointsMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof earnOnlineCharacterPoints>>,
+        TError,
+        EarnOnlineCharacterPointsMutationVariables,
+        TContext
+      > => {
+      return useMutation(getEarnOnlineCharacterPointsMutationOptions(options), queryClient);
+    }
+
+export const getPurchaseOnlineEvolutionUrl = () => {
+
+
+
+
+  return `/api/online/economy/evolutions/purchase`
+}
+
+/**
+ * @summary Purchase the next evolution after server-side requirement checks
+ */
+export const purchaseOnlineEvolution = async (onlineEvolutionPurchase: OnlineEvolutionPurchase, options?: Parameters<typeof customFetch>[1]): Promise<OnlineEconomyActionResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<OnlineEconomyActionResponse>(getPurchaseOnlineEvolutionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(onlineEvolutionPurchase)
+  }
+);}
+
+
+
+
+
+export const getPurchaseOnlineEvolutionMutationKey = () => ['purchaseOnlineEvolution'] as const;
+
+export const getPurchaseOnlineEvolutionMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof purchaseOnlineEvolution>>, TError,PurchaseOnlineEvolutionMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof purchaseOnlineEvolution>>, TError,PurchaseOnlineEvolutionMutationVariables, TContext> => {
+
+const mutationKey = getPurchaseOnlineEvolutionMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof purchaseOnlineEvolution>>, PurchaseOnlineEvolutionMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  purchaseOnlineEvolution(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PurchaseOnlineEvolutionMutationResult = NonNullable<Awaited<ReturnType<typeof purchaseOnlineEvolution>>>
+    export type PurchaseOnlineEvolutionMutationBody = BodyType<OnlineEvolutionPurchase>
+    export type PurchaseOnlineEvolutionMutationError = ErrorType<ApiError>
+    export type PurchaseOnlineEvolutionMutationVariables = {data: BodyType<OnlineEvolutionPurchase>}
+
+    /**
+ * @summary Purchase the next evolution after server-side requirement checks
+ */
+export const usePurchaseOnlineEvolution = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof purchaseOnlineEvolution>>, TError,PurchaseOnlineEvolutionMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof purchaseOnlineEvolution>>,
+        TError,
+        PurchaseOnlineEvolutionMutationVariables,
+        TContext
+      > => {
+      return useMutation(getPurchaseOnlineEvolutionMutationOptions(options), queryClient);
     }
 
 export const getCompleteOnlineMinigameRoundUrl = () => {

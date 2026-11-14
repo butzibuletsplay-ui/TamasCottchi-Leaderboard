@@ -197,6 +197,60 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /online/economy/character/action:
+    post:
+      operationId: earnOnlineCharacterPoints
+      tags: [online]
+      summary: Award fixed character points for one completed activity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OnlineCharacterActivity"
+      responses:
+        "200":
+          description: Character points awarded or safely retried
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnlineEconomyActionResponse"
+        "409":
+          description: Activity is invalid or the daily character-point cap is reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "429":
+          description: The shared character-point cooldown is active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /online/economy/evolutions/purchase:
+    post:
+      operationId: purchaseOnlineEvolution
+      tags: [online]
+      summary: Purchase the next evolution after server-side requirement checks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OnlineEvolutionPurchase"
+      responses:
+        "200":
+          description: Evolution purchased or safely retried
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnlineEconomyActionResponse"
+        "409":
+          description: Level, character points, coins, or next-stage requirement is unmet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /online/economy/minigames/complete:
     post:
       operationId: completeOnlineMinigameRound
@@ -459,6 +513,26 @@ components:
           type: string
           format: uuid
       required: [gameId, requestId]
+    OnlineCharacterActivity:
+      type: object
+      properties:
+        activity:
+          type: string
+          enum: [cuddle, feeding, bathing, playful-interaction, toy-use, minigame, room-explore, world-discovery, rest-complete]
+        toyId:
+          type: string
+          enum: [ball, bone-toy, duck, rope, frisbee, teddy, bowl, shampoo, crafted-toy, crafted-shell-rattle, crafted-gem-ball, crafted-bone-puzzle, crafted-leaf-frisbee, crafted-fossil-chew, crafted-ore-toy]
+        requestId:
+          type: string
+          format: uuid
+      required: [activity, requestId]
+    OnlineEvolutionPurchase:
+      type: object
+      properties:
+        requestId:
+          type: string
+          format: uuid
+      required: [requestId]
     OnlineEconomyActionResponse:
       type: object
       properties:
@@ -471,7 +545,7 @@ components:
           format: date-time
         outcome:
           type: string
-          enum: [key-purchased, chest-opened, daily-chest-claimed, minigame-completed, minigame-chest-claimed]
+          enum: [key-purchased, chest-opened, daily-chest-claimed, minigame-completed, minigame-chest-claimed, character-points-awarded, evolution-purchased]
         reward:
           type: object
           additionalProperties: true

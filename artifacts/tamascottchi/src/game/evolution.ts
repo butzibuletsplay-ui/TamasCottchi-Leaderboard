@@ -1,32 +1,39 @@
 import type { FullPetData } from './data';
+import { CHARACTER_EVOLUTION_REQUIREMENTS, CHARACTER_TRAIT_IDS } from '@workspace/game-economy';
 
 export type EvolutionStage = {
   stage: number;
   name: string;
   playerLevel: number;
+  traitPointsRequired: number;
   coinCost: number;
   reward: string;
   unlockItem?: string;
 };
 
-export const EVOLUTION_STAGES: readonly EvolutionStage[] = [
-  { stage: 1, name: 'Original Scotchi', playerLevel: 1, coinCost: 0, reward: 'Die ursprüngliche Scotchi-Form' },
-  { stage: 2, name: 'Sprössling Scotchi', playerLevel: 10, coinCost: 500, reward: 'Neue Form mit Pflanzenspross' },
-  { stage: 3, name: 'Entdecker Scotchi', playerLevel: 25, coinCost: 2_000, reward: 'Neue Entdeckerform mit Rucksack und Goggles' },
-  { stage: 4, name: 'Magischer Scotchi', playerLevel: 50, coinCost: 6_000, reward: 'Magische Form und Heldenumhang für den Kleiderschrank', unlockItem: 'cape' },
-  { stage: 5, name: 'Blumen Scotchi', playerLevel: 100, coinCost: 15_000, reward: 'Blumenform mit besonderer Ruheanimation' },
-  { stage: 6, name: 'Naturwächter Scotchi', playerLevel: 175, coinCost: 35_000, reward: 'Naturwächterform mit grüner Aura' },
-  { stage: 7, name: 'Sternenkristall Scotchi', playerLevel: 275, coinCost: 75_000, reward: 'Kristallform mit Zimmerdekoration', unlockItem: 'crafted-flower-planter' },
-  { stage: 8, name: 'Himmlischer Scotchi', playerLevel: 400, coinCost: 150_000, reward: 'Himmlische Form mit stärkerem Entwicklungseffekt' },
-  { stage: 9, name: 'Königlicher Scotchi', playerLevel: 600, coinCost: 300_000, reward: 'Königliche Form mit goldener Aura' },
-  { stage: 10, name: 'Transzendenter Scotchi', playerLevel: 850, coinCost: 600_000, reward: 'Transzendente Form und Titel „Ultimative Pfote“' },
-] as const;
+const EVOLUTION_DETAILS: readonly Omit<EvolutionStage, 'stage' | 'playerLevel' | 'traitPointsRequired' | 'coinCost'>[] = [
+  { name: 'Original Scotchi', reward: 'Die ursprüngliche Scotchi-Form' },
+  { name: 'Sprössling Scotchi', reward: 'Neue Form mit Pflanzenspross' },
+  { name: 'Entdecker Scotchi', reward: 'Neue Entdeckerform mit Rucksack und Goggles' },
+  { name: 'Magischer Scotchi', reward: 'Magische Form und Heldenumhang für den Kleiderschrank' },
+  { name: 'Blumen Scotchi', reward: 'Blumenform mit besonderer Ruheanimation' },
+  { name: 'Naturwächter Scotchi', reward: 'Naturwächterform mit grüner Aura' },
+  { name: 'Sternenkristall Scotchi', reward: 'Kristallform mit Zimmerdekoration' },
+  { name: 'Himmlischer Scotchi', reward: 'Himmlische Form mit stärkerem Entwicklungseffekt' },
+  { name: 'Königlicher Scotchi', reward: 'Königliche Form mit goldener Aura' },
+  { name: 'Transzendenter Scotchi', reward: 'Transzendente Form und Titel „Ultimative Pfote“' },
+];
+
+export const EVOLUTION_STAGES: readonly EvolutionStage[] = CHARACTER_EVOLUTION_REQUIREMENTS.map((requirements, index) => ({
+  ...requirements,
+  ...EVOLUTION_DETAILS[index],
+}));
 
 export const MAX_EVOLUTION_STAGE = EVOLUTION_STAGES.length;
 
 export type EvolutionPurchaseResult =
   | { ok: true; data: FullPetData; stage: EvolutionStage }
-  | { ok: false; reason: 'level' | 'coins' | 'complete' };
+  | { ok: false; reason: 'account' | 'level' | 'traits' | 'coins' | 'complete' | 'sync'; message?: string };
 
 export function normalizeEvolutionStage(value: unknown): number {
   const stage = typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : 1;
@@ -39,6 +46,9 @@ export function purchaseNextEvolution(data: FullPetData, playerLevel: number): E
   if (currentStage >= MAX_EVOLUTION_STAGE) return { ok: false, reason: 'complete' };
   const nextStage = EVOLUTION_STAGES[currentStage];
   if (playerLevel < nextStage.playerLevel) return { ok: false, reason: 'level' };
+  if (CHARACTER_TRAIT_IDS.some((trait) => data.characterPoints[trait] < nextStage.traitPointsRequired)) {
+    return { ok: false, reason: 'traits' };
+  }
   if (data.coins < nextStage.coinCost) return { ok: false, reason: 'coins' };
   return {
     ok: true,

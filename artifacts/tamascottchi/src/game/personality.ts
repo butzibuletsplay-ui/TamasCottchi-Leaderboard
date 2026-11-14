@@ -1,10 +1,10 @@
 export type Trait = 'verspielt' | 'neugierig' | 'verschlafen' | 'frech' | 'anhaenglich';
 export const TRAITS: { id: Trait; name: string; hint: string }[] = [
-  { id: 'verspielt', name: 'Verspielt', hint: 'wächst durch Minispiele und Spielzeug' },
-  { id: 'neugierig', name: 'Neugierig', hint: 'wächst durch Zimmerwechsel und neue Dinge' },
-  { id: 'verschlafen', name: 'Verschlafen', hint: 'wächst durch Nickerchen' },
-  { id: 'frech', name: 'Frech', hint: 'wächst durch Toben, Seil und Ente' },
-  { id: 'anhaenglich', name: 'Anhänglich', hint: 'wächst durch Kraulen und Kuscheln' },
+  { id: 'verspielt', name: 'Verspielt', hint: 'Charakterpunkte gibt es nach Toben, Minispielen und Spielzeugaktionen' },
+  { id: 'neugierig', name: 'Neugierig', hint: 'Charakterpunkte gibt es nach Erkundung und neuen Weltentdeckungen' },
+  { id: 'verschlafen', name: 'Verschlafen', hint: 'Charakterpunkte gibt es nach einem abgeschlossenen Nickerchen' },
+  { id: 'frech', name: 'Frech', hint: 'Charakterpunkte gibt es nach spielerischen Interaktionen' },
+  { id: 'anhaenglich', name: 'Anhänglich', hint: 'Charakterpunkte gibt es nach Kraulen, Füttern und Pflegen' },
 ];
 export type Personality = Record<Trait, number>;
 export const initialPersonality = (): Personality => ({ verspielt: 12, neugierig: 12, verschlafen: 12, frech: 12, anhaenglich: 12 });

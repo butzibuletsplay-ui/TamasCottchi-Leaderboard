@@ -203,11 +203,20 @@
 .routine-strip{display:flex;gap:8px;align-items:baseline;font-size:11px;color:var(--muted);background:#fff7e3;border:1.5px dashed #c9b58f;border-radius:9px;padding:6px 9px}.routine-strip strong{font:600 13px Fredoka;color:var(--ink)}
 @media(max-width:680px){.routine-strip,.traits{grid-column:1/-1}}
 .traits{display:grid;gap:5px;margin-top:4px;padding-top:10px;border-top:1.5px dashed #d8cdb5}
-.traits-head{display:flex;justify-content:space-between;align-items:baseline}.traits-head strong{font:600 14px Fredoka}.traits-head span{font:500 10px 'DM Mono';color:var(--muted)}
-.trait-row{display:grid;grid-template-columns:86px 1fr;gap:8px;align-items:center;font-size:11px;font-weight:800;color:var(--muted)}
+.traits-head{display:flex;justify-content:space-between;align-items:baseline;gap:6px}.traits-head strong{font:600 13px Fredoka;line-height:1.2}.traits-head span{font:500 10px 'DM Mono';color:var(--muted);white-space:nowrap}
+.trait-row{display:grid;grid-template-columns:100px 1fr;gap:8px;align-items:center;font-size:11px;font-weight:800;color:var(--muted)}
 .trait-row.lead{color:var(--ink)}
 .trait-bar{height:6px;border-radius:9px;background:#ebe2cf;overflow:hidden}.trait-bar i{display:block;height:100%;background:#c99a6a;transform-origin:left;transition:transform .8s}
 .trait-row.lead .trait-bar i{background:var(--orange)}
+.trait-row.met .trait-bar i{background:#6d9b66}
+.trait-label{display:grid;gap:1px}.trait-label small{font:500 9px 'DM Mono';color:var(--muted)}
+.character-daily-progress{display:grid;gap:5px;margin-top:4px;padding:8px;border-radius:9px;background:#f3ead7}
+.character-daily-progress>div:first-child{display:flex;justify-content:space-between;gap:8px;font-size:10px}
+.character-daily-progress>div:first-child span{font:500 9px 'DM Mono';white-space:nowrap}
+.character-daily-progress small{color:var(--muted);font-size:9px;line-height:1.3}
+.character-daily-progress .trait-bar i{background:#c78937}
+.character-evolution-progress{margin:0;color:var(--muted);font-size:10px;line-height:1.4}
+.character-account-link{justify-self:start;text-align:left}
 .style-sets{display:grid;gap:6px}
 .style-row{display:flex;gap:9px;align-items:center;padding:7px 9px;border:1.5px solid #ded5c3;border-radius:9px;background:#fffdf6}.style-row.full{border-color:var(--ink);background:#fff4da}
 .collection-thumbs{display:grid;grid-template-columns:1fr 1fr;gap:2px;width:46px;flex:none}
@@ -503,6 +512,15 @@
 .evolution-requirement-head,.evolution-costs{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .evolution-requirement-head strong{font:600 16px 'Fredoka'}
 .evolution-requirement-head span,.evolution-costs span{font-size:11px;color:var(--muted)}
+.evolution-trait-requirements{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 14px;margin:12px 0}
+.evolution-trait-row{display:grid;gap:4px;color:var(--muted);font-size:10px}
+.evolution-trait-row>div:first-child{display:flex;justify-content:space-between;gap:4px}
+.evolution-trait-row b{font:500 9px 'DM Mono';white-space:nowrap}
+.evolution-trait-row.complete{color:#497452}
+.evolution-trait-row.complete .trait-bar i{background:#6d9b66}
+.evolution-account-needed{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:9px;padding:9px;border-radius:9px;background:#f4ead6}
+.evolution-account-needed p{margin:0;font-size:10px;line-height:1.4}
+.evolution-account-needed .button{flex:none}
 .evolution-progress{height:9px;margin:9px 0 11px}
 .evolution-progress span{transition:width .35s}
 .evolution-costs{flex-wrap:wrap}
@@ -576,6 +594,8 @@
  .evolution-stage-info b{font-size:11px}
  .evolution-stage-card .evolution-stage-status{font-size:8px}
  .evolution-costs{align-items:flex-start;flex-direction:column}
+ .evolution-trait-requirements{grid-template-columns:1fr}
+ .evolution-account-needed{align-items:flex-start;flex-direction:column}
 }
 @media(min-width:681px) and (max-width:1050px){.evolution-stage-list{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(prefers-reduced-motion:reduce){.scottchi.has-evolved-idle.act-idle .scottchi-motion,.scottchi.is-evolving .evolution-aura,.evolution-burst,.evolution-transition-from,.evolution-transition-to{animation:none}}

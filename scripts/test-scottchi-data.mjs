@@ -25,6 +25,7 @@ const BACKUP_KEY_40 = dataModule.BACKUP_KEY_40;
 const BACKUP_KEY_66 = dataModule.BACKUP_KEY_66;
 const BACKUP_KEY_67 = dataModule.BACKUP_KEY_67;
 const BACKUP_KEY_68 = dataModule.BACKUP_KEY_68;
+const BACKUP_KEY_69 = dataModule.BACKUP_KEY_69;
 const questBuild = await build({
   entryPoints: ['artifacts/tamascottchi/src/game/questEngine.ts'],
   bundle: true, write: false, format: 'esm', platform: 'node',
@@ -189,10 +190,12 @@ test('best score survives even when older records are no longer in history', () 
   assert.equal(data.highscores.catch, 900);
 });
 test('returning after several days does not penalize needs or possessions', () => {
-  const old = { ...initialData(), lastUpdated: Date.now() - 7 * 86400000 };
+  const characterPoints = { verspielt: 900, neugierig: 800, verschlafen: 700, frech: 600, anhaenglich: 500 };
+  const old = { ...initialData(), characterPoints, lastUpdated: Date.now() - 7 * 86400000 };
   const next = normalize(old);
   assert.deepEqual(next.needs, old.needs);
   assert.equal(next.coins, old.coins);
+  assert.deepEqual(next.characterPoints, characterPoints, 'character points never decay during absence');
 });
 test('version 2.0 gets a separate untouched 2.1 backup', () => {
   storage.clear();
@@ -346,6 +349,25 @@ test('schema 13 saves preserve their unlocked stage and default to that form onc
   const clampedSelection = normalize({ ...next, activeEvolutionStage: 9 });
   assert.equal(clampedSelection.activeEvolutionStage, 6, 'unlocked forms cannot be bypassed by importing a later active form');
 });
+test('schema 14 migration preserves unlocked forms and migrates legacy personality without inflating it', () => {
+  storage.clear();
+  const old = {
+    ...initialData(), saveSchema: 14, evolutionStage: 4, activeEvolutionStage: 2,
+    personality: { verspielt: 88, neugierig: 67, verschlafen: 12, frech: 0, anhaenglich: 100 },
+  };
+  delete old.characterPoints;
+  delete old.characterDaily;
+  delete old.characterProgressVersion;
+  const raw = JSON.stringify(old);
+  storage.set(STORE_KEY, raw);
+  const next = loadData();
+  assert.equal(storage.get(BACKUP_KEY_69), raw);
+  assert.equal(next.saveSchema, SAVE_SCHEMA);
+  assert.deepEqual(next.characterPoints, old.personality);
+  assert.equal(next.evolutionStage, 4);
+  assert.equal(next.activeEvolutionStage, 2);
+  assert.deepEqual(next.owned, old.owned);
+});
 test('the ten uploaded transparent form images map to stages in the requested order', () => {
   const source = readFileSync('artifacts/tamascottchi/src/game/evolutionArtwork.ts', 'utf8');
   const imports = Object.fromEntries(
@@ -376,12 +398,12 @@ test('the ten uploaded transparent form images map to stages in the requested or
     assert.equal(png[25], 6, `${file} retains PNG transparency`);
   }
 });
-test('manual evolution checks level and coins, charges once, and unlocks cosmetic rewards', () => {
+test('manual evolution checks level, five traits and coins without consuming character points', () => {
   const { EVOLUTION_STAGES, purchaseNextEvolution, selectUnlockedEvolution } = evolutionModule;
-  assert.deepEqual(EVOLUTION_STAGES.map(({ stage, name, playerLevel, coinCost }) => [stage, name, playerLevel, coinCost]), [
-    [1, 'Original Scotchi', 1, 0], [2, 'Sprössling Scotchi', 10, 500], [3, 'Entdecker Scotchi', 25, 2000], [4, 'Magischer Scotchi', 50, 6000],
-    [5, 'Blumen Scotchi', 100, 15000], [6, 'Naturwächter Scotchi', 175, 35000], [7, 'Sternenkristall Scotchi', 275, 75000],
-    [8, 'Himmlischer Scotchi', 400, 150000], [9, 'Königlicher Scotchi', 600, 300000], [10, 'Transzendenter Scotchi', 850, 600000],
+  assert.deepEqual(EVOLUTION_STAGES.map(({ stage, name, playerLevel, traitPointsRequired, coinCost }) => [stage, name, playerLevel, traitPointsRequired, coinCost]), [
+    [1, 'Original Scotchi', 1, 0, 0], [2, 'Sprössling Scotchi', 10, 100, 500], [3, 'Entdecker Scotchi', 25, 250, 2000], [4, 'Magischer Scotchi', 50, 500, 6000],
+    [5, 'Blumen Scotchi', 100, 900, 15000], [6, 'Naturwächter Scotchi', 175, 1500, 35000], [7, 'Sternenkristall Scotchi', 275, 2300, 75000],
+    [8, 'Himmlischer Scotchi', 400, 3300, 150000], [9, 'Königlicher Scotchi', 600, 4500, 300000], [10, 'Transzendenter Scotchi', 850, 6000, 600000],
   ]);
   assert.equal(EVOLUTION_STAGES.slice(1).reduce((sum, stage) => sum + stage.coinCost, 0), 1_183_500);
 
@@ -389,12 +411,14 @@ test('manual evolution checks level and coins, charges once, and unlocks cosmeti
     ...initialData(),
     coins: 2_000_000,
     xp: economy.playerLevelXpThreshold(1000),
+    characterPoints: Object.fromEntries(economy.CHARACTER_TRAIT_IDS.map((trait) => [trait, 100])),
     owned: ['crown'],
     equipped: ['crown'],
     inventory: { ...initialData().inventory, ball: 3 },
   });
   assert.equal(data.evolutionStage, 1, 'even a level-1000 save starts at its explicitly saved form');
   assert.equal(purchaseNextEvolution(data, 9).reason, 'level');
+  assert.equal(purchaseNextEvolution({ ...data, characterPoints: Object.fromEntries(economy.CHARACTER_TRAIT_IDS.map((trait) => [trait, 99])) }, 10).reason, 'traits');
   assert.equal(purchaseNextEvolution({ ...data, coins: 499 }, 10).reason, 'coins');
   let result = purchaseNextEvolution(data, 10);
   assert.equal(result.ok, true);
@@ -403,11 +427,15 @@ test('manual evolution checks level and coins, charges once, and unlocks cosmeti
   assert.equal(result.data.xp, data.xp, 'evolution does not grant XP multipliers or bonus XP');
   assert.equal(result.data.evolutionStage, 2);
   assert.equal(result.data.activeEvolutionStage, 2);
+  assert.deepEqual(result.data.characterPoints, data.characterPoints, 'evolution never consumes character points');
   assert.equal(purchaseNextEvolution(result.data, 10).reason, 'level', 'the paid stage cannot be purchased again');
   data = result.data;
 
   for (const stage of EVOLUTION_STAGES.slice(2)) {
-    const before = data;
+    const before = {
+      ...data,
+      characterPoints: Object.fromEntries(economy.CHARACTER_TRAIT_IDS.map((trait) => [trait, Math.max(data.characterPoints[trait], stage.traitPointsRequired)])),
+    };
     result = purchaseNextEvolution(before, stage.playerLevel);
     assert.equal(result.ok, true, `${stage.name} unlocks at its specified level`);
     if (!result.ok) return;
@@ -415,6 +443,7 @@ test('manual evolution checks level and coins, charges once, and unlocks cosmeti
     assert.equal(result.data.evolutionStage, stage.stage);
     assert.equal(result.data.activeEvolutionStage, stage.stage, 'a newly purchased form becomes active');
     assert.equal(result.data.coins, before.coins - stage.coinCost);
+    assert.deepEqual(result.data.characterPoints, before.characterPoints, 'each evolution keeps accumulated points');
     if (stage.unlockItem) assert.ok(result.data.owned.includes(stage.unlockItem), `${stage.name} grants its cosmetic item`);
     data = result.data;
   }
@@ -1057,4 +1086,51 @@ test('all 24 craft recipes resolve to defined usable game items', () => {
   assert.equal(crafted.error, undefined);
   assert.equal(crafted.data.inventory['fish-common'], 0);
   assert.equal(crafted.data.inventory['crafted-fish-snack'], 1);
+});
+
+test('character points share one server-enforced 100-point cap and cooldown across traits', () => {
+  const now = Date.parse('2026-02-10T12:00:00Z');
+  const points = economy.normalizeCharacterPoints(undefined);
+  const day = economy.normalizeCharacterDailyProgress(undefined, now);
+  const first = economy.awardCharacterActivity(points, day, 'minigame', undefined, now);
+  assert.equal(first.ok, true);
+  assert.equal(first.trait, 'verspielt');
+  assert.equal(first.points, 2);
+  assert.equal(first.daily.earned, 2);
+  const rapidSecondAction = economy.awardCharacterActivity(first.characterPoints, first.daily, 'feeding', undefined, now + 1);
+  assert.equal(rapidSecondAction.ok, false);
+  assert.equal(rapidSecondAction.reason, 'cooldown', 'the cooldown is shared across all five traits');
+  const afterCooldown = economy.awardCharacterActivity(first.characterPoints, first.daily, 'feeding', undefined, now + economy.CHARACTER_ACTIVITY_COOLDOWN_MS);
+  assert.equal(afterCooldown.ok, true);
+  assert.equal(afterCooldown.trait, 'anhaenglich');
+  const toy = economy.awardCharacterActivity(points, day, 'toy-use', 'duck', now);
+  assert.equal(toy.trait, 'verspielt', 'all completed toy actions support the playful trait');
+
+  const nearCap = { day: economy.characterProgressDayKey(now), earned: 99, nextAwardAt: 0 };
+  const lastPoint = economy.awardCharacterActivity(points, nearCap, 'cuddle', undefined, now);
+  assert.equal(lastPoint.ok, true);
+  assert.equal(lastPoint.points, 1, 'the last award cannot cross the shared cap');
+  assert.equal(lastPoint.daily.earned, 100);
+  const capped = economy.awardCharacterActivity(lastPoint.characterPoints, lastPoint.daily, 'rest-complete', undefined, now + 30_000);
+  assert.equal(capped.ok, false);
+  assert.equal(capped.reason, 'daily-cap');
+});
+
+test('character-point daily totals reset at Berlin midnight and cooldown timestamps stay bounded', () => {
+  assert.equal(economy.characterProgressDayKey(Date.parse('2026-01-01T22:59:00Z')), '2026-01-01');
+  assert.equal(economy.characterProgressDayKey(Date.parse('2026-01-01T23:00:00Z')), '2026-01-02');
+  assert.equal(economy.characterProgressDayKey(Date.parse('2026-06-02T21:59:00Z')), '2026-06-02');
+  assert.equal(economy.characterProgressDayKey(Date.parse('2026-06-02T22:00:00Z')), '2026-06-03');
+  const timestamp = Date.parse('2026-06-02T22:00:00Z');
+  const reset = economy.normalizeCharacterDailyProgress({ day: '2026-06-02', earned: 85, nextAwardAt: timestamp + 10_000 }, timestamp);
+  assert.deepEqual(reset, { day: '2026-06-03', earned: 0, nextAwardAt: 0 });
+  const bounded = economy.normalizeCharacterDailyProgress({ day: '2026-06-03', earned: 4, nextAwardAt: timestamp + 50_000 }, timestamp);
+  assert.equal(bounded.nextAwardAt, timestamp + economy.CHARACTER_ACTIVITY_COOLDOWN_MS);
+});
+
+test('balanced daily caps reach every evolution threshold on the same schedule', () => {
+  const projectedDays = economy.CHARACTER_EVOLUTION_REQUIREMENTS.map((requirement) =>
+    Math.ceil((requirement.traitPointsRequired * economy.CHARACTER_TRAIT_IDS.length) / economy.CHARACTER_DAILY_POINT_CAP));
+  assert.deepEqual(projectedDays, [0, 5, 13, 25, 45, 75, 115, 165, 225, 300]);
+  assert.equal(economy.CHARACTER_EVOLUTION_REQUIREMENTS.at(-1).traitPointsRequired * economy.CHARACTER_TRAIT_IDS.length, 30_000);
 });

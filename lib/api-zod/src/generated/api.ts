@@ -124,7 +124,7 @@ export const PurchaseOnlineChestKeyResponse = zod.object({
   "saveData": zod.record(zod.string(), zod.unknown()),
   "revision": zod.number().int(),
   "updatedAt": zod.coerce.date(),
-  "outcome": zod.enum(['key-purchased', 'chest-opened', 'daily-chest-claimed', 'minigame-completed', 'minigame-chest-claimed']),
+  "outcome": zod.enum(['key-purchased', 'chest-opened', 'daily-chest-claimed', 'minigame-completed', 'minigame-chest-claimed', 'character-points-awarded', 'evolution-purchased']),
   "reward": zod.record(zod.string(), zod.unknown()).optional()
 })
 
@@ -141,7 +141,7 @@ export const OpenOnlineRewardChestResponse = zod.object({
   "saveData": zod.record(zod.string(), zod.unknown()),
   "revision": zod.number().int(),
   "updatedAt": zod.coerce.date(),
-  "outcome": zod.enum(['key-purchased', 'chest-opened', 'daily-chest-claimed', 'minigame-completed', 'minigame-chest-claimed']),
+  "outcome": zod.enum(['key-purchased', 'chest-opened', 'daily-chest-claimed', 'minigame-completed', 'minigame-chest-claimed', 'character-points-awarded', 'evolution-purchased']),
   "reward": zod.record(zod.string(), zod.unknown()).optional()
 })
 
@@ -158,7 +158,41 @@ export const ClaimOnlineDailyWorldChestResponse = zod.object({
   "saveData": zod.record(zod.string(), zod.unknown()),
   "revision": zod.number().int(),
   "updatedAt": zod.coerce.date(),
-  "outcome": zod.enum(['key-purchased', 'chest-opened', 'daily-chest-claimed', 'minigame-completed', 'minigame-chest-claimed']),
+  "outcome": zod.enum(['key-purchased', 'chest-opened', 'daily-chest-claimed', 'minigame-completed', 'minigame-chest-claimed', 'character-points-awarded', 'evolution-purchased']),
+  "reward": zod.record(zod.string(), zod.unknown()).optional()
+})
+
+
+/**
+ * @summary Award fixed character points for one completed activity
+ */
+export const EarnOnlineCharacterPointsBody = zod.object({
+  "activity": zod.enum(['cuddle', 'feeding', 'bathing', 'playful-interaction', 'toy-use', 'minigame', 'room-explore', 'world-discovery', 'rest-complete']),
+  "toyId": zod.enum(['ball', 'bone-toy', 'duck', 'rope', 'frisbee', 'teddy', 'bowl', 'shampoo', 'crafted-toy', 'crafted-shell-rattle', 'crafted-gem-ball', 'crafted-bone-puzzle', 'crafted-leaf-frisbee', 'crafted-fossil-chew', 'crafted-ore-toy']).optional(),
+  "requestId": zod.string().uuid()
+})
+
+export const EarnOnlineCharacterPointsResponse = zod.object({
+  "saveData": zod.record(zod.string(), zod.unknown()),
+  "revision": zod.number().int(),
+  "updatedAt": zod.coerce.date(),
+  "outcome": zod.enum(['key-purchased', 'chest-opened', 'daily-chest-claimed', 'minigame-completed', 'minigame-chest-claimed', 'character-points-awarded', 'evolution-purchased']),
+  "reward": zod.record(zod.string(), zod.unknown()).optional()
+})
+
+
+/**
+ * @summary Purchase the next evolution after server-side requirement checks
+ */
+export const PurchaseOnlineEvolutionBody = zod.object({
+  "requestId": zod.string().uuid()
+})
+
+export const PurchaseOnlineEvolutionResponse = zod.object({
+  "saveData": zod.record(zod.string(), zod.unknown()),
+  "revision": zod.number().int(),
+  "updatedAt": zod.coerce.date(),
+  "outcome": zod.enum(['key-purchased', 'chest-opened', 'daily-chest-claimed', 'minigame-completed', 'minigame-chest-claimed', 'character-points-awarded', 'evolution-purchased']),
   "reward": zod.record(zod.string(), zod.unknown()).optional()
 })
 
@@ -181,7 +215,7 @@ export const CompleteOnlineMinigameRoundResponse = zod.object({
   "saveData": zod.record(zod.string(), zod.unknown()),
   "revision": zod.number().int(),
   "updatedAt": zod.coerce.date(),
-  "outcome": zod.enum(['key-purchased', 'chest-opened', 'daily-chest-claimed', 'minigame-completed', 'minigame-chest-claimed']),
+  "outcome": zod.enum(['key-purchased', 'chest-opened', 'daily-chest-claimed', 'minigame-completed', 'minigame-chest-claimed', 'character-points-awarded', 'evolution-purchased']),
   "reward": zod.record(zod.string(), zod.unknown()).optional()
 })
 
@@ -198,7 +232,7 @@ export const ClaimOnlineMinigameDailyChestResponse = zod.object({
   "saveData": zod.record(zod.string(), zod.unknown()),
   "revision": zod.number().int(),
   "updatedAt": zod.coerce.date(),
-  "outcome": zod.enum(['key-purchased', 'chest-opened', 'daily-chest-claimed', 'minigame-completed', 'minigame-chest-claimed']),
+  "outcome": zod.enum(['key-purchased', 'chest-opened', 'daily-chest-claimed', 'minigame-completed', 'minigame-chest-claimed', 'character-points-awarded', 'evolution-purchased']),
   "reward": zod.record(zod.string(), zod.unknown()).optional()
 })
 

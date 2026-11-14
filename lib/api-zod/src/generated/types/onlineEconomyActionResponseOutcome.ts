@@ -15,4 +15,6 @@ export const OnlineEconomyActionResponseOutcome = {
   'daily-chest-claimed': 'daily-chest-claimed',
   'minigame-completed': 'minigame-completed',
   'minigame-chest-claimed': 'minigame-chest-claimed',
+  'character-points-awarded': 'character-points-awarded',
+  'evolution-purchased': 'evolution-purchased',
 } as const;

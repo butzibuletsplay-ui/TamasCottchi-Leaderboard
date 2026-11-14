@@ -169,6 +169,52 @@ export interface OnlineMinigameChestClaim {
   requestId: string;
 }
 
+export type OnlineCharacterActivityActivity = typeof OnlineCharacterActivityActivity[keyof typeof OnlineCharacterActivityActivity];
+
+
+export const OnlineCharacterActivityActivity = {
+  cuddle: 'cuddle',
+  feeding: 'feeding',
+  bathing: 'bathing',
+  'playful-interaction': 'playful-interaction',
+  'toy-use': 'toy-use',
+  minigame: 'minigame',
+  'room-explore': 'room-explore',
+  'world-discovery': 'world-discovery',
+  'rest-complete': 'rest-complete',
+} as const;
+
+export type OnlineCharacterActivityToyId = typeof OnlineCharacterActivityToyId[keyof typeof OnlineCharacterActivityToyId];
+
+
+export const OnlineCharacterActivityToyId = {
+  ball: 'ball',
+  'bone-toy': 'bone-toy',
+  duck: 'duck',
+  rope: 'rope',
+  frisbee: 'frisbee',
+  teddy: 'teddy',
+  bowl: 'bowl',
+  shampoo: 'shampoo',
+  'crafted-toy': 'crafted-toy',
+  'crafted-shell-rattle': 'crafted-shell-rattle',
+  'crafted-gem-ball': 'crafted-gem-ball',
+  'crafted-bone-puzzle': 'crafted-bone-puzzle',
+  'crafted-leaf-frisbee': 'crafted-leaf-frisbee',
+  'crafted-fossil-chew': 'crafted-fossil-chew',
+  'crafted-ore-toy': 'crafted-ore-toy',
+} as const;
+
+export interface OnlineCharacterActivity {
+  activity: OnlineCharacterActivityActivity;
+  toyId?: OnlineCharacterActivityToyId;
+  requestId: string;
+}
+
+export interface OnlineEvolutionPurchase {
+  requestId: string;
+}
+
 export type OnlineEconomyActionResponseOutcome = typeof OnlineEconomyActionResponseOutcome[keyof typeof OnlineEconomyActionResponseOutcome];
 
 
@@ -178,6 +224,8 @@ export const OnlineEconomyActionResponseOutcome = {
   'daily-chest-claimed': 'daily-chest-claimed',
   'minigame-completed': 'minigame-completed',
   'minigame-chest-claimed': 'minigame-chest-claimed',
+  'character-points-awarded': 'character-points-awarded',
+  'evolution-purchased': 'evolution-purchased',
 } as const;
 
 export type OnlineEconomyActionResponseReward = { [key: string]: unknown };

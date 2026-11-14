@@ -8,6 +8,9 @@
 
 export * from './apiError';
 export * from './healthStatus';
+export * from './onlineCharacterActivity';
+export * from './onlineCharacterActivityActivity';
+export * from './onlineCharacterActivityToyId';
 export * from './onlineChestKeyPurchase';
 export * from './onlineChestKeyPurchaseTier';
 export * from './onlineChestOpen';
@@ -21,6 +24,7 @@ export * from './onlineDailyWorldChestClaimLocationId';
 export * from './onlineEconomyActionResponse';
 export * from './onlineEconomyActionResponseOutcome';
 export * from './onlineEconomyActionResponseReward';
+export * from './onlineEvolutionPurchase';
 export * from './onlineMinigameChestClaim';
 export * from './onlineMinigameChestClaimGameId';
 export * from './onlineMinigameRound';

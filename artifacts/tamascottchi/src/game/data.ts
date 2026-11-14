@@ -9,6 +9,10 @@ import {
   CHEST_TIERS, MAX_PLAYER_XP, MINIGAME_REWARD_DIVISORS, createMinigameDailyState, migrateLegacyPlayerXp,
   normalizeMinigameDailyState, playerLevelForXp, rewardForMinigame, type MinigameDailyState, type RewardChestTier,
 } from '@workspace/game-economy';
+import {
+  normalizeCharacterDailyProgress, normalizeCharacterPoints,
+  CHARACTER_TRAIT_IDS, type CharacterDailyProgress, type CharacterPoints,
+} from '@workspace/game-economy';
 
 export type Room = 'Wohnzimmer' | 'Küche' | 'Bad' | 'Schlafzimmer' | 'Spielzimmer';
 export type NeedKey = 'hunger' | 'glueck' | 'energie' | 'sauberkeit';
@@ -42,6 +46,9 @@ export type PetData = {
   tutorialSeen?: boolean;
   // ---- additive save fields ----
   personality?: Personality;
+  characterPoints?: CharacterPoints;
+  characterDaily?: CharacterDailyProgress;
+  characterProgressVersion?: number;
   visitedRooms?: Room[];
   routine?: { greetedDate: string; surpriseDate: string; surprises: number; lastSeen: number };
   stylesWorn?: string[];
@@ -93,6 +100,7 @@ export type FullPetData = PetData
   & Required<Pick<PetData, 'personality' | 'visitedRooms' | 'routine' | 'stylesWorn' | 'world' | 'collectionIds' | 'journal' | 'roomPlacements' | 'tutorialSeen'>>
   & Required<Pick<PetData, 'artifactLevels' | 'equippedArtifacts' | 'artifactUpgradeCount'>>
   & Required<Pick<PetData, 'evolutionStage' | 'activeEvolutionStage'>>
+  & Required<Pick<PetData, 'characterPoints' | 'characterDaily' | 'characterProgressVersion'>>
   & { world: Required<NonNullable<PetData['world']>> & Required<Pick<NonNullable<PetData['world']>,
     'resourceCollectedAt' | 'worldDay' | 'dailyGoals' | 'dailyMetrics' | 'dailyClaimed' | 'dailyVisitedLocations' |
     'dailyMasteryGained' | 'weeklyKey' | 'weeklyMetrics' | 'weeklyClaimed' | 'areaMastery' | 'worldEvent' | 'worldEventClaimedDay' |
@@ -113,7 +121,8 @@ export const BACKUP_KEY_65 = 'tamascottchi-save-v1-backup-before-6.5';
 export const BACKUP_KEY_66 = 'tamascottchi-save-v1-backup-before-6.6';
 export const BACKUP_KEY_67 = 'tamascottchi-save-v1-backup-before-6.7';
 export const BACKUP_KEY_68 = 'tamascottchi-save-v1-backup-before-6.8';
-export const SAVE_SCHEMA = 14;
+export const BACKUP_KEY_69 = 'tamascottchi-save-v1-backup-before-6.9';
+export const SAVE_SCHEMA = 15;
 export const LOCATIONS = [
   { id: 'park', name: 'Scottchi Park', level: 1, stageLevel: 1, point: { x: 25, y: 29 }, desc: 'Der erste Spaziergang: Wege, Wiesen und verlorene Knochen.' },
   { id: 'city', name: 'Scottchi City', level: 35, stageLevel: 5, point: { x: 45, y: 53 }, desc: 'Ein lebendiger Platz für kleine Besorgungen.' },
@@ -308,7 +317,11 @@ export const initialData = (): FullPetData => ({
   missions: {}, claimedAchievements: [], missionsDate: today(),
   settings: { sound: true, music: false, volume: 65, lampOn: true },
   highscores: {}, challenges: {},
-  personality: initialPersonality(), visitedRooms: ['Wohnzimmer'],
+  personality: initialPersonality(),
+  characterPoints: normalizeCharacterPoints(undefined),
+  characterDaily: normalizeCharacterDailyProgress(undefined, Date.now()),
+  characterProgressVersion: 1,
+  visitedRooms: ['Wohnzimmer'],
   routine: { greetedDate: '', surpriseDate: today(), surprises: 0, lastSeen: Date.now() }, stylesWorn: [],
    world: {
      discoveredLocations: [], legacyUnlockedLocations: [], completedQuests: [], discoveries: [], questProgress: {}, claimedRewards: [],
@@ -386,6 +399,8 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
     : Math.min(MAX_PLAYER_XP, parsedXp);
   const evolutionStage = Math.max(1, Math.min(10, Math.floor(num(parsed.evolutionStage, 1))));
   const activeEvolutionStage = Math.max(1, Math.min(evolutionStage, Math.floor(num(parsed.activeEvolutionStage, evolutionStage))));
+  const characterPoints = normalizeCharacterPoints(parsed.characterPoints, parsed.personality);
+  const characterDaily = normalizeCharacterDailyProgress(parsed.characterDaily, now);
   const legacyUnlockedLocations = new Set(
     (Array.isArray(parsed.world?.legacyUnlockedLocations) ? parsed.world.legacyUnlockedLocations : [])
       .filter((id) => LOCATIONS.some((place) => place.id === id)),
@@ -401,6 +416,9 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
     version: 1, saveSchema: SAVE_SCHEMA,
     evolutionStage,
     activeEvolutionStage,
+    characterPoints,
+    characterDaily,
+    characterProgressVersion: 1,
     name: typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.slice(0, 18) : d.name,
     coins: Math.max(0, num(parsed.coins, d.coins)), xp: normalizedXp,
     needs: {
@@ -498,6 +516,8 @@ export function assertSave(v: unknown): asserts v is Partial<PetData> {
   if (p.xp !== undefined && !Number.isFinite(p.xp)) throw new Error('XP ungültig');
   if (p.evolutionStage !== undefined && (!Number.isInteger(p.evolutionStage) || p.evolutionStage < 1 || p.evolutionStage > 10)) throw new Error('Evolutionsstufe ungültig');
   if (p.activeEvolutionStage !== undefined && (!Number.isInteger(p.activeEvolutionStage) || p.activeEvolutionStage < 1 || p.activeEvolutionStage > 10)) throw new Error('Aktive Evolutionsform ungültig');
+  if (p.characterPoints !== undefined && (!isObj(p.characterPoints) || CHARACTER_TRAIT_IDS.some((trait) => !Number.isFinite(p.characterPoints?.[trait]) || (p.characterPoints?.[trait] || 0) < 0))) throw new Error('Charakterpunkte ungültig');
+  if (p.characterDaily !== undefined && (!isObj(p.characterDaily) || typeof p.characterDaily.day !== 'string' || !Number.isFinite(p.characterDaily.earned))) throw new Error('Tagesfortschritt des Charakters ungültig');
   for (const k of ['owned', 'equipped', 'records', 'roomItems'] as const) if (p[k] !== undefined && !Array.isArray(p[k])) throw new Error(`${k} ungültig`);
   if (p.inventory !== undefined && !isObj(p.inventory)) throw new Error('Inventar ungültig');
 }
@@ -524,6 +544,7 @@ export function loadData(): FullPetData {
     if ((parsed.saveSchema || 0) < 12 && !localStorage.getItem(BACKUP_KEY_66)) localStorage.setItem(BACKUP_KEY_66, raw);
     if ((parsed.saveSchema || 0) < 13 && !localStorage.getItem(BACKUP_KEY_67)) localStorage.setItem(BACKUP_KEY_67, raw);
     if ((parsed.saveSchema || 0) < 14 && !localStorage.getItem(BACKUP_KEY_68)) localStorage.setItem(BACKUP_KEY_68, raw);
+    if ((parsed.saveSchema || 0) < 15 && !localStorage.getItem(BACKUP_KEY_69)) localStorage.setItem(BACKUP_KEY_69, raw);
     return normalize(parsed);
   } catch (cause) {
     // Never replace an unreadable save with a new game through the autosave effect.

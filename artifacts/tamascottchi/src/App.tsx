@@ -14,7 +14,7 @@ import { OutfitLab } from './game/OutfitLab';
 import { World } from './game/World';
 import { CollectionsPage } from './game/CollectionsPage';
 import { EvolutionPage } from './game/EvolutionPage';
-import { EVOLUTION_STAGES, purchaseNextEvolution, selectUnlockedEvolution } from './game/evolution';
+import { EVOLUTION_STAGES, selectUnlockedEvolution, type EvolutionPurchaseResult } from './game/evolution';
 import { AimLayer, FlyingToy, type Point, type Throw } from './game/ToyPlay';
 import {
   FAVORITE_TOY, FOOD_LINES, IDLE_CLASS, IDLE_LINES, PHASE_INFO, SURPRISES, TOY_LINES, TRAITS, absenceDecay, dayPhase, dominant, hasCharacter, nudge,
@@ -36,7 +36,8 @@ import { releasePendingWorldDiscoveries } from './game/worldDiscoveries';
 import { hasMaterialArt, MaterialArt } from './game/MaterialArt';
 import {
   getGetOnlineProfileQueryKey, getGetOnlineSaveQueryKey, useClaimOnlineDailyWorldChest, useGetOnlineProfile, useGetOnlineSave,
-  useClaimOnlineMinigameDailyChest, useCompleteOnlineMinigameRound, useOpenOnlineRewardChest, usePurchaseOnlineChestKey, useUpdateOnlineSave,
+  useClaimOnlineMinigameDailyChest, useCompleteOnlineMinigameRound, useEarnOnlineCharacterPoints, useOpenOnlineRewardChest,
+  usePurchaseOnlineChestKey, usePurchaseOnlineEvolution, useUpdateOnlineSave,
 } from '@workspace/api-client-react';
 import { OnlinePage } from './game/OnlinePage';
 import { buyChestKey, CHEST_DEFINITIONS, CHEST_TIERS, openRewardChest } from './game/rewardChests';
@@ -49,6 +50,8 @@ import { COLLECTION_ITEM_LINKS } from './game/collectionWorld';
 import {
   CHEST_UNLOCK_LEVEL, MAX_PLAYER_XP, MINIGAME_DAILY_TASK_TARGET, MINIGAME_DAILY_XP_CAP, applyMinigameRound,
   chestKeyPrice, claimMinigameDailyChest, minigameDailyChestChances, minigameDailyCoinCap,
+  CHARACTER_DAILY_POINT_CAP, CHARACTER_TOY_TRAITS, CHARACTER_TRAIT_IDS, normalizeCharacterDailyProgress,
+  type CharacterActivityId, type CharacterToyId,
   normalizeMinigameDailyState, playerLevelProgress,
 } from '@workspace/game-economy';
 type PetData = FullPetData;
@@ -166,6 +169,8 @@ function Game({ initial }: { initial: PetData }) {
   const claimOnlineWorldChest = useClaimOnlineDailyWorldChest();
   const completeOnlineMinigame = useCompleteOnlineMinigameRound();
   const claimOnlineMinigameChest = useClaimOnlineMinigameDailyChest();
+  const earnOnlineCharacterPoints = useEarnOnlineCharacterPoints();
+  const purchaseOnlineEvolution = usePurchaseOnlineEvolution();
   const [cloudLink, setCloudLink] = useState<CloudLink | null>(null);
   const cloudLinkRef = useRef<CloudLink | null>(null);
   cloudLinkRef.current = cloudLink;
@@ -173,6 +178,9 @@ function Game({ initial }: { initial: PetData }) {
   const cloudSyncBusy = useRef(false);
   const chestActionBusy = useRef(new Set<string>());
   const chestRequestIds = useRef(new Map<string, string>());
+  const characterActionNoticeShown = useRef(false);
+  const activeNapUntilRef = useRef<number | null>(null);
+  const napCompletionTimer = useRef<number | null>(null);
   const [page, setPage] = useState('home');
   const [closetTab, setClosetTab] = useState<'wardrobe' | 'evolution'>('wardrobe');
   const [shopTab, setShopTab] = useState<Item['type'] | 'keys'>('food');
@@ -364,6 +372,29 @@ function Game({ initial }: { initial: PetData }) {
     return restored;
   };
 
+  const applyCharacterProgressResponse = (response: { saveData: Record<string, unknown>; revision: number; updatedAt: string | Date }) => {
+    const serverSnapshot = normalize(response.saveData as Partial<PetData>);
+    const latest = dataRef.current;
+    const merged: PetData = {
+      ...latest,
+      characterPoints: serverSnapshot.characterPoints,
+      characterDaily: serverSnapshot.characterDaily,
+      characterProgressVersion: 1,
+    };
+    dataRef.current = merged;
+    setData(merged);
+    if (onlineUserId) {
+      linkCloudToCurrentSave(response.revision, serverSnapshot);
+      queryClient.setQueryData(getGetOnlineSaveQueryKey(), (current) => current
+        ? { ...current, saveData: response.saveData, revision: response.revision, updatedAt: response.updatedAt }
+        : current);
+      if (saveFingerprint(merged) !== saveFingerprint(serverSnapshot)) {
+        window.setTimeout(() => { void syncCloudBeforeEconomy(); }, 0);
+      }
+    }
+    return merged;
+  };
+
   useEffect(() => {
     if (!onlineUserId || !onlineProfileQuery.data || !onlineSaveQuery.data?.saveData || cloudLink?.userId !== onlineUserId) return;
     const snapshot = data;
@@ -475,6 +506,16 @@ function Game({ initial }: { initial: PetData }) {
   const level = levelFor(data.xp);
   const minigameDailyNow = now + (serverClockOffsetMs || 0);
   const minigameDaily = normalizeMinigameDailyState(data.minigameDaily, minigameDailyNow, level);
+  const characterDaily = normalizeCharacterDailyProgress(data.characterDaily, minigameDailyNow);
+  const characterProgressLinked = !!onlineUserId && cloudLink?.userId === onlineUserId;
+  const nextEvolution = EVOLUTION_STAGES[data.evolutionStage] || null;
+  const traitRequirement = nextEvolution?.traitPointsRequired ?? EVOLUTION_STAGES[EVOLUTION_STAGES.length - 1].traitPointsRequired;
+  const traitProgressPercent = Math.min(...CHARACTER_TRAIT_IDS.map((trait) => traitRequirement
+    ? Math.min(100, data.characterPoints[trait] / traitRequirement * 100)
+    : 100));
+  const evolutionLevelPercent = nextEvolution ? Math.min(100, level / nextEvolution.playerLevel * 100) : 100;
+  const evolutionCoinPercent = nextEvolution ? Math.min(100, data.coins / Math.max(1, nextEvolution.coinCost) * 100) : 100;
+  const evolutionProgressPercent = Math.floor(Math.min(traitProgressPercent, evolutionLevelPercent, evolutionCoinPercent));
   const minigameCoinCap = minigameDailyCoinCap(level);
   const completedMinigameTasks = Object.values(minigameDaily.taskPoints)
     .filter((points) => (points || 0) >= MINIGAME_DAILY_TASK_TARGET).length;
@@ -730,6 +771,7 @@ function Game({ initial }: { initial: PetData }) {
     if (linkedCloud && !await syncCloudBeforeEconomy()) {
       notify('Minispiel-Belohnung ist sicher gespeichert; weitere Rundendaten werden später synchronisiert.');
     }
+    void awardCharacterActivity('minigame');
     sound(780, { dur: 0.25, slide: 1170 });
     if (result.score > 0 || newChallenges.length) cheer(5000);
     return summary;
@@ -792,6 +834,56 @@ function Game({ initial }: { initial: PetData }) {
     } finally {
       chestActionBusy.current.delete(actionKey);
     }
+  }
+  async function awardCharacterActivity(activity: CharacterActivityId, toyId?: CharacterToyId): Promise<boolean> {
+    const actionKey = `character:${activity}:${toyId || ''}`;
+    const clockNow = Date.now() + (serverClockOffsetMs || 0);
+    const daily = normalizeCharacterDailyProgress(dataRef.current.characterDaily, clockNow);
+    if (daily.earned >= CHARACTER_DAILY_POINT_CAP || daily.nextAwardAt > clockNow) return false;
+    if (!onlineUserId || cloudLinkRef.current?.userId !== onlineUserId) {
+      if (!characterActionNoticeShown.current) {
+        characterActionNoticeShown.current = true;
+        notify('Charakterpunkte werden nur mit verknüpftem Online-Konto gesammelt. Interaktionen funktionieren weiterhin.');
+      }
+      return false;
+    }
+    if (chestActionBusy.current.has(actionKey)) return false;
+    return (await withChestAction(actionKey, async () => {
+      if (!await syncCloudBeforeEconomy()) {
+        notify('Die Charakteraktion war erfolgreich, aber die Punkte konnten nicht sicher synchronisiert werden. Bitte später erneut verbinden.');
+        return false;
+      }
+      try {
+        const result = await earnOnlineCharacterPoints.mutateAsync({
+          data: { activity, ...(toyId ? { toyId } : {}), requestId: requestIdFor(actionKey) },
+        });
+        applyCharacterProgressResponse(result);
+        chestRequestIds.current.delete(actionKey);
+        return true;
+      } catch (error) {
+        const status = typeof error === 'object' && error !== null && 'status' in error
+          ? (error as { status?: number }).status
+          : undefined;
+        const message = serverActionError(error);
+        if (status === 409 || status === 429) {
+          chestRequestIds.current.delete(actionKey);
+          const currentDaily = normalizeCharacterDailyProgress(dataRef.current.characterDaily, clockNow);
+          const updated = {
+            ...dataRef.current,
+            characterDaily: status === 429
+              ? { ...currentDaily, nextAwardAt: clockNow + 20_000 }
+              : message.includes('Tageslimit')
+                ? { ...currentDaily, earned: CHARACTER_DAILY_POINT_CAP }
+                : currentDaily,
+          };
+          dataRef.current = updated;
+          setData(updated);
+        } else {
+          notify(message);
+        }
+        return false;
+      }
+    })) ?? false;
   }
   async function purchaseChestKeyAction(tier: RewardChestTier): Promise<boolean> {
     const actionKey = `key:${tier}`;
@@ -965,6 +1057,7 @@ function Game({ initial }: { initial: PetData }) {
         ...old, inventory: { ...old.inventory, [food.id]: Math.max(0, (old.inventory[food.id] || 0) - 1) },
         needs: applyNeeds({ ...old.needs, hunger: clamp(old.needs.hunger + (food.amount || 12) * bowl) }, food.effects || {}), xp: old.xp + 9, stats: { ...old.stats, care: old.stats.care + 1 },
       }, 'feeds'));
+      void awardCharacterActivity('feeding');
       showPetAction('eating', showsTrait ? FOOD_LINES[trait] : `Mmmh, ${food.name.toLowerCase()}!`, 2000);
       if (showsTrait && trait === 'frech') grow('frech', 0.3);
       notify(`${food.name} für ${data.name}${bowl > 1 ? ' aus dem Napf' : ''}!`); sound(680); return;
@@ -976,17 +1069,20 @@ function Game({ initial }: { initial: PetData }) {
         ...old, inventory: { ...old.inventory, soap: Math.max(0, (old.inventory.soap || 0) - 1) },
         needs: { ...old.needs, sauberkeit: clamp(old.needs.sauberkeit + 35) }, xp: old.xp + 10, stats: { ...old.stats, care: old.stats.care + 1 },
       }, 'baths'));
+      void awardCharacterActivity('bathing');
       showPetAction('washing', 'Blasen! Blasen! Das kitzelt.');
       notify('Schaumwolke! Scottchi ist wieder sauber.'); sound(760); return;
     }
     if (data.needs.energie < 10) { notify('Scottchi braucht erst eine Pause.'); return; }
     setData((old) => ({ ...old, needs: { ...old.needs, glueck: clamp(old.needs.glueck + 12), energie: clamp(old.needs.energie - 4) }, xp: old.xp + 4, stats: { ...old.stats, care: old.stats.care + 1 } }));
+    void awardCharacterActivity('playful-interaction');
     showPetAction('happy', 'Wuff oder so!'); cheer(1800); grow('frech', 0.8);
     notify('Scottchi macht einen Quatsch-Sprung.'); sound(720);
   }
   function pet() {
     if (sleeping) { showPetAction('sleeping', 'Zzz… nur noch fünf Minuten.'); return; }
     setData((old) => advanceDaily({ ...old, needs: { ...old.needs, glueck: clamp(old.needs.glueck + 8) }, xp: old.xp + 4, stats: { ...old.stats, care: old.stats.care + 1 } }, 'pets'));
+    void awardCharacterActivity('cuddle');
     const lines = ['Das kitzelt!', 'Was guckst du?', 'Wuff oder so!', 'Ich bin eine Kreatur.', 'Was passiert hier eigentlich?', 'Ich habe existenzielle Fragen.'];
     const pool = showsTrait ? [...lines.slice(0, 3), ...IDLE_LINES[trait]] : lines;
     showPetAction('petting', pool[Math.floor(Math.random() * pool.length)]); grow('anhaenglich', 0.7);
@@ -1040,6 +1136,7 @@ function Game({ initial }: { initial: PetData }) {
     if (id === 'shampoo') next = advanceDaily(next, 'baths');
     dataRef.current = next;
     setData(next);
+    if (id in CHARACTER_TOY_TRAITS) void awardCharacterActivity('toy-use', id as CharacterToyId);
     toyUsePending.current.delete(id);
     return true;
   }
@@ -1170,39 +1267,100 @@ function Game({ initial }: { initial: PetData }) {
     });
     notify('Kompletter Stil angezogen.'); sound(820);
   }
+  function cancelActiveNap() {
+    activeNapUntilRef.current = null;
+    if (napCompletionTimer.current !== null) {
+      window.clearTimeout(napCompletionTimer.current);
+      napCompletionTimer.current = null;
+    }
+  }
   function changeRoom(room: Room) {
     setAim(null);
+    const changedRoom = dataRef.current.room !== room;
+    if (room !== 'Schlafzimmer' && activeNapUntilRef.current) cancelActiveNap();
     setData((old) => ({ ...old, room, sleepUntil: room === 'Schlafzimmer' ? old.sleepUntil : null, xp: old.xp + (old.missions.room ? 0 : 8), stats: { ...old.stats, rooms: old.stats.rooms + 1 }, missions: { ...old.missions, room: true },
       visitedRooms: old.visitedRooms.includes(room) ? old.visitedRooms : [...old.visitedRooms, room], personality: old.room === room ? old.personality : nudge(old.personality, 'neugierig', 0.4) }));
+    if (changedRoom) void awardCharacterActivity('room-explore');
     sound(520);
   }
   function sleep() {
     if (data.room !== 'Schlafzimmer') { notify('Scottchi kann nur im Schlafzimmer schlafen.'); return; }
     if (sleeping) {
+      cancelActiveNap();
       setData((old) => ({ ...old, sleepUntil: null, settings: { ...old.settings, lampOn: true } }));
       showPetAction('idle', 'Morgen! Was gibt es?'); notify('Scottchi ist wieder wach.'); sound(500); return;
     }
-    setData((old) => ({ ...old, sleepUntil: Date.now() + 60000, settings: { ...old.settings, lampOn: false }, xp: old.xp + 2, personality: nudge(old.personality, 'verschlafen', 1) }));
+    cancelActiveNap();
+    const sleepUntil = Date.now() + 60000;
+    activeNapUntilRef.current = sleepUntil;
+    napCompletionTimer.current = window.setTimeout(() => {
+      if (activeNapUntilRef.current !== sleepUntil) return;
+      activeNapUntilRef.current = null;
+      napCompletionTimer.current = null;
+      void awardCharacterActivity('rest-complete');
+    }, 60000);
+    setData((old) => ({ ...old, sleepUntil, settings: { ...old.settings, lampOn: false }, xp: old.xp + 2, personality: nudge(old.personality, 'verschlafen', 1) }));
     setNow(Date.now() + 1);
     showPetAction('sleeping', 'Zzz…');
     notify(`${data.name} schläft jetzt eine Runde${data.owned.includes('teddy') ? ' mit dem Teddy' : ''}.`); sound(420);
   }
 
-  function purchaseEvolution() {
+  async function purchaseEvolution(): Promise<EvolutionPurchaseResult> {
     const current = dataRef.current;
-    const result = purchaseNextEvolution(current, levelFor(current.xp));
-    if (!result.ok) return result;
-    const updated = recordJournal(
-      result.data,
-      `evolution-stage-${result.stage.stage}`,
-      '✦',
-      `Entwicklung: ${result.stage.name}`,
-      `${result.stage.coinCost.toLocaleString('de-DE')} Münzen · ${result.stage.reward}`,
-    );
-    dataRef.current = updated;
-    setData(updated);
-    notify(`Scottchi ist jetzt ${result.stage.name}!`);
-    return result;
+    const stage = EVOLUTION_STAGES[current.evolutionStage];
+    if (!stage) return { ok: false, reason: 'complete' };
+    if (!onlineUserId || cloudLinkRef.current?.userId !== onlineUserId) {
+      return { ok: false, reason: 'account', message: 'Verknüpfe zuerst dein Online-Konto.' };
+    }
+    if (!await syncCloudBeforeEconomy()) {
+      return { ok: false, reason: 'sync', message: 'Der Spielstand konnte vor dem Kauf nicht sicher synchronisiert werden.' };
+    }
+    const actionKey = 'evolution-purchase';
+    const result = await withChestAction(actionKey, async () => {
+      try {
+        const response = await purchaseOnlineEvolution.mutateAsync({ data: { requestId: requestIdFor(actionKey) } });
+        const serverSnapshot = normalize(response.saveData as Partial<PetData>);
+        const latest = dataRef.current;
+        const localCoinDelta = latest.coins - current.coins;
+        const completedStage = EVOLUTION_STAGES[serverSnapshot.evolutionStage - 1];
+        if (!completedStage) throw new Error('Der Server lieferte eine ungültige Evolutionsstufe.');
+        let updated: PetData = {
+          ...latest,
+          coins: Math.max(0, serverSnapshot.coins + localCoinDelta),
+          evolutionStage: serverSnapshot.evolutionStage,
+          activeEvolutionStage: serverSnapshot.activeEvolutionStage,
+          owned: [...new Set([...latest.owned, ...serverSnapshot.owned])],
+          characterPoints: serverSnapshot.characterPoints,
+          characterDaily: serverSnapshot.characterDaily,
+          characterProgressVersion: 1,
+        };
+        updated = recordJournal(
+          updated,
+          `evolution-stage-${completedStage.stage}`,
+          '✦',
+          `Entwicklung: ${completedStage.name}`,
+          `${completedStage.coinCost.toLocaleString('de-DE')} Münzen · ${completedStage.reward}`,
+        );
+        dataRef.current = updated;
+        setData(updated);
+        linkCloudToCurrentSave(response.revision, serverSnapshot);
+        queryClient.setQueryData(getGetOnlineSaveQueryKey(), (saved) => saved
+          ? { ...saved, saveData: response.saveData, revision: response.revision, updatedAt: response.updatedAt }
+          : saved);
+        chestRequestIds.current.delete(actionKey);
+        notify(`Scottchi ist jetzt ${completedStage.name}!`);
+        return { ok: true as const, data: updated, stage: completedStage };
+      } catch (error) {
+        const message = serverActionError(error);
+        const reason: 'level' | 'traits' | 'coins' | 'complete' | 'sync' = message.toLocaleLowerCase('de-DE').includes('level') ? 'level'
+          : message.toLocaleLowerCase('de-DE').includes('charakterzüge') ? 'traits'
+            : message.toLocaleLowerCase('de-DE').includes('münzen') ? 'coins'
+              : message.toLocaleLowerCase('de-DE').includes('alle evolutionsstufen') ? 'complete'
+                : 'sync';
+        return { ok: false as const, reason, message };
+      }
+    });
+    return result || { ok: false, reason: 'sync', message: 'Die Evolutionsanfrage läuft bereits.' };
   }
   function selectEvolutionForm(stage: number) {
     const current = dataRef.current;
@@ -1309,6 +1467,7 @@ function Game({ initial }: { initial: PetData }) {
   }
   function changeWorld(next: FullPetData) {
     setData((old) => advanceDaily(next, 'coins', Math.max(0, next.coins - old.coins)));
+    void awardCharacterActivity('world-discovery');
   }
   function craft(recipeId: string, quantity: number) {
     const result = craftItem(dataRef.current, recipeId, quantity);
@@ -1437,8 +1596,25 @@ function Game({ initial }: { initial: PetData }) {
               </div>
               {!ownedToys.length && <p className="subline">Spielzeug aus dem Laden erscheint direkt im Zimmer und lässt sich antippen.</p>}
               <div className="traits" data-testid="panel-personality">
-                <div className="traits-head"><strong>Charakter</strong><span>{showsTrait ? `meist ${TRAITS.find((t) => t.id === trait)!.name.toLowerCase()}` : 'formt sich noch'}</span></div>
-                {TRAITS.map((t) => <div key={t.id} className={`trait-row ${showsTrait && t.id === trait ? 'lead' : ''}`} title={t.hint} data-testid={`trait-${t.id}`}><span>{t.name}</span><div className="trait-bar"><i style={{ transform: `scaleX(${data.personality[t.id] / 100})` }}/></div></div>)}
+                <div className="traits-head"><strong>Entwicklung zur nächsten Form</strong><span>{nextEvolution ? `${evolutionProgressPercent}%` : 'Maximum erreicht'}</span></div>
+                {TRAITS.map((t) => {
+                  const value = data.characterPoints[t.id];
+                  const complete = value >= traitRequirement;
+                  const percent = traitRequirement ? Math.min(100, value / traitRequirement) : 1;
+                  return <div key={t.id} className={`trait-row ${complete ? 'lead met' : ''}`} title={t.hint} data-testid={`trait-${t.id}`}>
+                    <span className="trait-label">{t.name}<small>{value.toLocaleString('de-DE')} / {traitRequirement.toLocaleString('de-DE')}</small></span>
+                    <div className="trait-bar"><i style={{ transform: `scaleX(${percent})` }}/></div>
+                  </div>;
+                })}
+                <div className="character-daily-progress" data-testid="character-daily-progress">
+                  <div><strong>Heutige Charakterpunkte</strong><span>{characterDaily.earned}/{CHARACTER_DAILY_POINT_CAP} · noch {CHARACTER_DAILY_POINT_CAP - characterDaily.earned}</span></div>
+                  <div className="trait-bar"><i style={{ transform: `scaleX(${characterDaily.earned / CHARACTER_DAILY_POINT_CAP})` }}/></div>
+                  <small>Limit für alle Züge zusammen · Reset um Mitternacht (Europe/Berlin)</small>
+                </div>
+                <p className="character-evolution-progress" data-testid="evolution-progress-summary">
+                  {nextEvolution ? `${evolutionProgressPercent}% bis ${nextEvolution.name} · ${nextEvolution.traitPointsRequired.toLocaleString('de-DE')} je Charakterzug` : 'Alle zehn Formen freigeschaltet.'}
+                </p>
+                {!characterProgressLinked && nextEvolution && <button className="text-link character-account-link" onClick={() => setPage('online')} data-testid="link-character-account">Online-Konto verknüpfen, um Charakterpunkte zu sammeln</button>}
                 <button className="text-link evolution-home-link" onClick={() => { setPage('closet'); setClosetTab('evolution'); }} data-testid="link-evolution">Form {data.activeEvolutionStage} · {data.evolutionStage}/10 freigeschaltet</button>
               </div>
             </section>
@@ -1509,7 +1685,7 @@ function Game({ initial }: { initial: PetData }) {
             <button className={`character-tab ${closetTab === 'evolution' ? 'active' : ''}`} role="tab" aria-selected={closetTab === 'evolution'} onClick={() => setClosetTab('evolution')} data-testid="tab-evolution"><Sparkles/>Entwicklung</button>
           </div>
           {closetTab === 'evolution'
-            ? <EvolutionPage data={data as FullPetData} level={level} onPurchase={purchaseEvolution} onSelect={selectEvolutionForm}/>
+            ? <EvolutionPage data={data as FullPetData} level={level} accountLinked={characterProgressLinked} onConnectAccount={() => setPage('online')} onPurchase={purchaseEvolution} onSelect={selectEvolutionForm}/>
             : <div className="closet-grid">
           <section className="panel closet-preview"><div className="panel-head"><h2 className="panel-title">Anprobe</h2></div>
             <div className="preview-stage"><Scottchi mood={mood} equipped={data.equipped} idle={idleStyle} formStage={data.activeEvolutionStage}/></div>

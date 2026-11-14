@@ -8,6 +8,8 @@ import {
   CompleteOnlineMinigameRoundBody,
   CompleteOnlineMinigameRoundResponse,
   CreateOnlineProfileBody,
+  EarnOnlineCharacterPointsBody,
+  EarnOnlineCharacterPointsResponse,
   GetOnlineProfileResponse,
   GetOnlineSaveResponse,
   ImportOnlineSaveBody,
@@ -17,6 +19,8 @@ import {
   OpenOnlineRewardChestResponse,
   PurchaseOnlineChestKeyBody,
   PurchaseOnlineChestKeyResponse,
+  PurchaseOnlineEvolutionBody,
+  PurchaseOnlineEvolutionResponse,
   UpdateOnlineProfileBody,
   UpdateOnlineProfileResponse,
   UpdateOnlineSaveBody,
@@ -39,6 +43,11 @@ import {
   chooseChance,
   MINIGAME_DAILY_TASK_TARGET,
   MINIGAME_DAILY_XP_CAP,
+  CHARACTER_DAILY_POINT_CAP,
+  CHARACTER_EVOLUTION_REQUIREMENTS,
+  awardCharacterActivity,
+  normalizeCharacterDailyProgress,
+  normalizeCharacterPoints,
   minigameDailyCoinCap,
   minigameDailyDayKey,
   normalizeMinigameDailyState,
@@ -54,7 +63,7 @@ import {
 } from "@workspace/game-economy";
 
 const router: IRouter = Router();
-const CURRENT_SAVE_SCHEMA = 14;
+const CURRENT_SAVE_SCHEMA = 15;
 const friendCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const allowedRooms = new Set([
   "Wohnzimmer",
@@ -233,6 +242,8 @@ function normalizeEconomySave(input: JsonRecord, now: number): JsonRecord {
   );
   const evolutionStage = Math.max(1, Math.min(10, integer(save.evolutionStage, 1)));
   const activeEvolutionStage = Math.max(1, Math.min(evolutionStage, integer(save.activeEvolutionStage, evolutionStage)));
+  const characterPoints = normalizeCharacterPoints(save.characterPoints, save.personality);
+  const characterDaily = normalizeCharacterDailyProgress(save.characterDaily, now);
   const day = worldDayKey(now);
   const sameDay = world.worldDay === day;
   return {
@@ -242,6 +253,9 @@ function normalizeEconomySave(input: JsonRecord, now: number): JsonRecord {
     saveSchema: CURRENT_SAVE_SCHEMA,
     evolutionStage,
     activeEvolutionStage,
+    characterPoints,
+    characterDaily,
+    characterProgressVersion: 1,
     minigameDaily,
     collectionIds: stringArray(save.collectionIds),
     artifactLevels: { ...asRecord(save.artifactLevels) },
@@ -264,8 +278,23 @@ function normalizeEconomySave(input: JsonRecord, now: number): JsonRecord {
 
 function preserveServerEconomy(incoming: JsonRecord, current: JsonRecord): JsonRecord {
   const currentLevel = playerLevelForXp(integer(current.xp));
+  const currentEvolutionStage = Math.max(1, Math.min(10, integer(current.evolutionStage, 1)));
   const minigameDaily = normalizeMinigameDailyState(current.minigameDaily, Date.now(), currentLevel);
-  if (integer(current.economyVersion) < 1) return { ...incoming, minigameDaily };
+  const characterProgress = {
+    characterPoints: normalizeCharacterPoints(current.characterPoints, current.personality),
+    characterDaily: normalizeCharacterDailyProgress(current.characterDaily, Date.now()),
+    characterProgressVersion: 1,
+  };
+  const evolutionProgress = {
+    evolutionStage: currentEvolutionStage,
+    activeEvolutionStage: Math.max(1, Math.min(
+      currentEvolutionStage,
+      integer(incoming.activeEvolutionStage, integer(current.activeEvolutionStage, currentEvolutionStage)),
+    )),
+  };
+  if (integer(current.economyVersion) < 1) {
+    return { ...incoming, ...evolutionProgress, minigameDaily, ...characterProgress };
+  }
   const oldWorld = asRecord(current.world);
   const newWorld = asRecord(incoming.world);
   const openedChestIds = stringArray(oldWorld.openedChestIds);
@@ -287,6 +316,8 @@ function preserveServerEconomy(incoming: JsonRecord, current: JsonRecord): JsonR
     ...incoming,
     economyVersion: 1,
     minigameDaily,
+    ...evolutionProgress,
+    ...characterProgress,
     world: {
       ...newWorld,
       keys: oldWorld.keys,
@@ -473,7 +504,7 @@ router.use((_req, res, next) => {
 });
 
 type EconomyMutation =
-  | { ok: true; saveData: JsonRecord; outcome: "key-purchased" | "chest-opened" | "daily-chest-claimed" | "minigame-completed" | "minigame-chest-claimed"; reward?: JsonRecord }
+  | { ok: true; saveData: JsonRecord; outcome: "key-purchased" | "chest-opened" | "daily-chest-claimed" | "minigame-completed" | "minigame-chest-claimed" | "character-points-awarded" | "evolution-purchased"; reward?: JsonRecord }
   | { ok: false; status: number; error: string };
 
 async function runEconomyAction(
@@ -793,6 +824,125 @@ router.post(
 );
 
 router.post(
+  "/online/economy/character/action",
+  requireSameOrigin,
+  limitRequests(120, 60_000),
+  async (req, res): Promise<void> => {
+    const parsed = EarnOnlineCharacterPointsBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Die Charakteraktion ist ungültig." });
+      return;
+    }
+    const { activity, toyId, requestId } = parsed.data;
+    if ((activity === "toy-use" && !toyId) || (activity !== "toy-use" && toyId !== undefined)) {
+      res.status(400).json({ error: "Spielzeug und Aktivität passen nicht zusammen." });
+      return;
+    }
+    const result = await runEconomyAction(playerId(res), requestId, "character-points-awarded", (save, now) => {
+      const award = awardCharacterActivity(save.characterPoints, save.characterDaily, activity, toyId, now);
+      if (!award.ok) {
+        const message = award.reason === "cooldown"
+          ? "Warte noch kurz, bevor du weitere Charakterpunkte sammelst."
+          : award.reason === "daily-cap"
+            ? "Das Tageslimit von 100 Charakterpunkten ist erreicht."
+            : "Für diese Aktion gibt es keine Charakterpunkte.";
+        return {
+          ok: false,
+          status: award.reason === "cooldown" ? 429 : award.reason === "invalid-activity" ? 400 : 409,
+          error: message,
+        };
+      }
+      return {
+        ok: true,
+        saveData: {
+          ...save,
+          characterPoints: award.characterPoints,
+          characterDaily: award.daily,
+          characterProgressVersion: 1,
+          lastUpdated: now,
+        },
+        outcome: "character-points-awarded",
+        reward: {
+          trait: award.trait,
+          points: award.points,
+          dailyEarned: award.daily.earned,
+          dailyCap: CHARACTER_DAILY_POINT_CAP,
+          day: award.daily.day,
+        },
+      };
+    });
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+    res.json(EarnOnlineCharacterPointsResponse.parse(result.response));
+  },
+);
+
+router.post(
+  "/online/economy/evolutions/purchase",
+  requireSameOrigin,
+  limitRequests(30, 60_000),
+  async (req, res): Promise<void> => {
+    const parsed = PurchaseOnlineEvolutionBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Die Evolutionsanfrage ist ungültig." });
+      return;
+    }
+    const { requestId } = parsed.data;
+    const result = await runEconomyAction(playerId(res), requestId, "evolution-purchased", (save, now) => {
+      const currentStage = Math.max(1, Math.min(CHARACTER_EVOLUTION_REQUIREMENTS.length, integer(save.evolutionStage, 1)));
+      const nextStage = CHARACTER_EVOLUTION_REQUIREMENTS[currentStage];
+      if (!nextStage) {
+        return { ok: false, status: 409, error: "Alle Evolutionsstufen sind bereits freigeschaltet." };
+      }
+      const level = playerLevelForXp(integer(save.xp));
+      if (level < nextStage.playerLevel) {
+        return { ok: false, status: 409, error: `Dafür brauchst du Spielerlevel ${nextStage.playerLevel}.` };
+      }
+      const characterPoints = normalizeCharacterPoints(save.characterPoints, save.personality);
+      const missingTraits = Object.entries(characterPoints)
+        .filter(([, points]) => points < nextStage.traitPointsRequired);
+      if (missingTraits.length) {
+        return { ok: false, status: 409, error: "Noch nicht alle fünf Charakterzüge erfüllen diese Evolutionsstufe." };
+      }
+      const coins = integer(save.coins);
+      if (coins < nextStage.coinCost) {
+        return { ok: false, status: 409, error: `Es fehlen noch ${(nextStage.coinCost - coins).toLocaleString("de-DE")} Münzen.` };
+      }
+      const unlockItem = nextStage.unlockItem;
+      const owned = stringArray(save.owned);
+      return {
+        ok: true,
+        saveData: {
+          ...save,
+          coins: coins - nextStage.coinCost,
+          evolutionStage: nextStage.stage,
+          activeEvolutionStage: nextStage.stage,
+          owned: unlockItem ? [...new Set([...owned, unlockItem])] : owned,
+          characterPoints,
+          characterProgressVersion: 1,
+          lastUpdated: now,
+        },
+        outcome: "evolution-purchased",
+        reward: {
+          stage: nextStage.stage,
+          playerLevel: nextStage.playerLevel,
+          traitPointsRequired: nextStage.traitPointsRequired,
+          coinCost: nextStage.coinCost,
+          ...(unlockItem ? { unlockItem } : {}),
+        },
+      };
+    });
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+    res.json(PurchaseOnlineEvolutionResponse.parse(result.response));
+  },
+);
+
+router.post(
   "/online/economy/minigames/complete",
   requireSameOrigin,
   limitRequests(120, 60_000),
@@ -1071,6 +1221,10 @@ router.put(
       saveSchema: CURRENT_SAVE_SCHEMA,
       evolutionStage,
       activeEvolutionStage: Math.max(1, Math.min(evolutionStage, integer(rawSaveData.activeEvolutionStage, evolutionStage))),
+      // First cloud import trusts only the pre-existing 0–100 personality as a one-time migration.
+      characterPoints: normalizeCharacterPoints(undefined, rawSaveData.personality),
+      characterDaily: normalizeCharacterDailyProgress(undefined, Date.now()),
+      characterProgressVersion: 1,
     };
     const userId = playerId(res);
     const result = await db.transaction(async (tx) => {
@@ -1169,6 +1323,10 @@ router.post(
       saveSchema: CURRENT_SAVE_SCHEMA,
       evolutionStage,
       activeEvolutionStage: Math.max(1, Math.min(evolutionStage, integer(rawSaveData.activeEvolutionStage, evolutionStage))),
+      // Never import client-submitted character totals; only migrate the legacy personality values.
+      characterPoints: normalizeCharacterPoints(undefined, rawSaveData.personality),
+      characterDaily: normalizeCharacterDailyProgress(rawSaveData.characterDaily, Date.now()),
+      characterProgressVersion: 1,
     };
     if (parsed.data.expectedRevision !== 0) {
       res.status(409).json({ error: "Ein bestehender Cloud-Spielstand wird nicht überschrieben." });

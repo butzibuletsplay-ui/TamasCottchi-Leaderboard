@@ -3,17 +3,23 @@ import { ArrowRight, Check, Coins, LockKeyhole, Sparkles, Star, Trophy } from 'l
 import type { FullPetData } from './data';
 import { EVOLUTION_STAGES, type EvolutionPurchaseResult } from './evolution';
 import { Scottchi } from './Scottchi';
-import { playerLevelProgress } from '@workspace/game-economy';
+import {
+  CHARACTER_DAILY_POINT_CAP, CHARACTER_TRAIT_IDS, normalizeCharacterDailyProgress, playerLevelProgress,
+} from '@workspace/game-economy';
+import { TRAITS } from './personality';
 
 type Props = {
   data: FullPetData;
   level: number;
-  onPurchase: () => EvolutionPurchaseResult;
+  accountLinked: boolean;
+  onConnectAccount: () => void;
+  onPurchase: () => Promise<EvolutionPurchaseResult>;
   onSelect: (stage: number) => void;
 };
 
-export function EvolutionPage({ data, level, onPurchase, onSelect }: Props) {
+export function EvolutionPage({ data, level, accountLinked, onConnectAccount, onPurchase, onSelect }: Props) {
   const [confirming, setConfirming] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [animatingStage, setAnimatingStage] = useState<number | null>(null);
   const [transitionFromStage, setTransitionFromStage] = useState<number | null>(null);
   const [error, setError] = useState('');
@@ -24,7 +30,10 @@ export function EvolutionPage({ data, level, onPurchase, onSelect }: Props) {
   const reachedMax = !next;
   const levelReady = !!next && level >= next.playerLevel;
   const coinsMissing = next ? Math.max(0, next.coinCost - data.coins) : 0;
-  const canPurchase = !!next && levelReady && coinsMissing === 0;
+  const missingTraits = next ? CHARACTER_TRAIT_IDS.filter((trait) => data.characterPoints[trait] < next.traitPointsRequired) : [];
+  const traitsReady = missingTraits.length === 0;
+  const canPurchase = !!next && accountLinked && levelReady && traitsReady && coinsMissing === 0;
+  const characterDaily = normalizeCharacterDailyProgress(data.characterDaily, Date.now());
   const levelProgress = playerLevelProgress(data.xp);
   const previousLevel = highest.playerLevel;
   const levelPercent = !next ? 100 : level >= next.playerLevel
@@ -40,19 +49,30 @@ export function EvolutionPage({ data, level, onPurchase, onSelect }: Props) {
     if (timer.current !== null) window.clearTimeout(timer.current);
   }, []);
 
-  function confirmPurchase() {
+  async function confirmPurchase() {
     if (!canPurchase || purchasePending.current) return;
     purchasePending.current = true;
+    setSubmitting(true);
     setError('');
-    const result = onPurchase();
+    let result: EvolutionPurchaseResult;
+    try {
+      result = await onPurchase();
+    } catch {
+      result = { ok: false, reason: 'sync', message: 'Der Server konnte die Entwicklung nicht bestätigen. Versuche es noch einmal.' };
+    }
     if (!result.ok) {
       purchasePending.current = false;
-      setError(result.reason === 'level' ? `Dafür brauchst du Spielerlevel ${next!.playerLevel}.`
-        : result.reason === 'coins' ? `Es fehlen noch ${Math.max(0, next!.coinCost - data.coins).toLocaleString('de-DE')} Münzen.`
-          : 'Alle Evolutionsstufen sind bereits erreicht.');
+      setSubmitting(false);
+      setError(result.message || (result.reason === 'account' ? 'Verknüpfe zuerst dein Online-Konto.'
+        : result.reason === 'traits' ? 'Noch nicht alle fünf Charakterzüge erfüllen diese Evolutionsstufe.'
+          : result.reason === 'sync' ? 'Der Server konnte die Entwicklung nicht bestätigen. Versuche es noch einmal.'
+            : result.reason === 'level' ? `Dafür brauchst du Spielerlevel ${next!.playerLevel}.`
+              : result.reason === 'coins' ? `Es fehlen noch ${Math.max(0, next!.coinCost - data.coins).toLocaleString('de-DE')} Münzen.`
+                : 'Alle Evolutionsstufen sind bereits erreicht.'));
       return;
     }
     setConfirming(false);
+    setSubmitting(false);
     setTransitionFromStage(data.activeEvolutionStage);
     setAnimatingStage(result.stage.stage);
     if (timer.current !== null) window.clearTimeout(timer.current);
@@ -105,23 +125,41 @@ export function EvolutionPage({ data, level, onPurchase, onSelect }: Props) {
       {!reachedMax && <div className="evolution-requirements">
         <div className="evolution-requirement-head">
           <strong>Freischaltung Stufe {next.stage}</strong>
-          <span>{levelReady ? 'Level erreicht' : `${Math.max(0, next.playerLevel - level)} Level fehlen`}</span>
+          <span>{levelReady && traitsReady && coinsMissing === 0 ? 'Alle Anforderungen erfüllt' : 'Noch nicht bereit'}</span>
+        </div>
+        <div className="evolution-trait-requirements">
+          {TRAITS.map((trait) => {
+            const value = data.characterPoints[trait.id];
+            const complete = value >= next.traitPointsRequired;
+            const percent = next.traitPointsRequired ? Math.min(100, value / next.traitPointsRequired * 100) : 100;
+            return <div className={`evolution-trait-row ${complete ? 'complete' : ''}`} key={trait.id}>
+              <div><span>{trait.name}</span><b>{value.toLocaleString('de-DE')} / {next.traitPointsRequired.toLocaleString('de-DE')}</b></div>
+              <div className="trait-bar"><i style={{ transform: `scaleX(${percent / 100})` }}/></div>
+            </div>;
+          })}
         </div>
         <div className="progress-track evolution-progress"><span style={{ width: `${levelPercent}%` }}/></div>
         <div className="evolution-costs">
           <span><Star size={14}/> Spielerlevel {level} / {next.playerLevel}</span>
           <span className={coinsMissing ? 'missing-coins' : ''}><Coins size={14}/> {data.coins.toLocaleString('de-DE')} / {next.coinCost.toLocaleString('de-DE')} Münzen</span>
+          <span>Heute: {characterDaily.earned}/{CHARACTER_DAILY_POINT_CAP} Charakterpunkte · noch {CHARACTER_DAILY_POINT_CAP - characterDaily.earned} · Reset 00:00 Berlin</span>
         </div>
         {coinsMissing > 0 && <p className="evolution-warning" data-testid="evolution-coins-missing">Noch {coinsMissing.toLocaleString('de-DE')} Münzen benötigt.</p>}
         {!levelReady && <p className="evolution-warning">Ab Spielerlevel {next.playerLevel} kannst du diese Entwicklung kaufen.</p>}
+        {!traitsReady && <p className="evolution-warning">Für diese Form fehlen noch Charakterpunkte bei {missingTraits.map((trait) => TRAITS.find((entry) => entry.id === trait)?.name).join(', ')}.</p>}
+        {!accountLinked && <div className="evolution-account-needed"><p>Charakterpunkte und neue Evolutionen sind nur mit verknüpftem Online-Konto servergesichert.</p><button className="button small" onClick={onConnectAccount}>Online-Konto verknüpfen</button></div>}
         {error && <p className="evolution-warning" role="alert">{error}</p>}
         <button
           className="button orange evolution-buy"
           onClick={() => { setError(''); setConfirming(true); }}
-          disabled={!canPurchase || animatingStage !== null}
+          disabled={!canPurchase || animatingStage !== null || submitting}
           data-testid="button-evolve"
         >
-          <Sparkles size={16}/>{animatingStage !== null ? 'Scottchi entwickelt sich …' : canPurchase ? 'Weiterentwickeln' : !levelReady ? `Ab Level ${next.playerLevel}` : 'Münzen sammeln'}
+          <Sparkles size={16}/>{animatingStage !== null ? 'Scottchi entwickelt sich …'
+            : canPurchase ? 'Weiterentwickeln'
+              : !accountLinked ? 'Online-Konto verknüpfen'
+                : !levelReady ? `Ab Level ${next.playerLevel}`
+                  : !traitsReady ? 'Charakterzüge entwickeln' : 'Münzen sammeln'}
         </button>
       </div>}
     </section>
@@ -143,6 +181,7 @@ export function EvolutionPage({ data, level, onPurchase, onSelect }: Props) {
             <div className="evolution-stage-info">
               <b>{stage.stage}. {stage.name}</b>
               <small>Level {stage.playerLevel}</small>
+              <small>{stage.traitPointsRequired.toLocaleString('de-DE')} Punkte je Charakterzug</small>
               <small>{stage.coinCost ? `${stage.coinCost.toLocaleString('de-DE')} Münzen` : 'Kostenlos'}</small>
             </div>
             {isReached
@@ -163,7 +202,7 @@ export function EvolutionPage({ data, level, onPurchase, onSelect }: Props) {
         {error && <p className="evolution-warning" role="alert">{error}</p>}
         <div className="dialog-actions">
           <button className="button ghost" onClick={() => setConfirming(false)} data-testid="button-cancel-evolution">Noch nicht</button>
-          <button className="button orange" onClick={confirmPurchase} data-testid="button-confirm-evolution"><Coins size={14}/> Für {next.coinCost.toLocaleString('de-DE')} entwickeln</button>
+          <button className="button orange" onClick={() => void confirmPurchase()} disabled={submitting} data-testid="button-confirm-evolution"><Coins size={14}/>{submitting ? 'Prüfe Voraussetzungen …' : `Für ${next.coinCost.toLocaleString('de-DE')} entwickeln`}</button>
         </div>
       </section>
     </div>}
