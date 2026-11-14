@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Box, Check, Info, Sparkles, X } from 'lucide-react';
 import type { FullPetData, Item } from './data';
 import { ITEMS } from './data';
+import { hasMaterialArt, MaterialArt } from './MaterialArt';
 
 type Props = {
   data: FullPetData;
@@ -61,12 +62,12 @@ export function InventoryPage({ data, onUse, onEquip, onPlace }: Props) {
     <p className="subline">Tippe einen Gegenstand an, um Herkunft, Seltenheit, Menge und verfügbare Aktionen zu sehen.</p>
     <div className="inventory-filters">{categories.map((name) => <button key={name} className={`room-chip ${filter === name ? 'selected' : ''}`} onClick={() => setFilter(name)}>{name}</button>)}</div>
     {items.length ? <div className="inventory-grid">{items.map((it) => <button key={it.id} className="inventory-card" onClick={() => setSelected(it.id)} data-testid={`inventory-item-${it.id}`}>
-      <span className={`item-icon ${it.img ? 'has-img' : ''}`}>{it.img ? <img src={it.img} alt="" loading="lazy"/> : it.icon}</span>
+      <span className={`item-icon ${it.img || hasMaterialArt(it) ? 'has-img' : ''}`}>{hasMaterialArt(it) ? <MaterialArt item={it} size={38}/> : it.img ? <img src={it.img} alt="" loading="lazy"/> : it.icon}</span>
       <strong>{it.name}</strong><small>{category(it)}</small><span className="inventory-quantity">×{quantity(data, it)}</span>
     </button>)}</div> : <div className="empty-state"><Box size={30}/><p>Hier ist noch nichts in dieser Kategorie.</p><button className="button" onClick={() => setFilter('Alle')}>Alle Gegenstände zeigen</button></div>}
     {item && <div className="quest-backdrop" role="presentation" onClick={() => setSelected(null)}><section className="inventory-detail panel" role="dialog" aria-modal="true" aria-labelledby="inventory-detail-name" onClick={(event) => event.stopPropagation()}>
       <button className="button small collection-close" onClick={() => setSelected(null)} aria-label="Schließen"><X size={16}/></button>
-      <div className={`inventory-detail-icon ${item.img ? 'has-img' : ''}`}>{item.img ? <img src={item.img} alt={item.name}/> : item.icon}</div>
+      <div className={`inventory-detail-icon ${item.img || hasMaterialArt(item) ? 'has-img' : ''}`}>{hasMaterialArt(item) ? <MaterialArt item={item} size={96}/> : item.img ? <img src={item.img} alt={item.name}/> : item.icon}</div>
       <div className="eyebrow">{category(item)}</div><h3 id="inventory-detail-name">{item.name}</h3>
       <span className="rarity-label">{rarity(item)}</span>
       <p>{item.desc || purpose(item)}</p>

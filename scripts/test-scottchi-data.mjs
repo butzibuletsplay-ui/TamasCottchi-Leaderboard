@@ -34,6 +34,17 @@ const craftBuild = await build({
   define: { 'import.meta.env.BASE_URL': '"/"' },
 });
 const craftingModule = await import(`data:text/javascript;base64,${Buffer.from(craftBuild.outputFiles[0].text).toString('base64')}`);
+const worldEngineBuild = await build({
+  entryPoints: ['artifacts/tamascottchi/src/game/worldEngine.ts'],
+  bundle: true, write: false, format: 'esm', platform: 'node',
+  define: { 'import.meta.env.BASE_URL': '"/"' },
+});
+const worldEngine = await import(`data:text/javascript;base64,${Buffer.from(worldEngineBuild.outputFiles[0].text).toString('base64')}`);
+const timeBuild = await build({
+  entryPoints: ['artifacts/tamascottchi/src/game/worldClock.ts'],
+  bundle: true, write: false, format: 'esm', platform: 'node',
+});
+const worldClock = await import(`data:text/javascript;base64,${Buffer.from(timeBuild.outputFiles[0].text).toString('base64')}`);
 const outfitBuild = await build({
   entryPoints: ['artifacts/tamascottchi/src/game/outfits.ts'],
   bundle: true, write: false, format: 'esm', platform: 'node',
@@ -132,7 +143,7 @@ test('schema 3 saves keep a raw 3.0 backup and preserve all old progress', () =>
   storage.set(STORE_KEY, raw);
   const next = loadData();
   assert.equal(storage.get(BACKUP_KEY_30), raw);
-  assert.equal(next.saveSchema, 5);
+  assert.equal(next.saveSchema, SAVE_SCHEMA);
   assert.deepEqual(next.owned, old.owned);
   assert.equal(next.coins, 987);
   assert.equal(next.xp, 432);
@@ -145,13 +156,28 @@ test('schema 4 saves get an untouched 4.0 backup and migrate the new persistent 
   storage.set(STORE_KEY, raw);
   const next = loadData();
   assert.equal(storage.get(BACKUP_KEY_40), raw);
-  assert.equal(next.saveSchema, 5);
+  assert.equal(next.saveSchema, SAVE_SCHEMA);
   assert.equal(next.coins, 321);
   assert.equal(next.inventory.shampoo, 1);
   assert.deepEqual(next.roomPlacements.plant, { x: 16, y: 67 });
   assert.deepEqual(next.journal, []);
   assert.deepEqual(next.world.activeQuests, []);
   assert.deepEqual(next.world.petPosition, { x: 32, y: 38 });
+});
+test('schema 5 saves get a 6.0 backup while retaining purchases and world progress', () => {
+  storage.clear();
+  const old = { ...initialData(), saveSchema: 5, coins: 275, owned: ['ball', 'crown'], inventory: { wood: 9, shell: 4 }, world: { ...initialData().world, discoveries: ['bone-cream'], completedQuests: ['park-bones'] } };
+  const raw = JSON.stringify(old);
+  storage.set(STORE_KEY, raw);
+  const next = loadData();
+  assert.equal(storage.get(dataModule.BACKUP_KEY_60), raw);
+  assert.equal(next.saveSchema, SAVE_SCHEMA);
+  assert.equal(next.coins, 275);
+  assert.deepEqual(next.owned, ['ball', 'crown']);
+  assert.equal(next.inventory.wood, 9);
+  assert.equal(next.inventory.shell, 4);
+  assert.deepEqual(next.world.discoveries, ['bone-cream']);
+  assert.deepEqual(next.world.completedQuests, ['park-bones']);
 });
 test('malformed quantities are clamped without dropping valid possessions', () => {
   const next = normalize({ ...initialData(), inventory: { wood: -5, cloth: 1.8, kibble: 'bad' }, owned: ['ball'] });
@@ -224,6 +250,7 @@ test('crafting spends exact ingredients, stores output, and blocks a second uniq
   assert.equal(crafted.data.inventory.wood, 0);
   assert.equal(crafted.data.inventory.cloth, 0);
   assert.ok(crafted.data.owned.includes('crafted-toy'));
+  assert.equal(crafted.data.world.weeklyMetrics.craft, 1);
   assert.equal(craftingModule.craftItem(crafted.data, 'forest-toy').error, 'Wald-Wurfseil hast du bereits hergestellt.');
   const denied = craftingModule.craftItem(base, 'shell-mobile');
   assert.match(denied.error, /fehlen noch/);
@@ -262,4 +289,163 @@ test('all wearable layers have an anchor fit for every mood and valid image asse
     const src = layerSrc(id);
     if (src) assert.ok(existsSync(`artifacts/tamascottchi/public/${src.startsWith('/') ? src.slice(1) : src}`), `missing layer asset for ${id}`);
   }
+});
+
+function worldDataAt(timestamp) {
+  const fresh = initialData();
+  return normalize({
+    ...fresh,
+    lastUpdated: timestamp,
+    world: { ...fresh.world, lastKnownWorldTime: timestamp, worldDay: worldClock.worldDayKey(timestamp), worldEvent: null, dailyGoals: [] },
+  });
+}
+
+test('world day uses the Berlin 04:00 reset, including the hour before it', () => {
+  assert.equal(worldClock.worldDayKey(Date.parse('2026-11-14T02:59:59+01:00')), '2026-11-13');
+  assert.equal(worldClock.worldDayKey(Date.parse('2026-11-14T04:00:00+01:00')), '2026-11-14');
+  assert.equal(worldClock.worldWeekKey(Date.parse('2026-11-16T03:59:59+01:00')), '2026-11-09');
+  assert.equal(worldClock.worldWeekKey(Date.parse('2026-11-16T04:00:00+01:00')), '2026-11-16');
+  assert.equal(worldClock.hoursRemaining(1000, 24, 1000 + 23 * 60 * 60 * 1000), 1);
+  assert.equal(worldClock.hoursRemaining(1000, 24, 1000 + 24 * 60 * 60 * 1000), 0);
+});
+
+test('resource nodes award once, stay exhausted until their configured respawn, then return', () => {
+  const start = Date.now() + 60_000;
+  const base = worldDataAt(start);
+  const first = worldEngine.collectResource(base, 'park-bones', start, 1);
+  assert.equal(first.outcome, 'collected');
+  assert.equal(first.quantity, 2);
+  assert.equal(first.data.inventory['bone-scrap'], (base.inventory['bone-scrap'] || 0) + 2);
+  assert.equal(worldEngine.collectResource(first.data, 'park-bones', start, 1).outcome, 'cooldown');
+  assert.equal(worldEngine.collectResource(first.data, 'park-bones', start + 23 * 60 * 60 * 1000, 1).outcome, 'cooldown');
+  const respawn = worldEngine.collectResource(first.data, 'park-bones', start + 24 * 60 * 60 * 1000, 1);
+  assert.equal(respawn.outcome, 'collected');
+  assert.equal(respawn.data.inventory['bone-scrap'], (base.inventory['bone-scrap'] || 0) + 4);
+});
+
+test('area mastery unlocks rare resource nodes instead of only showing a progress bar', () => {
+  const start = Date.now() + 60_000;
+  const base = worldDataAt(start);
+  assert.equal(worldEngine.collectResource(base, 'park-lost-coins', start, 1).outcome, 'locked');
+  const mastered = { ...base, world: { ...base.world, areaMastery: { ...base.world.areaMastery, park: 100 } } };
+  assert.equal(worldEngine.collectResource(mastered, 'park-lost-coins', start, 1).outcome, 'collected');
+});
+
+test('daily world reset is idempotent and keeps permanent progress and resources', () => {
+  const start = Date.now() + 60_000;
+  const base = worldDataAt(start);
+  const earned = worldEngine.collectResource(base, 'park-bones', start, 1).data;
+  const nextDay = start + 26 * 60 * 60 * 1000;
+  const firstReset = worldEngine.ensureWorldDay(earned, nextDay, 1);
+  const secondReset = worldEngine.ensureWorldDay(firstReset, nextDay, 1);
+  assert.equal(firstReset.world.worldDay, worldClock.worldDayKey(nextDay));
+  assert.deepEqual(secondReset.world.dailyMetrics, {});
+  assert.deepEqual(secondReset.world.dailyClaimed, []);
+  assert.deepEqual(secondReset.world.resourceCollectedAt, earned.world.resourceCollectedAt);
+  assert.equal(secondReset.inventory['bone-scrap'], earned.inventory['bone-scrap']);
+  assert.equal(secondReset.world.areaMastery.park, earned.world.areaMastery.park);
+});
+
+test('weekly goals reward once and reset separately from permanent progress', () => {
+  const start = Date.now() + 60_000;
+  const base = worldEngine.ensureWorldDay(worldDataAt(start), start, 1);
+  let progress = base;
+  for (let i = 0; i < 20; i += 1) progress = worldEngine.applyWeeklyMetric(progress, 'gather', 1, start, 1);
+  const rewardedCoins = progress.coins;
+  assert.ok(progress.world.weeklyClaimed.includes('weekly-gather'));
+  progress = worldEngine.applyWeeklyMetric(progress, 'gather', 1, start, 1);
+  assert.equal(progress.coins, rewardedCoins);
+  const nextWeek = worldEngine.ensureWorldDay(progress, start + 8 * 24 * 60 * 60 * 1000, 1);
+  assert.notEqual(nextWeek.world.weeklyKey, progress.world.weeklyKey);
+  assert.deepEqual(nextWeek.world.weeklyMetrics, {});
+  assert.deepEqual(nextWeek.world.weeklyClaimed, []);
+  assert.equal(nextWeek.coins, progress.coins);
+});
+
+test('an authenticated server clock repairs a locally advanced clock', () => {
+  const now = Date.now() + 60_000;
+  const future = now + 10 * 24 * 60 * 60 * 1000;
+  const base = worldDataAt(now);
+  const advanced = {
+    ...base,
+    world: {
+      ...base.world,
+      lastKnownWorldTime: future,
+      resourceCollectedAt: { ...base.world.resourceCollectedAt, 'park-bones': future },
+      worldDay: worldClock.worldDayKey(future),
+    },
+  };
+  const offline = worldEngine.ensureWorldDay(advanced, now, 1);
+  assert.equal(offline.world.lastKnownWorldTime, future);
+  const corrected = worldEngine.ensureWorldDay(advanced, now, 1, true);
+  assert.equal(corrected.world.lastKnownWorldTime, now);
+  assert.equal(corrected.world.worldDay, worldClock.worldDayKey(now));
+  assert.equal(worldEngine.collectResource(advanced, 'park-bones', now, 1, true).outcome, 'cooldown');
+});
+
+test('daily goals award only once and the daily event cannot be claimed twice', () => {
+  const start = Date.now() + 60_000;
+  const base = worldEngine.ensureWorldDay(worldDataAt(start), start, 1);
+  const goal = base.world.dailyGoals.find((id) => id === 'gather-three');
+  assert.ok(goal);
+  let progress = base;
+  for (let i = 0; i < 3; i += 1) progress = worldEngine.applyWorldMetric(progress, 'gather', 1, start, 1);
+  const rewardedCoins = progress.coins;
+  progress = worldEngine.applyWorldMetric(progress, 'gather', 1, start, 1);
+  assert.equal(progress.coins, rewardedCoins);
+  assert.ok(progress.world.dailyClaimed.includes(goal));
+  const event = worldEngine.claimWorldEvent(progress, start, 1);
+  assert.equal(event.outcome, 'claimed');
+  const eventItem = event.data.world.worldEvent.resourceId;
+  const itemCount = event.data.inventory[eventItem];
+  const duplicate = worldEngine.claimWorldEvent(event.data, start, 1);
+  assert.equal(duplicate.outcome, 'already-claimed');
+  assert.equal(duplicate.data.inventory[eventItem], itemCount);
+});
+
+test('area NPC orders consume the requested material and pay only once per world day', () => {
+  const start = Date.now() + 60_000;
+  const base = worldEngine.ensureWorldDay({
+    ...worldDataAt(start),
+    inventory: { 'bone-scrap': 1 },
+  }, start, 1);
+  const first = worldEngine.claimNpcRequest(base, 'park', start, 1);
+  assert.equal(first.outcome, 'claimed');
+  assert.equal(first.data.inventory['bone-scrap'], 0);
+  assert.equal(first.data.coins, base.coins + 8);
+  assert.equal(first.data.xp, base.xp + 7);
+  const duplicate = worldEngine.claimNpcRequest(first.data, 'park', start, 1);
+  assert.equal(duplicate.outcome, 'already-claimed');
+  assert.equal(duplicate.data.coins, first.data.coins);
+  assert.equal(worldEngine.claimNpcRequest(base, 'forest', start, 1).outcome, 'invalid');
+});
+
+test('fishing has a daily reward cap but remains available for practice', () => {
+  const start = Date.now() + 60_000;
+  let data = worldEngine.ensureWorldDay(worldDataAt(start), start, 8);
+  for (let count = 0; count < 3; count += 1) {
+    const catchResult = worldEngine.catchFish(data, 'fish-common', start, 8);
+    assert.equal(catchResult.outcome, 'caught');
+    data = catchResult.data;
+  }
+  const practiced = worldEngine.catchFish(data, 'fish-rare', start, 8);
+  assert.equal(practiced.outcome, 'practice');
+  assert.equal(practiced.data.inventory['fish-rare'] || 0, 0);
+  assert.equal(practiced.data.world.fishingRewardsToday, 3);
+});
+
+test('all 24 craft recipes resolve to defined usable game items', () => {
+  assert.equal(craftingModule.CRAFT_RECIPES.length, 24);
+  for (const recipe of craftingModule.CRAFT_RECIPES) {
+    const result = dataModule.itemById(recipe.result);
+    assert.ok(result, `${recipe.id} has a result`);
+    assert.ok(recipe.ingredients.every((ingredient) => dataModule.itemById(ingredient.id)), `${recipe.id} ingredients exist`);
+    assert.ok(['food', 'toy', 'room'].includes(result.type), `${recipe.id} creates something usable`);
+  }
+  const recipe = craftingModule.CRAFT_RECIPES.find((entry) => entry.id === 'fish-snack');
+  const base = normalize({ ...initialData(), inventory: { 'fish-common': 1, leaf: 1 } });
+  const crafted = craftingModule.craftItem(base, recipe.id);
+  assert.equal(crafted.error, undefined);
+  assert.equal(crafted.data.inventory['fish-common'], 0);
+  assert.equal(crafted.data.inventory['crafted-fish-snack'], 1);
 });

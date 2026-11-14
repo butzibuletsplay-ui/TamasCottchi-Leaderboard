@@ -2,6 +2,7 @@ import type { Mood } from './assets';
 import { hatUrl, neckUrl, outfitUrl, toyUrl } from './assets';
 import type { GameId } from './engine';
 import { absenceDecay, initialPersonality, type Personality } from './personality';
+import { worldDayKey, worldWeekKey } from './worldClock';
 
 export type Room = 'Wohnzimmer' | 'Küche' | 'Bad' | 'Schlafzimmer' | 'Spielzimmer';
 export type NeedKey = 'hunger' | 'glueck' | 'energie' | 'sauberkeit';
@@ -15,6 +16,7 @@ export type Item = {
 };
 export type DailyProgress = { feeds: number; games: number; baths: number; pets: number; coins: number };
 export type JournalEntry = { id: string; date: number; icon: string; title: string; detail: string };
+export type WorldEventState = { id: string; day: string; locationId: string; resourceId: string; quantity: number };
 export type PetData = {
   version: number; saveSchema?: number; name: string; needs: Record<NeedKey, number>; lastUpdated: number;
   coins: number; xp: number; inventory: Record<string, number>; owned: string[];
@@ -42,20 +44,38 @@ export type PetData = {
     activeQuests?: string[];
     questFinds?: Record<string, number[]>;
     questStages?: Record<string, string>;
+    resourceCollectedAt?: Record<string, number>;
+    worldDay?: string;
+    dailyGoals?: string[];
+    dailyMetrics?: Record<string, number>;
+    dailyClaimed?: string[];
+    dailyVisitedLocations?: string[];
+    dailyMasteryGained?: number;
+    weeklyKey?: string;
+    weeklyMetrics?: Record<string, number>;
+    weeklyClaimed?: string[];
+    areaMastery?: Record<string, number>;
+    worldEvent?: WorldEventState | null;
+    worldEventClaimedDay?: string;
+    fishingRewardsToday?: number;
+    lastKnownWorldTime?: number;
     petPosition: { x: number; y: number };
   };
   collectionIds?: string[];
 };
 export type FullPetData = PetData
   & Required<Pick<PetData, 'personality' | 'visitedRooms' | 'routine' | 'stylesWorn' | 'world' | 'collectionIds' | 'journal' | 'roomPlacements' | 'tutorialSeen'>>
-  & { world: Required<NonNullable<PetData['world']>> };
+  & { world: Required<NonNullable<PetData['world']>> & Required<Pick<NonNullable<PetData['world']>,
+    'resourceCollectedAt' | 'worldDay' | 'dailyGoals' | 'dailyMetrics' | 'dailyClaimed' | 'dailyVisitedLocations' |
+    'dailyMasteryGained' | 'weeklyKey' | 'weeklyMetrics' | 'weeklyClaimed' | 'areaMastery' | 'worldEvent' | 'worldEventClaimedDay' | 'fishingRewardsToday' | 'lastKnownWorldTime'>> };
 
 export const STORE_KEY = 'tamascottchi-save-v1';
 export const BACKUP_KEY = 'tamascottchi-save-v1-backup-before-2.0';
 export const BACKUP_KEY_21 = 'tamascottchi-save-v1-backup-before-2.1';
 export const BACKUP_KEY_30 = 'tamascottchi-save-v1-backup-before-3.0';
-export const SAVE_SCHEMA = 5;
+export const SAVE_SCHEMA = 6;
 export const BACKUP_KEY_40 = 'tamascottchi-save-v1-backup-before-4.0';
+export const BACKUP_KEY_60 = 'tamascottchi-save-v1-backup-before-6.0';
 export const LOCATIONS = [
   { id: 'park', name: 'Scottchi Park', level: 1, point: { x: 25, y: 29 }, desc: 'Der erste Spaziergang: Wege, Wiesen und verlorene Knochen.' },
   { id: 'city', name: 'Scottchi City', level: 3, point: { x: 45, y: 53 }, desc: 'Ein lebendiger Platz für kleine Besorgungen.' },
@@ -138,16 +158,47 @@ export const ITEMS: Item[] = [
   { id: 'beach', name: 'Sonniger Strand', icon: '≈', price: 54, type: 'background' },
   { id: 'night', name: 'Dunkles Zimmer', icon: '☾', price: 48, type: 'background', unlockLevel: 2 },
   { id: 'fantasy', name: 'Fantasiewelt', icon: '✦', price: 68, type: 'background', unlockLevel: 3 },
-  { id: 'bone-scrap', name: 'Knochenfund', icon: '🦴', price: 0, type: 'material', rarity: 'Ungewöhnlich', origin: 'Scottchi Park', purpose: 'Werkstoff für Spielzeug', stackable: true },
-  { id: 'wood', name: 'Astholz', icon: '🪵', price: 0, type: 'material', rarity: 'Gewöhnlich', origin: 'Scottchi Park und Wald', purpose: 'Werkstoff für Spielzeug', stackable: true },
-  { id: 'cloth', name: 'Stoffstück', icon: '🧵', price: 0, type: 'material', rarity: 'Gewöhnlich', origin: 'Scottchi Park und Stadt', purpose: 'Werkstoff für Spielzeug', stackable: true },
-  { id: 'crystal-shard', name: 'Kristallsplitter', icon: '💎', price: 0, type: 'material', rarity: 'Selten', origin: 'Stadt und Erkundungsfunde', purpose: 'Seltenes Crafting-Material', stackable: true },
-  { id: 'gold-fragment', name: 'Goldstück', icon: '✨', price: 0, type: 'material', rarity: 'Selten', origin: 'Stadt und Waldrätsel', purpose: 'Seltenes Crafting-Material', stackable: true },
-  { id: 'shell', name: 'Muschel', icon: '🐚', price: 0, type: 'material', rarity: 'Gewöhnlich', origin: 'Scottchi Beach', purpose: 'Werkstoff für Stranddeko', stackable: true },
-  { id: 'rope-fiber', name: 'Seilfaser', icon: '🪢', price: 0, type: 'material', rarity: 'Ungewöhnlich', origin: 'Scottchi Beach', purpose: 'Werkstoff für Stranddeko', stackable: true },
+  { id: 'bone-scrap', name: 'Knochenfund', icon: '●', price: 0, type: 'material', rarity: 'Ungewöhnlich', origin: 'Scottchi Park', purpose: 'Werkstoff für Spielzeug und Leckerlis', stackable: true },
+  { id: 'wood', name: 'Astholz', icon: '▰', price: 0, type: 'material', rarity: 'Gewöhnlich', origin: 'Scottchi Park und Wald', purpose: 'Werkstoff für Spielzeug und Möbel', stackable: true },
+  { id: 'cloth', name: 'Stoffstück', icon: '▧', price: 0, type: 'material', rarity: 'Gewöhnlich', origin: 'Scottchi Park und Stadt', purpose: 'Werkstoff für Spielzeug und Schlafplätze', stackable: true },
+  { id: 'crystal-shard', name: 'Kristallsplitter', icon: '◆', price: 0, type: 'material', rarity: 'Selten', origin: 'Crystal Cave', purpose: 'Seltenes Crafting-Material für Spielzeug und Dekoration', stackable: true },
+  { id: 'gold-fragment', name: 'Goldstück', icon: '●', price: 0, type: 'material', rarity: 'Selten', origin: 'Stadt und Waldrätsel', purpose: 'Wertvolles Crafting-Material', stackable: true },
+  { id: 'shell', name: 'Muschel', icon: '◉', price: 0, type: 'material', rarity: 'Gewöhnlich', origin: 'Scottchi Beach', purpose: 'Werkstoff für Stranddeko und Klangspielzeug', stackable: true },
+  { id: 'rope-fiber', name: 'Seilfaser', icon: '≋', price: 0, type: 'material', rarity: 'Ungewöhnlich', origin: 'Scottchi Beach und Scottchi Forest', purpose: 'Werkstoff für Spielzeug und Dekoration', stackable: true },
+  { id: 'mushroom', name: 'Waldpilz', icon: '●', price: 0, type: 'material', rarity: 'Gewöhnlich', origin: 'Scottchi Forest', purpose: 'Zutat für Wald-Leckerlis und Höhlenlampen', stackable: true },
+  { id: 'leaf', name: 'Herbstblatt', icon: '◆', price: 0, type: 'material', rarity: 'Gewöhnlich', origin: 'Scottchi Forest', purpose: 'Werkstoff für Bettchen und Spielzeug', stackable: true },
+  { id: 'wildflower', name: 'Wiesenblume', icon: '✿', price: 0, type: 'material', rarity: 'Ungewöhnlich', origin: 'Scottchi Park und Scottchi Forest', purpose: 'Zutat für besondere Leckerlis und Deko', stackable: true },
+  { id: 'pearl', name: 'Perle', icon: '●', price: 0, type: 'material', rarity: 'Selten', origin: 'Scottchi Beach', purpose: 'Wertvolle Zutat für Strandfunde und Deko', stackable: true },
+  { id: 'driftwood', name: 'Treibholz', icon: '▰', price: 0, type: 'material', rarity: 'Ungewöhnlich', origin: 'Scottchi Beach', purpose: 'Werkstoff für langlebige Zimmerdeko', stackable: true },
+  { id: 'ore', name: 'Berg-Erz', icon: '◆', price: 0, type: 'material', rarity: 'Ungewöhnlich', origin: 'Mystery Mountain', purpose: 'Werkstoff für robuste Spielzeuge und Lampen', stackable: true },
+  { id: 'fossil', name: 'Fossilfund', icon: '●', price: 0, type: 'material', rarity: 'Selten', origin: 'Scottchi Beach und Mystery Mountain', purpose: 'Sammlerstück und Zutat für seltenes Spielzeug', stackable: true },
+  { id: 'old-coin', name: 'Alte Münze', icon: '●', price: 0, type: 'material', rarity: 'Ungewöhnlich', origin: 'Scottchi City und Scottchi Park', purpose: 'Tauschgut für Werkstattrezepte', stackable: true },
+  { id: 'berry', name: 'Waldbeere', icon: '●', price: 0, type: 'material', rarity: 'Gewöhnlich', origin: 'Scottchi Forest', purpose: 'Zutat für Scottchi-Leckerlis', stackable: true },
+  { id: 'fish-common', name: 'Silberfisch', icon: '◆', price: 0, type: 'material', rarity: 'Gewöhnlich', origin: 'Scottchi Beach · Angeln', purpose: 'Zutat für nahrhafte Leckerlis', stackable: true },
+  { id: 'fish-rare', name: 'Mondfisch', icon: '◆', price: 0, type: 'material', rarity: 'Selten', origin: 'Scottchi Beach · Angeln', purpose: 'Seltene Zutat für besondere Leckerlis', stackable: true },
   { id: 'crafted-toy', name: 'Wald-Wurfseil', icon: '🪢', price: 0, type: 'toy', img: toyUrl('rope'), desc: 'Ein handgemachtes Zerrspielzeug aus Holz und Stoff.', rarity: 'Ungewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: false, craftOnly: true },
   { id: 'shell-decor', name: 'Muschel-Mobile', icon: '🐚', price: 0, type: 'room', desc: 'Ein selbstgemachtes Mobile aus Strandfunden.', rarity: 'Selten', origin: 'Werkstatt · Crafting', purpose: 'Dekoration für dein Zimmer', stackable: false, craftOnly: true },
   { id: 'magic-treat', name: 'Kristall-Leckerli', icon: '✨', price: 0, type: 'food', amount: 1, effects: { glueck: 18, energie: 8 }, desc: 'Ein glitzernder Snack, der Scottchi aufmuntert.', rarity: 'Episch', origin: 'Werkstatt · Crafting', purpose: 'Einmalig Laune und Energie auffüllen', stackable: true, craftOnly: true },
+  { id: 'crafted-shell-rattle', name: 'Muschel-Rassel', icon: '◉', price: 0, type: 'toy', img: toyUrl('rope'), desc: 'Ein sanft klingendes Zerrspielzeug aus Muscheln.', rarity: 'Ungewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: false, craftOnly: true },
+  { id: 'crafted-gem-ball', name: 'Kristall-Ball', icon: '●', price: 0, type: 'toy', img: toyUrl('tennisball'), desc: 'Ein federnder Ball mit schimmerndem Kern.', rarity: 'Selten', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: false, craftOnly: true },
+  { id: 'crafted-bone-puzzle', name: 'Knochen-Puzzle', icon: '●', price: 0, type: 'toy', img: toyUrl('bone'), desc: 'Ein robustes Suchspiel aus Knochenfunden.', rarity: 'Ungewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: false, craftOnly: true },
+  { id: 'crafted-leaf-frisbee', name: 'Blatt-Frisbee', icon: '◎', price: 0, type: 'toy', img: toyUrl('frisbee'), desc: 'Ein leichtes Wurfspielzeug aus gepressten Blättern.', rarity: 'Gewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: false, craftOnly: true },
+  { id: 'crafted-fossil-chew', name: 'Fossil-Kauknochen', icon: '●', price: 0, type: 'toy', img: toyUrl('bone'), desc: 'Ein seltenes Kauspielzeug mit Fossil-Muster.', rarity: 'Selten', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: false, craftOnly: true },
+  { id: 'crafted-berry-bone', name: 'Beeren-Knochen-Keks', icon: '●', price: 0, type: 'food', amount: 18, effect: 'hunger', desc: 'Ein knuspriger Snack mit Waldbeeren.', rarity: 'Gewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Wird verbraucht und füllt Sattheit.', stackable: true, craftOnly: true },
+  { id: 'crafted-mushroom-biscuit', name: 'Pilz-Keks', icon: '●', price: 0, type: 'food', amount: 22, effect: 'hunger', desc: 'Ein herzhafter Keks aus Waldpilzen.', rarity: 'Ungewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Wird verbraucht und füllt Sattheit.', stackable: true, craftOnly: true },
+  { id: 'crafted-fish-snack', name: 'Fisch-Snack', icon: '●', price: 0, type: 'food', amount: 28, effect: 'hunger', desc: 'Ein kräftigender Snack aus frischem Fang.', rarity: 'Ungewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Wird verbraucht und füllt Sattheit.', stackable: true, craftOnly: true },
+  { id: 'crafted-pearl-treat', name: 'Perlen-Leckerli', icon: '●', price: 0, type: 'food', amount: 32, effect: 'hunger', effects: { glueck: 6 }, desc: 'Ein seltener Snack für einen glücklichen Scottchi.', rarity: 'Selten', origin: 'Werkstatt · Crafting', purpose: 'Wird verbraucht und füllt Sattheit und Laune.', stackable: true, craftOnly: true },
+  { id: 'crafted-flower-cookie', name: 'Blüten-Keks', icon: '●', price: 0, type: 'food', amount: 20, effect: 'hunger', effects: { glueck: 8 }, desc: 'Ein leichter Keks mit duftenden Blüten.', rarity: 'Ungewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Wird verbraucht und füllt Sattheit und Laune.', stackable: true, craftOnly: true },
+  { id: 'crafted-forest-bed', name: 'Waldnest', icon: '▰', price: 0, type: 'room', desc: 'Ein weiches Nest aus Stoff und Blättern.', rarity: 'Ungewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Dekoration für dein Zimmer', stackable: false, craftOnly: true },
+  { id: 'crafted-crystal-lamp', name: 'Kristall-Laterne', icon: '✦', price: 0, type: 'room', desc: 'Eine warme kleine Laterne mit Kristallkern.', rarity: 'Selten', origin: 'Werkstatt · Crafting', purpose: 'Dekoration für dein Zimmer', stackable: false, craftOnly: true },
+  { id: 'crafted-flower-planter', name: 'Blumentopf', icon: '✿', price: 0, type: 'room', desc: 'Ein bepflanzter Topf voller Wiesenblumen.', rarity: 'Ungewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Dekoration für dein Zimmer', stackable: false, craftOnly: true },
+  { id: 'crafted-driftwood-shelf', name: 'Treibholz-Regal', icon: '▰', price: 0, type: 'room', desc: 'Ein kleines Regal aus glatt geschliffenem Treibholz.', rarity: 'Selten', origin: 'Werkstatt · Crafting', purpose: 'Dekoration für dein Zimmer', stackable: false, craftOnly: true },
+  { id: 'crafted-pearl-mirror', name: 'Perlen-Spiegel', icon: '◉', price: 0, type: 'room', desc: 'Ein glänzender Spiegel mit Muschelrand.', rarity: 'Episch', origin: 'Werkstatt · Crafting', purpose: 'Dekoration für dein Zimmer', stackable: false, craftOnly: true },
+  { id: 'crafted-mushroom-lamp', name: 'Pilz-Licht', icon: '✦', price: 0, type: 'room', desc: 'Ein freundliches Licht aus einer leuchtenden Höhlenkappe.', rarity: 'Ungewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Dekoration für dein Zimmer', stackable: false, craftOnly: true },
+  { id: 'crafted-ore-toy', name: 'Erz-Klapper', icon: '●', price: 0, type: 'toy', img: toyUrl('duck'), desc: 'Ein robustes Klapperspielzeug aus leichtem Berg-Erz.', rarity: 'Selten', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: false, craftOnly: true },
+  { id: 'crafted-fossil-treat', name: 'Fossil-Keks', icon: '●', price: 0, type: 'food', amount: 26, effect: 'hunger', desc: 'Ein knuspriger Keks in Knochenform.', rarity: 'Selten', origin: 'Werkstatt · Crafting', purpose: 'Wird verbraucht und füllt Sattheit.', stackable: true, craftOnly: true },
+  { id: 'crafted-berry-juice', name: 'Beeren-Smoothie', icon: '●', price: 0, type: 'food', amount: 16, effect: 'hunger', effects: { energie: 8 }, desc: 'Ein fruchtiger Energieschub für unterwegs.', rarity: 'Gewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Wird verbraucht und füllt Sattheit und Energie.', stackable: true, craftOnly: true },
+  { id: 'crafted-ocean-decor', name: 'Strand-Mobile', icon: '◉', price: 0, type: 'room', desc: 'Ein Mobile aus Perlen, Muscheln und Treibholz.', rarity: 'Episch', origin: 'Werkstatt · Crafting', purpose: 'Dekoration für dein Zimmer', stackable: false, craftOnly: true },
 ];
 export const itemById = (id: string) => ITEMS.find((i) => i.id === id);
 
@@ -186,7 +237,14 @@ export const initialData = (): FullPetData => ({
   highscores: {}, challenges: {},
   personality: initialPersonality(), visitedRooms: ['Wohnzimmer'],
   routine: { greetedDate: '', surpriseDate: today(), surprises: 0, lastSeen: Date.now() }, stylesWorn: [],
-   world: { discoveredLocations: [], completedQuests: [], discoveries: [], questProgress: {}, claimedRewards: [], activeQuests: [], questFinds: {}, questStages: {}, petPosition: { x: 32, y: 38 } },
+   world: {
+    discoveredLocations: [], completedQuests: [], discoveries: [], questProgress: {}, claimedRewards: [],
+    activeQuests: [], questFinds: {}, questStages: {}, resourceCollectedAt: {},
+    worldDay: worldDayKey(Date.now()), dailyGoals: [], dailyMetrics: {}, dailyClaimed: [], dailyVisitedLocations: [],
+     dailyMasteryGained: 0, weeklyKey: worldWeekKey(Date.now()), weeklyMetrics: {}, weeklyClaimed: [],
+     areaMastery: {}, worldEvent: null, worldEventClaimedDay: '',
+    fishingRewardsToday: 0, lastKnownWorldTime: Date.now(), petPosition: { x: 32, y: 38 },
+   },
   journal: [], roomPlacements: {}, tutorialSeen: false, collectionIds: [],
 });
 
@@ -246,6 +304,24 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
       activeQuests: [...new Set(parsed.world?.activeQuests || [])],
       questFinds: Object.fromEntries(Object.entries(parsed.world?.questFinds || {}).map(([id, indexes]) => [id, Array.isArray(indexes) ? [...new Set(indexes.filter((n) => Number.isInteger(n) && n >= 0 && n < 10))] : []])),
       questStages: { ...(parsed.world?.questStages || {}) },
+      resourceCollectedAt: Object.fromEntries(Object.entries(parsed.world?.resourceCollectedAt || {}).filter(([, value]) => Number.isFinite(value) && Number(value) >= 0).map(([id, value]) => [id, Number(value)])),
+      worldDay: typeof parsed.world?.worldDay === 'string' ? parsed.world.worldDay : worldDayKey(Math.max(now, num(parsed.world?.lastKnownWorldTime, now))),
+      dailyGoals: Array.isArray(parsed.world?.dailyGoals) ? [...new Set(parsed.world.dailyGoals.filter((id) => typeof id === 'string'))] : [],
+      dailyMetrics: Object.fromEntries(Object.entries(parsed.world?.dailyMetrics || {}).filter(([, value]) => Number.isFinite(value) && Number(value) >= 0).map(([id, value]) => [id, Math.floor(Number(value))])),
+      dailyClaimed: [...new Set(parsed.world?.dailyClaimed || [])],
+      dailyVisitedLocations: [...new Set(parsed.world?.dailyVisitedLocations || [])],
+      dailyMasteryGained: Math.max(0, Math.floor(num(parsed.world?.dailyMasteryGained, 0))),
+      weeklyKey: typeof parsed.world?.weeklyKey === 'string' ? parsed.world.weeklyKey : worldWeekKey(Math.max(now, num(parsed.world?.lastKnownWorldTime, now))),
+      weeklyMetrics: Object.fromEntries(Object.entries(parsed.world?.weeklyMetrics || {}).filter(([, value]) => Number.isFinite(value) && Number(value) >= 0).map(([id, value]) => [id, Math.floor(Number(value))])),
+      weeklyClaimed: [...new Set(parsed.world?.weeklyClaimed || [])],
+      areaMastery: Object.fromEntries(Object.entries(parsed.world?.areaMastery || {}).filter(([, value]) => Number.isFinite(value) && Number(value) >= 0).map(([id, value]) => [id, Math.floor(Number(value))])),
+      worldEvent: parsed.world?.worldEvent && typeof parsed.world.worldEvent.id === 'string' && typeof parsed.world.worldEvent.day === 'string'
+        && typeof parsed.world.worldEvent.locationId === 'string' && typeof parsed.world.worldEvent.resourceId === 'string'
+        && Number.isFinite(parsed.world.worldEvent.quantity) && parsed.world.worldEvent.quantity > 0
+        ? { ...parsed.world.worldEvent, quantity: Math.floor(parsed.world.worldEvent.quantity) } : null,
+      worldEventClaimedDay: typeof parsed.world?.worldEventClaimedDay === 'string' ? parsed.world.worldEventClaimedDay : '',
+      fishingRewardsToday: Math.max(0, Math.floor(num(parsed.world?.fishingRewardsToday, 0))),
+      lastKnownWorldTime: Math.max(num(parsed.world?.lastKnownWorldTime, now), num(parsed.lastUpdated, now)),
       petPosition: {
         x: Math.max(3, Math.min(97, num(parsed.world?.petPosition?.x, d.world.petPosition.x))),
         y: Math.max(3, Math.min(97, num(parsed.world?.petPosition?.y, d.world.petPosition.y))),
@@ -283,7 +359,8 @@ export function loadData(): FullPetData {
     if (!parsed.saveSchema && !localStorage.getItem(BACKUP_KEY)) localStorage.setItem(BACKUP_KEY, raw);
     if ((parsed.saveSchema || 0) < 3 && !localStorage.getItem(BACKUP_KEY_21)) localStorage.setItem(BACKUP_KEY_21, raw);
     if ((parsed.saveSchema || 0) < 4 && !localStorage.getItem(BACKUP_KEY_30)) localStorage.setItem(BACKUP_KEY_30, raw);
-    if ((parsed.saveSchema || 0) < SAVE_SCHEMA && !localStorage.getItem(BACKUP_KEY_40)) localStorage.setItem(BACKUP_KEY_40, raw);
+    if ((parsed.saveSchema || 0) < 5 && !localStorage.getItem(BACKUP_KEY_40)) localStorage.setItem(BACKUP_KEY_40, raw);
+    if ((parsed.saveSchema || 0) < 6 && !localStorage.getItem(BACKUP_KEY_60)) localStorage.setItem(BACKUP_KEY_60, raw);
     return normalize(parsed);
   } catch (cause) {
     // Never replace an unreadable save with a new game through the autosave effect.

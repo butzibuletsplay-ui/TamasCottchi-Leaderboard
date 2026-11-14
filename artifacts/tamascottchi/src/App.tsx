@@ -29,6 +29,7 @@ import { InventoryPage } from './game/InventoryPage';
 import { JournalPage } from './game/JournalPage';
 import { recordJournal } from './game/journal';
 import { completeQuestAction } from './game/questEngine';
+import { hasMaterialArt, MaterialArt } from './game/MaterialArt';
 import { getGetOnlineProfileQueryKey, getGetOnlineSaveQueryKey, useGetOnlineProfile, useGetOnlineSave, useUpdateOnlineSave } from '@workspace/api-client-react';
 import { OnlinePage } from './game/OnlinePage';
 type PetData = FullPetData;
@@ -57,6 +58,12 @@ const TOY_USE: Record<string, ToyUse> = {
   teddy: { action: 'cuddle', line: 'Mein bester Freund.', fx: 'bounce', need: { glueck: 9, energie: 2 }, freq: 460, cooldown: 20 },
   shampoo: { action: 'washing', line: 'Duftet nach Kokos!', fx: 'shake', need: { sauberkeit: 45, glueck: 3 }, freq: 760, room: 'Bad', cooldown: 90 },
   'crafted-toy': { action: 'wiggle', line: 'Das ist selbst gemacht! Noch eine Runde!', fx: 'shake', need: { glueck: 18, energie: -7 }, energy: 12, freq: 400, cooldown: 25 },
+  'crafted-shell-rattle': { action: 'wiggle', line: 'Das klingt wie ein kleiner Strand!', fx: 'shake', need: { glueck: 14, energie: -4 }, energy: 8, freq: 610, cooldown: 18 },
+  'crafted-gem-ball': { action: 'run', line: 'Der glitzert sogar beim Rollen!', fx: 'throw', need: { glueck: 16, energie: -5 }, energy: 9, freq: 740, cooldown: 20, room: 'Spielzimmer' },
+  'crafted-bone-puzzle': { action: 'chew', line: 'Ein Knochen mit kniffligem Muster!', fx: 'bounce', need: { glueck: 15, hunger: 2 }, freq: 480, cooldown: 18 },
+  'crafted-leaf-frisbee': { action: 'run', line: 'Einmal durch den Blätterwirbel!', fx: 'arc', need: { glueck: 14, energie: -5 }, energy: 10, freq: 790, cooldown: 20, room: 'Spielzimmer' },
+  'crafted-fossil-chew': { action: 'chew', line: 'Ein Fundstück zum Anknabbern!', fx: 'bounce', need: { glueck: 17, hunger: 2 }, freq: 440, cooldown: 24 },
+  'crafted-ore-toy': { action: 'happy', line: 'Das klappert schön!', fx: 'bounce', need: { glueck: 12 }, freq: 900, slide: 650, cooldown: 15 },
 };
 
 function advanceDaily(data: PetData, id: keyof DailyProgress, amount = 1): PetData {
@@ -86,7 +93,8 @@ function applyNeeds(needs: PetData['needs'], delta: Partial<Record<NeedKey, numb
 }
 
 function ItemIcon({ item }: { item: Item }) {
-  return <div className={`item-icon ${item.img ? 'has-img' : ''}`}>{item.img ? <img src={item.img} alt="" loading="lazy"/> : item.icon}</div>;
+  const illustrated = hasMaterialArt(item);
+  return <div className={`item-icon ${item.img || illustrated ? 'has-img' : ''}`}>{illustrated ? <MaterialArt item={item} size={38}/> : item.img ? <img src={item.img} alt="" loading="lazy"/> : item.icon}</div>;
 }
 
 const TOY_TRAIT: Record<string, Trait> = { ball: 'verspielt', 'bone-toy': 'verspielt', duck: 'frech', rope: 'frech', frisbee: 'neugierig', teddy: 'anhaenglich', shampoo: 'anhaenglich' };
@@ -138,6 +146,7 @@ function Game({ initial }: { initial: PetData }) {
   const { user } = useUser();
   const queryClient = useQueryClient();
   const onlineUserId = isSignedIn ? user?.id ?? null : null;
+  const [serverClockOffsetMs, setServerClockOffsetMs] = useState<number | null>(null);
   const onlineProfileQuery = useGetOnlineProfile({
     query: { enabled: !!onlineUserId, queryKey: getGetOnlineProfileQueryKey(), retry: false },
   });
@@ -184,6 +193,30 @@ function Game({ initial }: { initial: PetData }) {
     }
     setCloudLink(null);
     setCloudSyncStatus('checking');
+  }, [onlineUserId]);
+
+  useEffect(() => {
+    let active = true;
+    if (!onlineUserId) {
+      setServerClockOffsetMs(null);
+      return;
+    }
+    const syncServerClock = async () => {
+      const startedAt = Date.now();
+      try {
+        const response = await fetch('/api/healthz', { cache: 'no-store' });
+        const receivedAt = Date.now();
+        const serverTime = Date.parse(response.headers.get('date') || '');
+        if (response.ok && Number.isFinite(serverTime) && active) {
+          setServerClockOffsetMs(serverTime + (receivedAt - startedAt) / 2 - receivedAt);
+        }
+      } catch {
+        // Keep the last successful estimate; local play still works while offline.
+      }
+    };
+    void syncServerClock();
+    const timer = window.setInterval(() => void syncServerClock(), 5 * 60 * 1000);
+    return () => { active = false; window.clearInterval(timer); };
   }, [onlineUserId]);
 
   useEffect(() => {
@@ -510,7 +543,7 @@ function Game({ initial }: { initial: PetData }) {
       const bowl = data.owned.includes('bowl') ? 1.25 : 1;
       setData((old) => advanceDaily({
         ...old, inventory: { ...old.inventory, [food.id]: Math.max(0, (old.inventory[food.id] || 0) - 1) },
-        needs: { ...old.needs, hunger: clamp(old.needs.hunger + (food.amount || 12) * bowl) }, xp: old.xp + 9, stats: { ...old.stats, care: old.stats.care + 1 },
+        needs: applyNeeds({ ...old.needs, hunger: clamp(old.needs.hunger + (food.amount || 12) * bowl) }, food.effects || {}), xp: old.xp + 9, stats: { ...old.stats, care: old.stats.care + 1 },
       }, 'feeds'));
       showPetAction('eating', showsTrait ? FOOD_LINES[trait] : `Mmmh, ${food.name.toLowerCase()}!`, 2000);
       if (showsTrait && trait === 'frech') grow('frech', 0.3);
@@ -804,7 +837,7 @@ function Game({ initial }: { initial: PetData }) {
       : <div key={data.room + data.activeBackground} className="room-css"><div className="room-sky"/><div className="room-floor"/><div className="room-window"/><div className="room-art">W</div><div className="rug"/></div>}
     {roomDecor.map((item, i) => {
       const pos = dragPosition?.id === item.id ? dragPosition : data.roomPlacements[item.id] || { x: 16 + (i % 5) * 16, y: 70 };
-      return <button className="room-item" key={item.id} style={{ left: `${pos.x}%`, top: `${pos.y}%` }} title={`${item.name} · zum Verschieben ziehen`} aria-label={`${item.name} verschieben`} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); dragDecor.current = { id: item.id, pointerId: event.pointerId }; }} onPointerUp={finishDecorDrag} onPointerCancel={finishDecorDrag} data-testid={`room-decor-${item.id}`}>{item.img ? <img src={item.img} alt=""/> : item.icon}</button>;
+      return <button className="room-item" key={item.id} style={{ left: `${pos.x}%`, top: `${pos.y}%` }} title={`${item.name} · zum Verschieben ziehen`} aria-label={`${item.name} verschieben`} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); dragDecor.current = { id: item.id, pointerId: event.pointerId }; }} onPointerUp={finishDecorDrag} onPointerCancel={finishDecorDrag} data-testid={`room-decor-${item.id}`}>{hasMaterialArt(item) ? <MaterialArt item={item} size={42}/> : item.img ? <img src={item.img} alt=""/> : item.icon}</button>;
     })}
     {data.owned.includes('bowl') && <img src={itemById('bowl')!.img} alt="Futternapf" className="scene-bowl"/>}
     <div className="room-badge">{data.room}</div>
@@ -832,7 +865,7 @@ function Game({ initial }: { initial: PetData }) {
 
   return <div className={`app-shell ${activeGame ? 'in-game' : ''}`}>
     <header className="topbar">
-      <div className="brand"><span className="brand-mark">t</span>tamascottchi <span className="version-pill">5.0</span></div>
+      <div className="brand"><span className="brand-mark">t</span>tamascottchi <span className="version-pill">6.0</span></div>
       <div className="topstats">
         <div className="stat-pill" data-testid="status-coins"><Coins size={16}/>{data.coins}</div>
         <div className="stat-pill" data-testid="status-level"><Star size={15}/><span>Lv. {level}</span></div>
@@ -845,7 +878,7 @@ function Game({ initial }: { initial: PetData }) {
         <div className="side-note"><strong>Level {level} · Scottchi-Fan</strong><div className="progress-track"><span style={{ width: `${xpProgress}%` }}/></div><div style={{ marginTop: 7 }}>{xpProgress} / 100 XP bis zum nächsten Level</div></div>
       </aside>
       <main className="main">
-        {!activeGame && page !== 'online' && <div className="main-head"><div><div className="eyebrow">{page === 'home' ? 'DEIN ZUHAUSE' : 'TAMASCOTTCHI 5.0'}</div><h1>{page === 'home' ? `Hallo, ${data.name}.` : page === 'shop' ? 'Der kleine Laden' : page === 'world' ? 'Scottchi World' : page === 'collections' ? 'Scottchi Collections' : page === 'games' ? 'Spielzeit!' : page === 'closet' ? 'Kleiderschrank' : page === 'leaderboard' ? 'Bestenliste' : page === 'inventory' ? 'Inventar' : page === 'crafting' ? 'Werkstatt' : page === 'journal' ? 'Scottchis Tagebuch' : page === 'help' ? 'Hilfe & Spielstart' : 'Erfolge'}</h1><div className="subline">{page === 'home' ? 'Tippe Scottchi an, wirf Spielzeug, wechsle das Zimmer.' : page === 'leaderboard' ? 'Nur deine Ergebnisse auf diesem Gerät.' : 'Ein gemütlicher Ort für Scottchi und dich.'}</div></div>
+        {!activeGame && page !== 'online' && <div className="main-head"><div><div className="eyebrow">{page === 'home' ? 'DEIN ZUHAUSE' : 'TAMASCOTTCHI 6.0'}</div><h1>{page === 'home' ? `Hallo, ${data.name}.` : page === 'shop' ? 'Der kleine Laden' : page === 'world' ? 'Scottchi World' : page === 'collections' ? 'Scottchi Collections' : page === 'games' ? 'Spielzeit!' : page === 'closet' ? 'Kleiderschrank' : page === 'leaderboard' ? 'Bestenliste' : page === 'inventory' ? 'Inventar' : page === 'crafting' ? 'Werkstatt' : page === 'journal' ? 'Scottchis Tagebuch' : page === 'help' ? 'Hilfe & Spielstart' : 'Erfolge'}</h1><div className="subline">{page === 'home' ? 'Tippe Scottchi an, wirf Spielzeug, wechsle das Zimmer.' : page === 'leaderboard' ? 'Nur deine Ergebnisse auf diesem Gerät.' : 'Ein gemütlicher Ort für Scottchi und dich.'}</div></div>
           {page === 'home' && <button className="button small" onClick={() => { setNameDraft(data.name); setModal('name'); }} data-testid="button-rename">Name ändern</button>}
         </div>}
 
@@ -882,7 +915,7 @@ function Game({ initial }: { initial: PetData }) {
           {!data.tutorialSeen && <section className="panel tutorial-card" data-testid="tutorial-card"><div className="panel-head"><div><div className="eyebrow">DEIN ERSTER TAG</div><h2 className="panel-title">So geht’s los</h2></div><Sparkles size={18}/></div><p>Versorge Scottchi, sammle Materialien bei den Weltaufgaben und stelle daraus in der Werkstatt neue Dinge her. Inventar und Tagebuch halten deine Funde fest.</p><div className="dialog-actions"><button className="button" onClick={() => { setPage('help'); setData((old) => ({ ...old, tutorialSeen: true })); }}>Kurze Hilfe öffnen</button><button className="button ghost" onClick={() => setData((old) => ({ ...old, tutorialSeen: true }))}>Verstanden</button></div></section>}
         </>}
 
-        {page === 'world' && <World data={data} level={level} onChange={changeWorld} onNotice={notify} onStore={(tab) => { setShopTab(tab); setPage('shop'); }}/>}
+        {page === 'world' && <World data={data} level={level} serverClockOffsetMs={serverClockOffsetMs} onChange={changeWorld} onNotice={notify} onStore={(tab) => { setShopTab(tab); setPage('shop'); }}/>}
         {page === 'collections' && <CollectionsPage data={data} onClaim={claimWorldReward}/>}
         {page === 'inventory' && <InventoryPage data={data} onUse={useInventoryItem} onEquip={equip} onPlace={equip}/>}
         {page === 'crafting' && <CraftingPage data={data} onCraft={craft}/>}
