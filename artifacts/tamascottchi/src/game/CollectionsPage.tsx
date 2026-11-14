@@ -59,7 +59,10 @@ export function CollectionsPage({ data, playerLevel, onClaim, onUpgradeArtifact,
           return <button key={index} type="button" className={`artifact-slot ${equippedArtifact ? `rarity-${equippedArtifact.rarity.toLowerCase()}` : 'empty'}`}
             onClick={() => equippedArtifact && setSelectedArtifact(equippedArtifact.id)}
             aria-label={equippedArtifact ? `Ausrüstungsplatz ${index + 1}: ${equippedArtifact.name}` : `Leerer Ausrüstungsplatz ${index + 1}`}>
-            {equippedArtifact ? <img src={assetUrl(`collections/items/${equippedArtifact.id}.png`)} alt=""/> : <span>＋</span>}
+            {equippedArtifact ? <span className="artifact-slot-art">
+              <img className="artifact-rarity-frame" src={RARITY_FRAME_ASSETS[equippedArtifact.rarity]} alt="" aria-hidden="true"/>
+              <img className="artifact-item-art" src={assetUrl(`collections/items/${equippedArtifact.id}.png`)} alt=""/>
+            </span> : <span>＋</span>}
             <small>{equippedArtifact?.name || `Platz ${index + 1}`}</small>
           </button>;
         })}
@@ -79,7 +82,10 @@ export function CollectionsPage({ data, playerLevel, onClaim, onUpgradeArtifact,
           const level = data.artifactLevels[entry.id];
           return <button key={entry.id} type="button" className={`artifact-card rarity-${entry.rarity.toLowerCase()} ${equipped.has(entry.id) ? 'equipped' : ''}`}
             onClick={() => setSelectedArtifact(entry.id)} data-testid={`artifact-card-${entry.id}`}>
-            <span className="artifact-card-art"><img src={assetUrl(`collections/items/${entry.id}.png`)} alt="" loading="lazy"/></span>
+            <span className="artifact-card-art">
+              <img className="artifact-rarity-frame" src={RARITY_FRAME_ASSETS[entry.rarity]} alt="" aria-hidden="true" loading="lazy"/>
+              <img className="artifact-item-art" src={assetUrl(`collections/items/${entry.id}.png`)} alt="" loading="lazy"/>
+            </span>
             <span className="artifact-card-copy"><b>{entry.name}</b><small>{RARITY_LABEL[entry.rarity]} · Stufe {level}/20</small><small>+{artifactBonusPercent(entry, level)}% {entry.effect.label}</small></span>
             {equipped.has(entry.id) && <span className="artifact-equipped-badge"><Check size={12}/> Aktiv</span>}
           </button>;
@@ -142,7 +148,8 @@ export function CollectionsPage({ data, playerLevel, onClaim, onUpgradeArtifact,
         <button className="button small collection-close" onClick={() => setSelectedArtifact(null)} aria-label="Schließen"><X size={16}/></button>
         <div className="artifact-detail-body">
           <div className={`artifact-detail-art rarity-${artifact.rarity.toLowerCase()} ${artifactLevel >= 20 ? 'milestone-20' : artifactLevel >= 15 ? 'milestone-15' : artifactLevel >= 10 ? 'milestone-10' : artifactLevel >= 5 ? 'milestone-5' : ''}`}>
-            <img src={assetUrl(`collections/items/${artifact.id}.png`)} alt={artifact.name}/>
+            <img className="artifact-rarity-frame" src={RARITY_FRAME_ASSETS[artifact.rarity]} alt="" aria-hidden="true"/>
+            <img className="artifact-item-art" src={assetUrl(`collections/items/${artifact.id}.png`)} alt={artifact.name}/>
             {artifactLevel >= 20 && <span className="artifact-max-crown">✦ MAX ✦</span>}
           </div>
           <div className="eyebrow">{artifact.category} · {artifact.where}</div>
