@@ -89,11 +89,11 @@ export function artifactBonusForEquipped(
 }
 
 export const CHEST_KEY_PRICES: Record<RewardChestTier, number> = {
-  common: 50,
-  uncommon: 150,
-  rare: 400,
-  epic: 1000,
-  legendary: 2500,
+  common: 100,
+  uncommon: 300,
+  rare: 900,
+  epic: 3000,
+  legendary: 10000,
 };
 
 export const MAX_PLAYER_LEVEL = 1000;
@@ -159,10 +159,165 @@ export function migrateLegacyPlayerXp(xp: number): number {
 export const CHEST_UNLOCK_LEVEL: Record<RewardChestTier, number> = {
   common: 1,
   uncommon: 15,
-  rare: 40,
-  epic: 70,
+  rare: 25,
+  epic: 50,
   legendary: 100,
 };
+
+export function chestKeyPrice(tier: RewardChestTier, playerLevel: number): number {
+  const level = Math.max(1, Math.min(MAX_PLAYER_LEVEL, Math.floor(Number.isFinite(playerLevel) ? playerLevel : 1)));
+  return Math.round(CHEST_KEY_PRICES[tier] * (1 + level / 200));
+}
+
+export const MINIGAME_IDS = ['catch', 'memory', 'turbo', 'bone', 'run'] as const;
+export type MinigameId = (typeof MINIGAME_IDS)[number];
+export const MINIGAME_DAILY_XP_CAP = 900;
+export const MINIGAME_DAILY_COIN_CAP_BASE = 10000;
+export const MINIGAME_DAILY_TASK_TARGET = 10;
+export const MINIGAME_REWARD_DIVISORS: Record<MinigameId, number> = {
+  catch: 12,
+  memory: 5,
+  turbo: 14,
+  bone: 9,
+  run: 12,
+};
+export const MINIGAME_DAILY_CHEST_TABLE: ReadonlyArray<{
+  minLevel: number;
+  maxLevel: number;
+  chances: Record<RewardChestTier, number>;
+}> = [
+  { minLevel: 1, maxLevel: 24, chances: { common: 90, uncommon: 10, rare: 0, epic: 0, legendary: 0 } },
+  { minLevel: 25, maxLevel: 49, chances: { common: 75, uncommon: 23, rare: 2, epic: 0, legendary: 0 } },
+  { minLevel: 50, maxLevel: 99, chances: { common: 55, uncommon: 33, rare: 10, epic: 2, legendary: 0 } },
+  { minLevel: 100, maxLevel: 199, chances: { common: 40, uncommon: 35, rare: 18, epic: 6, legendary: 1 } },
+  { minLevel: 200, maxLevel: 349, chances: { common: 30, uncommon: 35, rare: 24, epic: 9, legendary: 2 } },
+  { minLevel: 350, maxLevel: 499, chances: { common: 22, uncommon: 32, rare: 30, epic: 13, legendary: 3 } },
+  { minLevel: 500, maxLevel: 749, chances: { common: 15, uncommon: 27, rare: 32, epic: 21, legendary: 5 } },
+  { minLevel: 750, maxLevel: 999, chances: { common: 10, uncommon: 22, rare: 33, epic: 28, legendary: 7 } },
+  { minLevel: 1000, maxLevel: 1000, chances: { common: 5, uncommon: 15, rare: 35, epic: 35, legendary: 10 } },
+];
+
+export type MinigameDailyState = {
+  day: string;
+  xp: number;
+  coins: number;
+  rounds: number;
+  taskPoints: Partial<Record<MinigameId, number>>;
+  claimed: MinigameId[];
+};
+
+export function minigameDailyDayKey(timestamp: number): string {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Berlin',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(timestamp));
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+export function minigameCoinMultiplier(playerLevel: number): number {
+  const level = Math.max(1, Math.min(MAX_PLAYER_LEVEL, Math.floor(Number.isFinite(playerLevel) ? playerLevel : 1)));
+  return 1 + Math.max(0, level - 20) / 10;
+}
+
+export function minigameDailyCoinCap(playerLevel: number): number {
+  const level = Math.max(1, Math.min(MAX_PLAYER_LEVEL, Math.floor(Number.isFinite(playerLevel) ? playerLevel : 1)));
+  return Math.round(MINIGAME_DAILY_COIN_CAP_BASE * (1 + level / 100));
+}
+
+export function minigameDailyChestChances(playerLevel: number): Record<RewardChestTier, number> {
+  const level = Math.max(1, Math.min(MAX_PLAYER_LEVEL, Math.floor(Number.isFinite(playerLevel) ? playerLevel : 1)));
+  const row = MINIGAME_DAILY_CHEST_TABLE.find((entry) => level >= entry.minLevel && level <= entry.maxLevel)!;
+  return { ...row.chances };
+}
+
+export function minigameDailyChestTier(playerLevel: number, random: () => number): RewardChestTier {
+  return chooseChance(minigameDailyChestChances(playerLevel), random);
+}
+
+export function createMinigameDailyState(timestamp: number): MinigameDailyState {
+  return { day: minigameDailyDayKey(timestamp), xp: 0, coins: 0, rounds: 0, taskPoints: {}, claimed: [] };
+}
+
+export function normalizeMinigameDailyState(input: unknown, timestamp: number, playerLevel: number): MinigameDailyState {
+  const value = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
+  const fresh = createMinigameDailyState(timestamp);
+  if (value.day !== fresh.day) return fresh;
+  const rawPoints = value.taskPoints && typeof value.taskPoints === 'object' && !Array.isArray(value.taskPoints)
+    ? value.taskPoints as Record<string, unknown>
+    : {};
+  return {
+    day: fresh.day,
+    xp: Math.min(MINIGAME_DAILY_XP_CAP, Math.max(0, Math.floor(Number(value.xp) || 0))),
+    coins: Math.min(minigameDailyCoinCap(playerLevel), Math.max(0, Math.floor(Number(value.coins) || 0))),
+    rounds: Math.max(0, Math.min(10000, Math.floor(Number(value.rounds) || 0))),
+    taskPoints: Object.fromEntries(MINIGAME_IDS.map((game) => [
+      game,
+      Math.min(MINIGAME_DAILY_TASK_TARGET, Math.max(0, Math.floor(Number(rawPoints[game]) || 0))),
+    ])),
+    claimed: [...new Set(Array.isArray(value.claimed) ? value.claimed.filter((entry): entry is MinigameId => MINIGAME_IDS.includes(entry as MinigameId)) : [])],
+  };
+}
+
+export function rewardForMinigame(game: MinigameId, score: number, roundsToday: number) {
+  const divisor = MINIGAME_REWARD_DIVISORS[game];
+  let coins = Math.max(2, Math.min(30, Math.floor(score / divisor)));
+  let xp = Math.max(4, Math.min(35, Math.floor(score / (divisor * 0.8))));
+  const reduced = roundsToday >= 15;
+  if (reduced) {
+    coins = Math.ceil(coins / 2);
+    xp = Math.ceil(xp / 2);
+  }
+  return { coins, xp, reduced };
+}
+
+export function minigameTaskPointsForXp(xp: number): number {
+  return xp >= 25 ? 3 : xp >= 12 ? 2 : 1;
+}
+
+export function applyMinigameRound(
+  input: unknown,
+  game: MinigameId,
+  score: number,
+  playerLevel: number,
+  timestamp: number,
+  bonuses: { coins?: number; xp?: number } = {},
+) {
+  const state = normalizeMinigameDailyState(input, timestamp, playerLevel);
+  const base = rewardForMinigame(game, Math.max(0, Math.floor(Number(score) || 0)), state.rounds);
+  const xpBonus = Math.min(25, Math.max(0, Number(bonuses.xp) || 0));
+  const coinBonus = Math.min(25, Math.max(0, Number(bonuses.coins) || 0));
+  const rawXp = Math.floor(base.xp * (1 + xpBonus / 100));
+  const rawCoins = Math.floor(base.coins * (1 + coinBonus / 100) * minigameCoinMultiplier(playerLevel));
+  const xp = Math.min(rawXp, Math.max(0, MINIGAME_DAILY_XP_CAP - state.xp));
+  const coins = Math.min(rawCoins, Math.max(0, minigameDailyCoinCap(playerLevel) - state.coins));
+  const points = minigameTaskPointsForXp(base.xp);
+  const taskPoints = {
+    ...state.taskPoints,
+    [game]: Math.min(MINIGAME_DAILY_TASK_TARGET, (state.taskPoints[game] || 0) + points),
+  };
+  const taskProgress = taskPoints[game] || 0;
+  return {
+    state: { ...state, xp: state.xp + xp, coins: state.coins + coins, rounds: state.rounds + 1, taskPoints },
+    xp,
+    coins,
+    taskPointsEarned: points,
+    taskProgress,
+    taskComplete: taskProgress >= MINIGAME_DAILY_TASK_TARGET,
+    reduced: base.reduced,
+  };
+}
+
+export function claimMinigameDailyChest(input: unknown, game: MinigameId, playerLevel: number, timestamp: number, random: () => number) {
+  const state = normalizeMinigameDailyState(input, timestamp, playerLevel);
+  const taskProgress = state.taskPoints[game] || 0;
+  if (taskProgress < MINIGAME_DAILY_TASK_TARGET) return { ok: false as const, error: 'task-incomplete' as const, state };
+  if (state.claimed.includes(game)) return { ok: false as const, error: 'already-claimed' as const, state };
+  const tier = minigameDailyChestTier(playerLevel, random);
+  return { ok: true as const, state: { ...state, claimed: [...state.claimed, game] }, tier };
+}
 
 export const RARITY_UNLOCK_LEVEL: Record<CollectionRarity, number> = {
   Common: 1,

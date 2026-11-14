@@ -35,6 +35,8 @@ import type {
   OnlineCloudSaveUpdate,
   OnlineDailyWorldChestClaim,
   OnlineEconomyActionResponse,
+  OnlineMinigameChestClaim,
+  OnlineMinigameRound,
   OnlineProfile,
   OnlineProfileInput,
   OnlineProfileUpdate
@@ -897,6 +899,182 @@ export const useClaimOnlineDailyWorldChest = <TError = ErrorType<ApiError>,
         TContext
       > => {
       return useMutation(getClaimOnlineDailyWorldChestMutationOptions(options), queryClient);
+    }
+
+export const getCompleteOnlineMinigameRoundUrl = () => {
+
+
+
+
+  return `/api/online/economy/minigames/complete`
+}
+
+/**
+ * @summary Apply one minigame round under the server-owned daily economy caps
+ */
+export const completeOnlineMinigameRound = async (onlineMinigameRound: OnlineMinigameRound, options?: Parameters<typeof customFetch>[1]): Promise<OnlineEconomyActionResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<OnlineEconomyActionResponse>(getCompleteOnlineMinigameRoundUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(onlineMinigameRound)
+  }
+);}
+
+
+
+
+
+export const getCompleteOnlineMinigameRoundMutationKey = () => ['completeOnlineMinigameRound'] as const;
+
+export const getCompleteOnlineMinigameRoundMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeOnlineMinigameRound>>, TError,CompleteOnlineMinigameRoundMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof completeOnlineMinigameRound>>, TError,CompleteOnlineMinigameRoundMutationVariables, TContext> => {
+
+const mutationKey = getCompleteOnlineMinigameRoundMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof completeOnlineMinigameRound>>, CompleteOnlineMinigameRoundMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  completeOnlineMinigameRound(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CompleteOnlineMinigameRoundMutationResult = NonNullable<Awaited<ReturnType<typeof completeOnlineMinigameRound>>>
+    export type CompleteOnlineMinigameRoundMutationBody = BodyType<OnlineMinigameRound>
+    export type CompleteOnlineMinigameRoundMutationError = ErrorType<ApiError>
+    export type CompleteOnlineMinigameRoundMutationVariables = {data: BodyType<OnlineMinigameRound>}
+
+    /**
+ * @summary Apply one minigame round under the server-owned daily economy caps
+ */
+export const useCompleteOnlineMinigameRound = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeOnlineMinigameRound>>, TError,CompleteOnlineMinigameRoundMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof completeOnlineMinigameRound>>,
+        TError,
+        CompleteOnlineMinigameRoundMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCompleteOnlineMinigameRoundMutationOptions(options), queryClient);
+    }
+
+export const getClaimOnlineMinigameDailyChestUrl = () => {
+
+
+
+
+  return `/api/online/economy/minigames/chest/claim`
+}
+
+/**
+ * @summary Claim one completed daily minigame chest
+ */
+export const claimOnlineMinigameDailyChest = async (onlineMinigameChestClaim: OnlineMinigameChestClaim, options?: Parameters<typeof customFetch>[1]): Promise<OnlineEconomyActionResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<OnlineEconomyActionResponse>(getClaimOnlineMinigameDailyChestUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(onlineMinigameChestClaim)
+  }
+);}
+
+
+
+
+
+export const getClaimOnlineMinigameDailyChestMutationKey = () => ['claimOnlineMinigameDailyChest'] as const;
+
+export const getClaimOnlineMinigameDailyChestMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof claimOnlineMinigameDailyChest>>, TError,ClaimOnlineMinigameDailyChestMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof claimOnlineMinigameDailyChest>>, TError,ClaimOnlineMinigameDailyChestMutationVariables, TContext> => {
+
+const mutationKey = getClaimOnlineMinigameDailyChestMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof claimOnlineMinigameDailyChest>>, ClaimOnlineMinigameDailyChestMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  claimOnlineMinigameDailyChest(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ClaimOnlineMinigameDailyChestMutationResult = NonNullable<Awaited<ReturnType<typeof claimOnlineMinigameDailyChest>>>
+    export type ClaimOnlineMinigameDailyChestMutationBody = BodyType<OnlineMinigameChestClaim>
+    export type ClaimOnlineMinigameDailyChestMutationError = ErrorType<ApiError>
+    export type ClaimOnlineMinigameDailyChestMutationVariables = {data: BodyType<OnlineMinigameChestClaim>}
+
+    /**
+ * @summary Claim one completed daily minigame chest
+ */
+export const useClaimOnlineMinigameDailyChest = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof claimOnlineMinigameDailyChest>>, TError,ClaimOnlineMinigameDailyChestMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof claimOnlineMinigameDailyChest>>,
+        TError,
+        ClaimOnlineMinigameDailyChestMutationVariables,
+        TContext
+      > => {
+      return useMutation(getClaimOnlineMinigameDailyChestMutationOptions(options), queryClient);
     }
 
 export const getImportOnlineSaveUrl = () => {

@@ -4,7 +4,10 @@ import type { GameId } from './engine';
 import { absenceDecay, initialPersonality, type Personality } from './personality';
 import { worldDayKey, worldWeekKey } from './worldClock';
 import { COLLECTION_ITEMS, COLLECTION_ITEM_LINKS } from './collectionWorld';
-import { CHEST_TIERS, MAX_PLAYER_XP, migrateLegacyPlayerXp, playerLevelForXp, type RewardChestTier } from '@workspace/game-economy';
+import {
+  CHEST_TIERS, MAX_PLAYER_XP, MINIGAME_REWARD_DIVISORS, createMinigameDailyState, migrateLegacyPlayerXp,
+  normalizeMinigameDailyState, playerLevelForXp, rewardForMinigame, type MinigameDailyState, type RewardChestTier,
+} from '@workspace/game-economy';
 
 export type Room = 'Wohnzimmer' | 'Küche' | 'Bad' | 'Schlafzimmer' | 'Spielzimmer';
 export type NeedKey = 'hunger' | 'glueck' | 'energie' | 'sauberkeit';
@@ -29,6 +32,7 @@ export type PetData = {
   sleepUntil: number | null;
   stats: { games: number; catches: number; taps: number; care: number; rooms: number; purchases: number; toys: number };
   daily: DailyProgress; missions: Record<string, boolean>; claimedAchievements: string[]; missionsDate: string;
+  minigameDaily: MinigameDailyState;
   settings: { sound: boolean; music: boolean; volume: number; lampOn: boolean };
   highscores: Partial<Record<GameId, number>>;
   challenges: Record<string, number>;
@@ -100,7 +104,8 @@ export const BACKUP_KEY_61 = 'tamascottchi-save-v1-backup-before-6.1';
 export const BACKUP_KEY_62 = 'tamascottchi-save-v1-backup-before-6.2';
 export const BACKUP_KEY_63 = 'tamascottchi-save-v1-backup-before-6.3';
 export const BACKUP_KEY_64 = 'tamascottchi-save-v1-backup-before-6.4';
-export const SAVE_SCHEMA = 10;
+export const BACKUP_KEY_65 = 'tamascottchi-save-v1-backup-before-6.5';
+export const SAVE_SCHEMA = 11;
 export const LOCATIONS = [
   { id: 'park', name: 'Scottchi Park', level: 1, point: { x: 25, y: 29 }, desc: 'Der erste Spaziergang: Wege, Wiesen und verlorene Knochen.' },
   { id: 'city', name: 'Scottchi City', level: 3, point: { x: 45, y: 53 }, desc: 'Ein lebendiger Platz für kleine Besorgungen.' },
@@ -245,15 +250,8 @@ export const CHALLENGES: { id: string; game: GameId; title: string; test: (score
 ];
 
 /** Bounded rewards per round: coins and XP grow with score but are capped; after 15 rounds a day they are halved. */
-export const REWARD_DIV: Record<GameId, number> = { catch: 12, memory: 5, turbo: 14, bone: 9, run: 12 };
-export function rewardFor(game: GameId, score: number, gamesToday: number) {
-  const div = REWARD_DIV[game];
-  let coins = Math.max(2, Math.min(30, Math.floor(score / div)));
-  let xp = Math.max(4, Math.min(35, Math.floor(score / (div * 0.8))));
-  const reduced = gamesToday >= 15;
-  if (reduced) { coins = Math.ceil(coins / 2); xp = Math.ceil(xp / 2); }
-  return { coins, xp, reduced };
-}
+export const REWARD_DIV = MINIGAME_REWARD_DIVISORS;
+export const rewardFor = rewardForMinigame;
 
 export const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
 export const levelFor = (xp: number) => playerLevelForXp(xp);
@@ -286,6 +284,7 @@ export const initialData = (): FullPetData => ({
   room: 'Wohnzimmer', roomItems: [], activeBackground: 'classic', records: [], sleepUntil: null,
   stats: { games: 0, catches: 0, taps: 0, care: 0, rooms: 0, purchases: 0, toys: 0 },
   daily: { feeds: 0, games: 0, baths: 0, pets: 0, coins: 0 },
+  minigameDaily: createMinigameDailyState(Date.now()),
   missions: {}, claimedAchievements: [], missionsDate: today(),
   settings: { sound: true, music: false, volume: 65, lampOn: true },
   highscores: {}, challenges: {},
@@ -360,7 +359,7 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
     if (!roomPlacements[id]) roomPlacements[id] = { x: 16 + (index % 5) * 16, y: 67 + (Math.floor(index / 5) % 2) * 8 };
   }
   const parsedXp = Math.max(0, num(parsed.xp, d.xp));
-  const normalizedXp = (parsed.saveSchema || 0) < SAVE_SCHEMA
+  const normalizedXp = (parsed.saveSchema || 0) < 10
     ? migrateLegacyPlayerXp(parsedXp)
     : Math.min(MAX_PLAYER_XP, parsedXp);
   return {
@@ -380,6 +379,7 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
     records,
     stats: { ...d.stats, ...parsed.stats },
     daily: sameDay ? { ...d.daily, ...parsed.daily } : d.daily,
+    minigameDaily: normalizeMinigameDailyState(parsed.minigameDaily, now, playerLevelForXp(normalizedXp)),
     missions: sameDay ? (parsed.missions || {}) : {},
     claimedAchievements: parsed.claimedAchievements || [],
     settings: { ...d.settings, ...parsed.settings },
@@ -481,6 +481,7 @@ export function loadData(): FullPetData {
     if ((parsed.saveSchema || 0) < 8 && !localStorage.getItem(BACKUP_KEY_62)) localStorage.setItem(BACKUP_KEY_62, raw);
     if ((parsed.saveSchema || 0) < 9 && !localStorage.getItem(BACKUP_KEY_63)) localStorage.setItem(BACKUP_KEY_63, raw);
     if ((parsed.saveSchema || 0) < 10 && !localStorage.getItem(BACKUP_KEY_64)) localStorage.setItem(BACKUP_KEY_64, raw);
+    if ((parsed.saveSchema || 0) < 11 && !localStorage.getItem(BACKUP_KEY_65)) localStorage.setItem(BACKUP_KEY_65, raw);
     return normalize(parsed);
   } catch (cause) {
     // Never replace an unreadable save with a new game through the autosave effect.

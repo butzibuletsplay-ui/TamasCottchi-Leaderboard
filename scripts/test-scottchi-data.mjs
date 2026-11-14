@@ -242,6 +242,18 @@ test('schema 9 XP migrates to the extended curve without losing the old level or
   assert.equal(next.coins, old.coins);
   assert.deepEqual(next.owned, old.owned);
 });
+test('schema 10 saves keep their XP unchanged and receive a 6.5 backup', () => {
+  storage.clear();
+  const old = { ...initialData(), saveSchema: 10, coins: 820, xp: 5150, owned: ['ball'] };
+  const raw = JSON.stringify(old);
+  storage.set(STORE_KEY, raw);
+  const next = loadData();
+  assert.equal(storage.get(dataModule.BACKUP_KEY_65), raw);
+  assert.equal(next.saveSchema, SAVE_SCHEMA);
+  assert.equal(next.xp, old.xp);
+  assert.deepEqual(next.owned, old.owned);
+  assert.equal(next.minigameDaily.xp, 0);
+});
 test('keyed chests open once and consume one matching key', () => {
   const chestTiers = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
   assert.ok(dataModule.CHALLENGES.every((challenge) => !challenge.chestTier && challenge.dust > 0));
@@ -280,19 +292,82 @@ test('new chest rewards are capped at the highest globally unlocked tier', () =>
   const allowed = artifactModule.grantChest(legendaryUnlocked, 'legendary', 'test-legendary', 3);
   assert.equal(allowed.world.chestInstances[0].tier, 'legendary');
 });
-test('key purchases charge exact prices and enforce unlock levels and sufficient coins', () => {
+test('key purchases charge level-based prices and enforce unlock levels and sufficient coins', () => {
   for (const tier of economy.CHEST_TIERS) {
     const level = economy.CHEST_UNLOCK_LEVEL[tier];
-    const base = normalize({ ...initialData(), coins: economy.CHEST_KEY_PRICES[tier], xp: economy.playerLevelXpThreshold(level) });
+    const price = economy.chestKeyPrice(tier, level);
+    const base = normalize({ ...initialData(), coins: price, xp: economy.playerLevelXpThreshold(level) });
     const purchased = chestModule.buyChestKey(base, tier, level);
     assert.equal(purchased.ok, true, `${tier} purchase should work at its unlock level`);
     assert.equal(purchased.data.coins, 0);
     assert.equal(purchased.data.world.keys[tier], 1);
-    const short = normalize({ ...initialData(), coins: economy.CHEST_KEY_PRICES[tier] - 1, xp: economy.playerLevelXpThreshold(level) });
+    const short = normalize({ ...initialData(), coins: price - 1, xp: economy.playerLevelXpThreshold(level) });
     assert.deepEqual(chestModule.buyChestKey(short, tier, level), { ok: false, reason: 'not-enough-coins' });
     if (level > 1) assert.deepEqual(chestModule.buyChestKey(base, tier, level - 1), { ok: false, reason: 'locked' });
   }
-  assert.deepEqual(economy.CHEST_KEY_PRICES, { common: 50, uncommon: 150, rare: 400, epic: 1000, legendary: 2500 });
+  assert.deepEqual(economy.CHEST_KEY_PRICES, { common: 100, uncommon: 300, rare: 900, epic: 3000, legendary: 10000 });
+  assert.equal(economy.chestKeyPrice('legendary', 100), 15000);
+  assert.equal(economy.chestKeyPrice('legendary', 500), 35000);
+  assert.equal(economy.chestKeyPrice('legendary', 1000), 60000);
+});
+test('daily minigame economy applies shared caps, skill-based tasks, level odds, and one chest per game', () => {
+  const now = Date.UTC(2026, 0, 15, 12);
+  let daily = economy.createMinigameDailyState(now);
+  let earnedAfterXpCap = 0;
+  for (let round = 0; round < 40; round += 1) {
+    const game = economy.MINIGAME_IDS[round % economy.MINIGAME_IDS.length];
+    const wasXpCapped = daily.xp >= economy.MINIGAME_DAILY_XP_CAP;
+    const result = economy.applyMinigameRound(daily, game, 100_000, 1000, now, { xp: 25, coins: 25 });
+    daily = result.state;
+    if (wasXpCapped && result.xp === 0 && result.coins > 0) earnedAfterXpCap += result.coins;
+  }
+  assert.equal(daily.xp, economy.MINIGAME_DAILY_XP_CAP);
+  assert.equal(daily.coins, 102_080);
+  assert.ok(earnedAfterXpCap > 0, 'coin earnings continue after the XP cap');
+  assert.equal(daily.rounds, 40, 'round count is shared across all five games');
+
+  assert.equal(economy.minigameTaskPointsForXp(economy.rewardForMinigame('catch', 60, 0).xp), 1);
+  assert.equal(economy.minigameTaskPointsForXp(economy.rewardForMinigame('catch', 180, 0).xp), 2);
+  assert.equal(economy.minigameTaskPointsForXp(economy.rewardForMinigame('catch', 600, 0).xp), 3);
+  let task = economy.createMinigameDailyState(now);
+  for (let round = 0; round < 4; round += 1) task = economy.applyMinigameRound(task, 'catch', 600, 100, now).state;
+  assert.equal(task.taskPoints.catch, 10);
+  const firstClaim = economy.claimMinigameDailyChest(task, 'catch', 100, now, () => 0.99);
+  assert.equal(firstClaim.ok, true);
+  if (firstClaim.ok) {
+    assert.equal(firstClaim.tier, 'legendary');
+    assert.deepEqual(firstClaim.state.claimed, ['catch']);
+    assert.equal(economy.claimMinigameDailyChest(firstClaim.state, 'catch', 100, now, () => 0).error, 'already-claimed');
+  }
+});
+test('minigame daily chest probabilities and level-scaled key prices match the published balance', () => {
+  const expected = [
+    { level: 1, chances: [90, 10, 0, 0, 0] },
+    { level: 25, chances: [75, 23, 2, 0, 0] },
+    { level: 50, chances: [55, 33, 10, 2, 0] },
+    { level: 100, chances: [40, 35, 18, 6, 1] },
+    { level: 200, chances: [30, 35, 24, 9, 2] },
+    { level: 350, chances: [22, 32, 30, 13, 3] },
+    { level: 500, chances: [15, 27, 32, 21, 5] },
+    { level: 750, chances: [10, 22, 33, 28, 7] },
+    { level: 1000, chances: [5, 15, 35, 35, 10] },
+  ];
+  for (const { level, chances } of expected) {
+    const actual = economy.CHEST_TIERS.map((tier) => economy.minigameDailyChestChances(level)[tier]);
+    assert.deepEqual(actual, chances);
+    assert.equal(actual.reduce((sum, value) => sum + value, 0), 100);
+    if (level < 100) assert.equal(economy.minigameDailyChestChances(level).legendary, 0);
+  }
+  assert.equal(economy.chestKeyPrice('legendary', 100), 15_000);
+  assert.equal(economy.chestKeyPrice('legendary', 500), 35_000);
+  assert.equal(economy.chestKeyPrice('legendary', 1000), 60_000);
+  assert.equal(economy.minigameCoinMultiplier(20), 1);
+  assert.equal(economy.minigameCoinMultiplier(1000), 99);
+  assert.equal(economy.minigameDailyCoinCap(1000), 110_000);
+  assert.equal(economy.minigameDailyDayKey(Date.UTC(2026, 2, 28, 22, 59)), '2026-03-28');
+  assert.equal(economy.minigameDailyDayKey(Date.UTC(2026, 2, 28, 23, 0)), '2026-03-29');
+  assert.equal(economy.minigameDailyDayKey(Date.UTC(2026, 9, 24, 21, 59)), '2026-10-24');
+  assert.equal(economy.minigameDailyDayKey(Date.UTC(2026, 9, 24, 22, 0)), '2026-10-25');
 });
 test('player levels, fixed chest odds, and area-gated world loot use the configured rules', () => {
   const rarities = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary'];
@@ -350,8 +425,8 @@ test('player levels, fixed chest odds, and area-gated world loot use the configu
   assert.equal(economy.worldLevelDropChances(1, 1000).Legendary, 0, 'early areas do not produce legendary world loot');
   assert.deepEqual(economy.worldLevelDropChances(20, 1), { Common: 100, Uncommon: 0, Rare: 0, Epic: 0, Legendary: 0 }, 'low-level players remain capped even in advanced areas');
   assert.equal(economy.chestDropChances('legendary', 2).Legendary, 20, 'the shown table remains the actual tier-specific table even while locked');
-  assert.equal(economy.chestTierUnlocked('rare', 39), false);
-  assert.equal(economy.chestTierUnlocked('rare', 40), true);
+  assert.equal(economy.chestTierUnlocked('rare', 24), false);
+  assert.equal(economy.chestTierUnlocked('rare', 25), true);
   assert.equal(economy.dailyWorldChestTier(20, 1, () => 0), 'common', 'low player level caps daily world chests');
   assert.equal(economy.dailyWorldChestTier(1, 1000, () => 0.99), 'common', 'the starter region remains common even for high-level players');
   assert.notEqual(economy.dailyWorldChestTier(20, 1000, () => 0.99), 'legendary', 'daily world chests stay below epic and legendary');

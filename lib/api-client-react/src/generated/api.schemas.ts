@@ -132,6 +132,43 @@ export interface OnlineDailyWorldChestClaim {
   requestId: string;
 }
 
+export type OnlineMinigameRoundGameId = typeof OnlineMinigameRoundGameId[keyof typeof OnlineMinigameRoundGameId];
+
+
+export const OnlineMinigameRoundGameId = {
+  catch: 'catch',
+  memory: 'memory',
+  turbo: 'turbo',
+  bone: 'bone',
+  run: 'run',
+} as const;
+
+export interface OnlineMinigameRound {
+  gameId: OnlineMinigameRoundGameId;
+  /**
+     * @minimum 0
+     * @maximum 100000
+     */
+  score: number;
+  requestId: string;
+}
+
+export type OnlineMinigameChestClaimGameId = typeof OnlineMinigameChestClaimGameId[keyof typeof OnlineMinigameChestClaimGameId];
+
+
+export const OnlineMinigameChestClaimGameId = {
+  catch: 'catch',
+  memory: 'memory',
+  turbo: 'turbo',
+  bone: 'bone',
+  run: 'run',
+} as const;
+
+export interface OnlineMinigameChestClaim {
+  gameId: OnlineMinigameChestClaimGameId;
+  requestId: string;
+}
+
 export type OnlineEconomyActionResponseOutcome = typeof OnlineEconomyActionResponseOutcome[keyof typeof OnlineEconomyActionResponseOutcome];
 
 
@@ -139,6 +176,8 @@ export const OnlineEconomyActionResponseOutcome = {
   'key-purchased': 'key-purchased',
   'chest-opened': 'chest-opened',
   'daily-chest-claimed': 'daily-chest-claimed',
+  'minigame-completed': 'minigame-completed',
+  'minigame-chest-claimed': 'minigame-chest-claimed',
 } as const;
 
 export type OnlineEconomyActionResponseReward = { [key: string]: unknown };

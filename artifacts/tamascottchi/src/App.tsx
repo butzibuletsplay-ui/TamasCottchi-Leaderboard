@@ -20,7 +20,7 @@ import {
 } from './game/personality';
 import {
   CHALLENGES, COLLECTIONS, GAMES, ITEMS, PLAYER_LEVEL_MILESTONES, ROOM_BG, ROOM_LIST, STORE_KEY, STYLE_SETS, SaveLoadError, assertSave, clamp, initialData, itemById, levelFor, loadData,
-  moodFor, normalize, rewardFor, today, type DailyProgress, type FullPetData, type GameRecord, type Item, type NeedKey, type RewardChestTier, type Room,
+  moodFor, normalize, today, type DailyProgress, type FullPetData, type GameRecord, type Item, type NeedKey, type RewardChestTier, type Room,
 } from './game/data';
 import { craftItem } from './game/crafting';
 import { CraftingPage } from './game/CraftingPage';
@@ -33,17 +33,21 @@ import { releasePendingWorldDiscoveries } from './game/worldDiscoveries';
 import { hasMaterialArt, MaterialArt } from './game/MaterialArt';
 import {
   getGetOnlineProfileQueryKey, getGetOnlineSaveQueryKey, useClaimOnlineDailyWorldChest, useGetOnlineProfile, useGetOnlineSave,
-  useOpenOnlineRewardChest, usePurchaseOnlineChestKey, useUpdateOnlineSave,
+  useClaimOnlineMinigameDailyChest, useCompleteOnlineMinigameRound, useOpenOnlineRewardChest, usePurchaseOnlineChestKey, useUpdateOnlineSave,
 } from '@workspace/api-client-react';
 import { OnlinePage } from './game/OnlinePage';
 import { buyChestKey, CHEST_DEFINITIONS, CHEST_TIERS, openRewardChest } from './game/rewardChests';
 import type { ChestOpenReward } from './game/rewardChests';
 import {
-  applicableArtifactBonus, applyArtifactBonus, ARTIFACTS, equipArtifact, grantRegularChest, unlockArtifact,
+  applicableArtifactBonus, applyArtifactBonus, ARTIFACTS, equipArtifact, grantChest, grantRegularChest, unlockArtifact,
   grantMilestoneChest, MINIGAME_SCORE_CHEST_MILESTONES, upgradeArtifact,
 } from './game/artifactSystem';
 import { COLLECTION_ITEM_LINKS } from './game/collectionWorld';
-import { CHEST_KEY_PRICES, CHEST_UNLOCK_LEVEL, MAX_PLAYER_XP, playerLevelProgress } from '@workspace/game-economy';
+import {
+  CHEST_UNLOCK_LEVEL, MAX_PLAYER_XP, MINIGAME_DAILY_TASK_TARGET, MINIGAME_DAILY_XP_CAP, applyMinigameRound,
+  chestKeyPrice, claimMinigameDailyChest, minigameDailyChestChances, minigameDailyCoinCap,
+  normalizeMinigameDailyState, playerLevelProgress,
+} from '@workspace/game-economy';
 type PetData = FullPetData;
 
 type PetAction = 'idle' | 'happy' | 'eating' | 'washing' | 'petting' | 'sleeping' | 'spin' | 'wiggle' | 'run' | 'chew' | 'wake' | 'yawn' | 'cuddle';
@@ -176,6 +180,8 @@ function Game({ initial }: { initial: PetData }) {
   const purchaseOnlineKey = usePurchaseOnlineChestKey();
   const openOnlineChest = useOpenOnlineRewardChest();
   const claimOnlineWorldChest = useClaimOnlineDailyWorldChest();
+  const completeOnlineMinigame = useCompleteOnlineMinigameRound();
+  const claimOnlineMinigameChest = useClaimOnlineMinigameDailyChest();
   const [cloudLink, setCloudLink] = useState<CloudLink | null>(null);
   const cloudLinkRef = useRef<CloudLink | null>(null);
   cloudLinkRef.current = cloudLink;
@@ -186,6 +192,7 @@ function Game({ initial }: { initial: PetData }) {
   const [page, setPage] = useState('home');
   const [shopTab, setShopTab] = useState<Item['type'] | 'keys'>('food');
   const [pendingKeyPurchase, setPendingKeyPurchase] = useState<RewardChestTier | null>(null);
+  const [pendingMinigameClaim, setPendingMinigameClaim] = useState<GameId | null>(null);
   const [selectedFood, setSelectedFood] = useState('kibble');
   const [modal, setModal] = useState<'settings' | 'reset' | 'import' | 'name' | null>(null);
   const [nameDraft, setNameDraft] = useState(data.name);
@@ -297,6 +304,9 @@ function Game({ initial }: { initial: PetData }) {
   const restoreCloudSave = (saveData: Record<string, unknown>, revision: number) => {
     try {
       const restored = normalize(saveData as Partial<PetData>);
+      if (saveData.minigameDaily && typeof saveData.minigameDaily === 'object') {
+        restored.minigameDaily = saveData.minigameDaily as PetData['minigameDaily'];
+      }
       assertSave(restored);
       setData(restored);
       linkCloudToCurrentSave(revision, restored);
@@ -350,6 +360,9 @@ function Game({ initial }: { initial: PetData }) {
 
   const applyOnlineEconomyResponse = (response: { saveData: Record<string, unknown>; revision: number; updatedAt: string | Date }) => {
     const restored = normalize(response.saveData as Partial<PetData>);
+    if (response.saveData.minigameDaily && typeof response.saveData.minigameDaily === 'object') {
+      restored.minigameDaily = response.saveData.minigameDaily as PetData['minigameDaily'];
+    }
     assertSave(restored);
     dataRef.current = restored;
     setData(restored);
@@ -474,6 +487,11 @@ function Game({ initial }: { initial: PetData }) {
   }, []);
 
   const level = levelFor(data.xp);
+  const minigameDailyNow = now + (serverClockOffsetMs || 0);
+  const minigameDaily = normalizeMinigameDailyState(data.minigameDaily, minigameDailyNow, level);
+  const minigameCoinCap = minigameDailyCoinCap(level);
+  const completedMinigameTasks = Object.values(minigameDaily.taskPoints)
+    .filter((points) => (points || 0) >= MINIGAME_DAILY_TASK_TARGET).length;
   const previousLevel = useRef(level);
   const levelProgress = playerLevelProgress(data.xp);
   const xpProgress = levelProgress.percent;
@@ -597,20 +615,65 @@ function Game({ initial }: { initial: PetData }) {
     setData((old) => ({ ...old, needs: { ...old.needs, energie: clamp(old.needs.energie - energyCost) } }));
     return true;
   }, [notify]);
-  const completeGame = useCallback((sessionId: string, result: GameResult): RewardSummary => {
-    const cur = dataRef.current;
-    const game = sessionId.split('-')[0] as GameId;
+  const completeGame = useCallback(async (game: GameId, sessionId: string, result: GameResult): Promise<RewardSummary> => {
+    let cur = dataRef.current;
+    if (rewardedSessions.current.has(sessionId)) {
+      const state = normalizeMinigameDailyState(cur.minigameDaily, minigameDailyNow, levelFor(cur.xp));
+      return {
+        coins: 0, xp: 0, newBest: false, best: cur.highscores[game] || 0, challenges: [], challengeChests: [], reduced: false,
+        dailyXp: state.xp, dailyXpCap: MINIGAME_DAILY_XP_CAP, dailyCoins: state.coins, dailyCoinCap: minigameDailyCoinCap(levelFor(cur.xp)),
+        taskProgress: state.taskPoints[game] || 0, taskTarget: MINIGAME_DAILY_TASK_TARGET, taskPointsEarned: 0,
+      };
+    }
+
+    let repeatableXp = 0;
+    let repeatableCoins = 0;
+    let repeatableState = normalizeMinigameDailyState(cur.minigameDaily, minigameDailyNow, levelFor(cur.xp));
+    let taskProgress = repeatableState.taskPoints[game] || 0;
+    let taskPointsEarned = 0;
+    let reduced = false;
+    const linkedCloud = !!onlineUserId && cloudLinkRef.current?.userId === onlineUserId;
+    if (linkedCloud) {
+      if (!await syncCloudBeforeEconomy()) throw new Error('Cloud-Spielstand konnte nicht synchronisiert werden.');
+      const response = await completeOnlineMinigame.mutateAsync({
+        data: { gameId: game, score: Math.max(0, Math.floor(result.score)), requestId: sessionId },
+      });
+      cur = applyOnlineEconomyResponse(response);
+      const reward = response.reward || {};
+      repeatableXp = Math.max(0, Number(reward.xp) || 0);
+      repeatableCoins = Math.max(0, Number(reward.coins) || 0);
+      repeatableState = cur.minigameDaily;
+      taskProgress = Math.max(0, Number(reward.taskProgress) || 0);
+      taskPointsEarned = Math.max(0, Number(reward.taskPointsEarned) || 0);
+      reduced = Boolean(reward.reduced);
+      rewardedSessions.current.add(sessionId);
+    } else {
+      const levelAtRoundStart = levelFor(cur.xp);
+      const payout = applyMinigameRound(cur.minigameDaily, game, result.score, levelAtRoundStart, minigameDailyNow, {
+        coins: applicableArtifactBonus(cur, 'coins', 'games'),
+        xp: applicableArtifactBonus(cur, 'xp', 'games'),
+      });
+      repeatableXp = payout.xp;
+      repeatableCoins = payout.coins;
+      repeatableState = payout.state;
+      taskProgress = payout.taskProgress;
+      taskPointsEarned = payout.taskPointsEarned;
+      reduced = payout.reduced;
+    }
+
     const prevBest = cur.highscores[game] || 0;
-    const baseReward = rewardFor(game, result.score, cur.daily.games);
-    const newChallenges = CHALLENGES.filter((c) => c.game === game && !cur.challenges[c.id] && c.test(result.score, result.metrics));
-    const coins = applyArtifactBonus(
-      baseReward.coins + newChallenges.reduce((total, challenge) => total + challenge.coins, 0),
+    const newChallenges = CHALLENGES.filter((challenge) =>
+      challenge.game === game && !cur.challenges[challenge.id] && challenge.test(result.score, result.metrics));
+    const challengeCoins = applyArtifactBonus(
+      newChallenges.reduce((total, challenge) => total + challenge.coins, 0),
       applicableArtifactBonus(cur, 'coins', 'games'),
     );
-    const xp = applyArtifactBonus(
-      baseReward.xp + newChallenges.reduce((total, challenge) => total + challenge.xp, 0),
+    const challengeXp = applyArtifactBonus(
+      newChallenges.reduce((total, challenge) => total + challenge.xp, 0),
       applicableArtifactBonus(cur, 'xp', 'games'),
     );
+    const coins = repeatableCoins + challengeCoins;
+    const xp = repeatableXp + challengeXp;
     const earnedScoreMilestones = MINIGAME_SCORE_CHEST_MILESTONES.filter((milestone) =>
       result.score >= milestone.score && !cur.world.milestoneChestsClaimed.includes(milestone.id));
     const completedChallengeIds = new Set(newChallenges.map((challenge) => challenge.id));
@@ -623,59 +686,69 @@ function Game({ initial }: { initial: PetData }) {
     const summary: RewardSummary = {
       coins, xp,
       newBest: result.score > prevBest && result.score > 0, best: Math.max(prevBest, result.score),
-      challenges: newChallenges.map((c) => `${c.title} · +${c.dust} Artefaktstaub`),
+      challenges: newChallenges.map((challenge) => `${challenge.title} · +${challenge.dust} Artefaktstaub`),
       challengeChests: [
         ...visibleChestRewards.map((milestone) => ({ id: milestone.id, title: milestone.title, tier: milestone.tier })),
         ...(earnsChallengeSeriesChest ? [{ id: 'all-minigame-challenges', title: 'Alle Minispiel-Challenges', tier: 'rare' as const }] : []),
       ],
-      reduced: baseReward.reduced,
+      reduced,
+      dailyXp: repeatableState.xp,
+      dailyXpCap: MINIGAME_DAILY_XP_CAP,
+      dailyCoins: repeatableState.coins,
+      dailyCoinCap: minigameDailyCoinCap(levelFor(cur.xp)),
+      taskProgress,
+      taskTarget: MINIGAME_DAILY_TASK_TARGET,
+      taskPointsEarned,
     };
-    if (rewardedSessions.current.has(sessionId)) return { ...summary, coins: 0, xp: 0, challenges: [], challengeChests: [] };
-    rewardedSessions.current.add(sessionId);
+    if (linkedCloud && !rewardedSessions.current.has(sessionId)) rewardedSessions.current.add(sessionId);
     const record: GameRecord = { id: sessionId, game, score: result.score, date: Date.now() };
-    setData((old) => {
-      if (old.records.some((r) => r.id === sessionId)) return old;
-      const challenges = { ...old.challenges };
-      const challengeDust = newChallenges.reduce((total, challenge) => total + challenge.dust, 0);
-      let compensationDust = 0;
-      for (const c of newChallenges) if (!challenges[c.id]) {
-        challenges[c.id] = Date.now();
+    const challenges = { ...cur.challenges };
+    const challengeDust = newChallenges.reduce((total, challenge) => total + challenge.dust, 0);
+    let compensationDust = 0;
+    for (const challenge of newChallenges) if (!challenges[challenge.id]) challenges[challenge.id] = Date.now();
+    let next: PetData = {
+      ...cur,
+      records: [record, ...cur.records].slice(0, 100),
+      coins: cur.coins + (linkedCloud ? challengeCoins : coins),
+      xp: cur.xp + (linkedCloud ? challengeXp : xp),
+      minigameDaily: repeatableState,
+      highscores: { ...cur.highscores, [game]: Math.max(cur.highscores[game] || 0, result.score) },
+      challenges,
+      inventory: { ...cur.inventory, 'artifact-dust': (cur.inventory['artifact-dust'] || 0) + challengeDust },
+      needs: applyNeeds(cur.needs, { glueck: 6 }),
+      stats: { ...cur.stats, games: cur.stats.games + 1, catches: cur.stats.catches + (result.metrics.caught || 0), taps: cur.stats.taps + (result.metrics.hits || 0) },
+    };
+    const earnedIds = new Set(cur.world.milestoneChestsClaimed);
+    for (const [index, milestone] of earnedScoreMilestones.entries()) {
+      earnedIds.add(milestone.id);
+      if (index < chestSlots) {
+        next = grantRegularChest(next, milestone.tier, `challenge:${cur.world.worldDay}:${milestone.id}`, Date.now(), `challenge:${milestone.id}`);
+      } else {
+        compensationDust += milestone.dust;
       }
-      let next: PetData = {
-        ...old, records: [record, ...old.records].slice(0, 100), coins: old.coins + coins, xp: old.xp + xp,
-        highscores: { ...old.highscores, [game]: Math.max(old.highscores[game] || 0, result.score) }, challenges,
-        inventory: { ...old.inventory, 'artifact-dust': (old.inventory['artifact-dust'] || 0) + challengeDust },
-        needs: applyNeeds(old.needs, { glueck: 6 }),
-        stats: { ...old.stats, games: old.stats.games + 1, catches: old.stats.catches + (result.metrics.caught || 0), taps: old.stats.taps + (result.metrics.hits || 0) },
-      };
-      const earnedIds = new Set(old.world.milestoneChestsClaimed);
-      for (const [index, milestone] of earnedScoreMilestones.entries()) {
-        earnedIds.add(milestone.id);
-        if (index < chestSlots) {
-          next = grantRegularChest(next, milestone.tier, `challenge:${old.world.worldDay}:${milestone.id}`, Date.now(), `challenge:${milestone.id}`);
-        } else {
-          compensationDust += milestone.dust;
-        }
-      }
-      if (challengeSeriesComplete) {
-        next = grantMilestoneChest(next, 'all-minigame-challenges', 'rare', Date.now());
-      }
-      next = {
-        ...next,
-        inventory: { ...next.inventory, 'artifact-dust': (next.inventory['artifact-dust'] || 0) + compensationDust },
-        world: { ...next.world, milestoneChestsClaimed: [...earnedIds] },
-      };
-      if (result.score > (old.highscores[game] || 0)) {
-        next = recordJournal(next, `record-${sessionId}`, '🏅', `Neuer Bestwert: ${GAMES.find((g) => g.id === game)?.name || game}`, `${result.score} Punkte erreicht.`);
-      }
-      next = advanceDaily({ ...next, personality: nudge(next.personality, 'verspielt', 0.8) }, 'games');
-      return advanceDaily(next, 'coins', coins);
-    });
+    }
+    if (challengeSeriesComplete) next = grantMilestoneChest(next, 'all-minigame-challenges', 'rare', Date.now());
+    next = {
+      ...next,
+      inventory: { ...next.inventory, 'artifact-dust': (next.inventory['artifact-dust'] || 0) + compensationDust },
+      world: { ...next.world, milestoneChestsClaimed: [...earnedIds] },
+    };
+    if (result.score > (cur.highscores[game] || 0)) {
+      next = recordJournal(next, `record-${sessionId}`, '🏅', `Neuer Bestwert: ${GAMES.find((entry) => entry.id === game)?.name || game}`, `${result.score} Punkte erreicht.`);
+    }
+    next = advanceDaily({ ...next, personality: nudge(next.personality, 'verspielt', 0.8) }, 'games');
+    next = advanceDaily(next, 'coins', coins);
+    rewardedSessions.current.add(sessionId);
+    dataRef.current = next;
+    setData(next);
+    if (linkedCloud && !await syncCloudBeforeEconomy()) {
+      notify('Minispiel-Belohnung ist sicher gespeichert; weitere Rundendaten werden später synchronisiert.');
+    }
     sound(780, { dur: 0.25, slide: 1170 });
     if (result.score > 0 || newChallenges.length) cheer(5000);
     return summary;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sound]);
+  }, [sound, onlineUserId, completeOnlineMinigame.mutateAsync, minigameDailyNow]);
   const openChest = useCallback((tier: RewardChestTier) => {
     if (onlineUserId && cloudLinkRef.current?.userId === onlineUserId) {
       setPage('collections');
@@ -847,6 +920,50 @@ function Game({ initial }: { initial: PetData }) {
         : 'Die Tageskiste kann aus der lokalen Weltaufgabe abgeholt werden.');
       return false;
     })) ?? false;
+  }
+  async function claimMinigameDailyChestAction(game: GameId): Promise<boolean> {
+    const actionKey = `minigame-daily:${minigameDaily.day}:${game}`;
+    if (chestActionBusy.current.has(actionKey)) return false;
+    setPendingMinigameClaim(game);
+    try {
+      return (await withChestAction(actionKey, async () => {
+        if (onlineUserId && cloudLinkRef.current?.userId === onlineUserId) {
+          if (!await syncCloudBeforeEconomy()) {
+            notify('Der Cloud-Spielstand ist gerade nicht synchron. Bitte versuche es gleich noch einmal.');
+            return false;
+          }
+          try {
+            const response = await claimOnlineMinigameChest.mutateAsync({
+              data: { gameId: game, requestId: requestIdFor(actionKey) },
+            });
+            applyOnlineEconomyResponse(response);
+            chestRequestIds.current.delete(actionKey);
+            const tier = typeof response.reward?.tier === 'string' ? response.reward.tier : '';
+            const label = CHEST_TIERS.includes(tier as RewardChestTier) ? CHEST_DEFINITIONS[tier as RewardChestTier].label : 'Tageskiste';
+            notify(`${GAMES.find((entry) => entry.id === game)?.name || 'Minispiel'}: ${label} liegt im Tresor.`);
+            return true;
+          } catch (error) {
+            notify(serverActionError(error));
+            return false;
+          }
+        }
+
+        const current = dataRef.current;
+        const claim = claimMinigameDailyChest(current.minigameDaily, game, levelFor(current.xp), minigameDailyNow, Math.random);
+        if (!claim.ok) {
+          notify(claim.error === 'task-incomplete' ? 'Schließe zuerst die Tagesaufgabe dieses Minispiels ab.' : 'Die Tageskiste dieses Minispiels wurde bereits abgeholt.');
+          return false;
+        }
+        const source = `minigame-daily:${claim.state.day}:${game}`;
+        const next = grantChest({ ...current, minigameDaily: claim.state }, claim.tier, source, minigameDailyNow);
+        dataRef.current = next;
+        setData(next);
+        notify(`${GAMES.find((entry) => entry.id === game)?.name || 'Minispiel'}: ${CHEST_DEFINITIONS[claim.tier].label} liegt im Tresor.`);
+        return true;
+      })) ?? false;
+    } finally {
+      setPendingMinigameClaim(null);
+    }
   }
   function openGame(id: GameId) { setPage('games'); setActiveGame(id); }
 
@@ -1306,17 +1423,45 @@ function Game({ initial }: { initial: PetData }) {
           ? <GameStage key={`${activeGame}-${memoryPairs}-${cupLevel}`} id={activeGame} name={currentGame.name} rules={currentGame.rules} best={data.highscores[activeGame] || 0}
               difficulty={activeGame === 'memory' ? memoryPairs : activeGame === 'bone' ? cupLevel : undefined} extras={data.owned}
               sound={sound} onRequestStart={requestStart} onComplete={completeGame} onOpenChest={openChest} onExit={() => setActiveGame(null)}/>
-          : <section className="page-grid">{GAMES.map((g) => <article className="panel game-card2" key={g.id} data-testid={`game-card-${g.id}`}>
+          : <div className="page-grid">
+            <section className="panel minigame-daily-panel" style={{ gridColumn: '1 / -1' }}>
+              <div className="panel-head"><h2 className="panel-title">Deine Minispiel-Tagesbelohnungen</h2><span className="stat-pill">Reset 00:00 · Europe/Berlin</span></div>
+              <p className="subline">Wiederholbare Runden teilen sich ein tägliches XP- und Münzlimit. Aufgaben, Challenges und Meilensteine bleiben davon unberührt.</p>
+              <div className="minigame-economy-grid">
+                <div className="minigame-economy-stat"><strong><Star size={15}/> XP aus Minispielen</strong><span>{minigameDaily.xp.toLocaleString('de-DE')} / {MINIGAME_DAILY_XP_CAP.toLocaleString('de-DE')}</span><div className="meter"><div className="meter-fill" style={{ width: `${Math.min(100, minigameDaily.xp / MINIGAME_DAILY_XP_CAP * 100)}%` }}/></div><small>{Math.max(0, MINIGAME_DAILY_XP_CAP - minigameDaily.xp).toLocaleString('de-DE')} XP übrig</small></div>
+                <div className="minigame-economy-stat"><strong><Coins size={15}/> Münzen aus Minispielen</strong><span>{minigameDaily.coins.toLocaleString('de-DE')} / {minigameCoinCap.toLocaleString('de-DE')}</span><div className="meter"><div className="meter-fill" style={{ width: `${Math.min(100, minigameDaily.coins / minigameCoinCap * 100)}%` }}/></div><small>{Math.max(0, minigameCoinCap - minigameDaily.coins).toLocaleString('de-DE')} Münzen übrig</small></div>
+                <div className="minigame-economy-stat"><strong><Target size={15}/> Tagesaufgaben</strong><span>{completedMinigameTasks} / {GAMES.length} abgeschlossen</span><small>Jedes Minispiel hat eigenen Fortschritt und eine eigene Kiste.</small></div>
+                <div className="minigame-economy-stat"><strong><Gift size={15}/> Kisten abgeholt</strong><span>{minigameDaily.claimed.length} / {GAMES.length} heute</span><small>Kisten müssen aktiv abgeholt werden; maximal eine je Spiel und Tag.</small></div>
+              </div>
+              <p className="minigame-chest-odds"><strong>Kisten-Chancen auf Level {level}:</strong> {CHEST_TIERS.map((tier) => `${CHEST_DEFINITIONS[tier].label.replace(' Kiste', '')} ${minigameDailyChestChances(level)[tier]}%`).join(' · ')}</p>
+              <p className="minigame-chest-odds">Schlüsselpreise im Laden passen sich deinem Level an. Das tägliche Minispiel-Limit gilt nicht für einmalige Belohnungen.</p>
+            </section>
+            {GAMES.map((g) => {
+              const progress = minigameDaily.taskPoints[g.id] || 0;
+              const claimed = minigameDaily.claimed.includes(g.id);
+              const complete = progress >= MINIGAME_DAILY_TASK_TARGET;
+              return <article className="panel game-card2" key={g.id} data-testid={`game-card-${g.id}`}>
             <div className="panel-head"><h2 className="panel-title">{g.name}</h2><span className="best-badge"><Trophy size={13}/> {data.highscores[g.id] || 0}</span></div>
             <p className="subline" style={{ minHeight: 32 }}>{g.desc}</p>
             {g.id === 'memory' && <div className="memory-difficulty">{[6, 8, 12].map((p) => <button key={p} className={`room-chip ${memoryPairs === p ? 'selected' : ''}`} onClick={() => setMemoryPairs(p)} data-testid={`memory-difficulty-${p}`}>{p === 6 ? 'Leicht' : p === 8 ? 'Mittel' : 'Schwer'} · {p}</button>)}</div>}
             {g.id === 'bone' && <div className="memory-difficulty">{['Leicht', 'Mittel', 'Schwer'].map((l, i) => <button key={l} className={`room-chip ${cupLevel === i ? 'selected' : ''}`} onClick={() => setCupLevel(i)} data-testid={`cups-difficulty-${i}`}>{l}</button>)}</div>}
             <div className="challenge-mini">{CHALLENGES.filter((c) => c.game === g.id).map((c) => <span key={c.id} className={data.challenges[c.id] ? 'done' : ''}><Target size={12}/> {c.title}</span>)}</div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}><button className="button orange" onClick={() => setActiveGame(g.id)} data-testid={`button-start-${g.id}`}><Play size={14}/> Spielen</button></div>
-          </article>)}</section>)}
+            <div className="minigame-task">
+              <div className="minigame-task-head"><strong>Tagesaufgabe</strong><span>{claimed ? 'Kiste abgeholt' : `${progress} / ${MINIGAME_DAILY_TASK_TARGET} Punkte`}</span></div>
+              <div className="meter"><div className="meter-fill" style={{ width: `${Math.min(100, progress / MINIGAME_DAILY_TASK_TARGET * 100)}%` }}/></div>
+              <small>{claimed ? 'Neue Aufgabe morgen um Mitternacht.' : complete ? 'Fertig — deine Kiste wartet.' : 'Starke Runden bringen mehr Aufgabenpunkte.'}</small>
+            </div>
+            <div className="minigame-card-actions">
+              {complete && !claimed && <button className="button orange" onClick={() => void claimMinigameDailyChestAction(g.id)} disabled={pendingMinigameClaim !== null} data-testid={`button-claim-minigame-chest-${g.id}`}><Gift size={14}/>{pendingMinigameClaim === g.id ? 'Wird abgeholt …' : 'Tageskiste abholen'}</button>}
+              {claimed && <span className="minigame-claimed"><Check size={14}/> Heute abgeholt</span>}
+              <button className="button" onClick={() => setActiveGame(g.id)} data-testid={`button-start-${g.id}`}><Play size={14}/> Spielen</button>
+            </div>
+          </article>;
+            })}
+          </div>)}
 
         {page === 'shop' && <section className="panel"><div className="panel-head"><h2 className="panel-title">Ein paar gute Dinge</h2><span className="stat-pill"><Coins size={14}/>{data.coins}</span></div><div className="room-controls" style={{ position: 'static', margin: '0 0 14px', flexWrap: 'wrap' }}>{(['food', 'toy', 'accessory', 'room', 'background', 'keys'] as const).map((tab) => <button className={`room-chip ${shopTab === tab ? 'selected' : ''}`} key={tab} onClick={() => setShopTab(tab)} data-testid={`shop-tab-${tab}`}>{tab === 'food' ? 'Futter & Pflege' : tab === 'toy' ? 'Spielzeug' : tab === 'accessory' ? 'Kleidung & Hüte' : tab === 'room' ? 'Zimmer' : tab === 'background' ? 'Hintergründe' : 'Schlüssel'}</button>)}</div>
-          {shopTab === 'keys' ? <div className="page-grid">{CHEST_TIERS.map((tier) => <div className="shop-item" key={tier} data-testid={`shop-key-${tier}`}><span className={`item-icon chest-key-icon rarity-${tier}`}><KeyRound size={24}/></span><div className="item-info"><div className="item-title">{CHEST_DEFINITIONS[tier].label}-Schlüssel</div><div className="item-meta">{data.world.keys[tier] || 0} vorhanden · ab Level {CHEST_UNLOCK_LEVEL[tier]}</div></div><button className="button small" onClick={() => void purchaseChestKeyAction(tier)} disabled={pendingKeyPurchase !== null || level < CHEST_UNLOCK_LEVEL[tier] || data.coins < CHEST_KEY_PRICES[tier]} data-testid={`button-buy-key-shop-${tier}`}><Coins size={13}/>{pendingKeyPurchase === tier ? 'Kaufe …' : CHEST_KEY_PRICES[tier]}</button></div>)}</div>
+          {shopTab === 'keys' ? <div className="page-grid">{CHEST_TIERS.map((tier) => { const price = chestKeyPrice(tier, level); return <div className="shop-item" key={tier} data-testid={`shop-key-${tier}`}><span className={`item-icon chest-key-icon rarity-${tier}`}><KeyRound size={24}/></span><div className="item-info"><div className="item-title">{CHEST_DEFINITIONS[tier].label}-Schlüssel</div><div className="item-meta">{data.world.keys[tier] || 0} vorhanden · ab Level {CHEST_UNLOCK_LEVEL[tier]}</div></div><button className="button small" onClick={() => void purchaseChestKeyAction(tier)} disabled={pendingKeyPurchase !== null || level < CHEST_UNLOCK_LEVEL[tier] || data.coins < price} data-testid={`button-buy-key-shop-${tier}`}><Coins size={13}/>{pendingKeyPurchase === tier ? 'Kaufe …' : price}</button></div>; })}</div>
              : <div className="page-grid">{ITEMS.filter((item) => item.type === shopTab && !item.craftOnly && !item.milestoneOnly).map((item) => <div className="shop-item" key={item.id} data-testid={`shop-item-${item.id}`}><ItemIcon item={item}/><div className="item-info"><div className="item-title">{item.name}</div><div className="item-meta">{item.unlockLevel && level < item.unlockLevel ? `Ab Level ${item.unlockLevel} freigeschaltet` : item.type === 'food' ? `${item.amount || 0}% ${NEEDS.find((n) => n.id === item.effect)?.name.toLowerCase() || 'Wirkung'} · Vorrat: ${data.inventory[item.id] || 0}` : item.type === 'room' ? 'Dekoration für dein Zuhause' : item.type === 'background' ? 'Ersetzt das Zimmerbild durch ein Motiv' : item.type === 'toy' ? item.desc : SLOT_OF[item.id] === 'hat' ? 'Kopfbedeckung' : SLOT_OF[item.id] === 'outfit' ? 'Kleidung' : 'Accessoire'}</div></div><button className="button small" onClick={() => buy(item)} disabled={(item.type !== 'food' && item.id !== 'shampoo' && data.owned.includes(item.id)) || (!!item.unlockLevel && level < item.unlockLevel)} data-testid={`button-buy-${item.id}`}><Coins size={13}/>{item.type !== 'food' && item.id !== 'shampoo' && data.owned.includes(item.id) ? 'Gekauft' : item.unlockLevel && level < item.unlockLevel ? `Level ${item.unlockLevel}` : item.price}</button></div>)}</div>}
         </section>}
 

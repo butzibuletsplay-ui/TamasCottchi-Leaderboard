@@ -197,6 +197,54 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /online/economy/minigames/complete:
+    post:
+      operationId: completeOnlineMinigameRound
+      tags: [online]
+      summary: Apply one minigame round under the server-owned daily economy caps
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OnlineMinigameRound"
+      responses:
+        "200":
+          description: Minigame reward applied or safely retried
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnlineEconomyActionResponse"
+        "409":
+          description: Daily reward state or request conflicts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /online/economy/minigames/chest/claim:
+    post:
+      operationId: claimOnlineMinigameDailyChest
+      tags: [online]
+      summary: Claim one completed daily minigame chest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OnlineMinigameChestClaim"
+      responses:
+        "200":
+          description: Daily minigame chest granted or safely retried
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnlineEconomyActionResponse"
+        "409":
+          description: Task incomplete or chest already claimed today
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /online/save/import:
     post:
       operationId: importOnlineSave
@@ -387,6 +435,30 @@ components:
           type: string
           format: uuid
       required: [locationId, requestId]
+    OnlineMinigameRound:
+      type: object
+      properties:
+        gameId:
+          type: string
+          enum: [catch, memory, turbo, bone, run]
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100000
+        requestId:
+          type: string
+          format: uuid
+      required: [gameId, score, requestId]
+    OnlineMinigameChestClaim:
+      type: object
+      properties:
+        gameId:
+          type: string
+          enum: [catch, memory, turbo, bone, run]
+        requestId:
+          type: string
+          format: uuid
+      required: [gameId, requestId]
     OnlineEconomyActionResponse:
       type: object
       properties:
@@ -399,7 +471,7 @@ components:
           format: date-time
         outcome:
           type: string
-          enum: [key-purchased, chest-opened, daily-chest-claimed]
+          enum: [key-purchased, chest-opened, daily-chest-claimed, minigame-completed, minigame-chest-claimed]
         reward:
           type: object
           additionalProperties: true

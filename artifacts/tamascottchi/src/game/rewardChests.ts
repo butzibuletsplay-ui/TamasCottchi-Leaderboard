@@ -2,7 +2,7 @@ import { LOCATIONS, itemById, type FullPetData, type RewardChestTier } from './d
 import { applicableArtifactBonus, applyArtifactBonus, ARTIFACTS, DUPLICATE_REWARDS, unlockArtifact } from './artifactSystem';
 import { type CollectionItem, type Rarity } from './collectionWorld';
 import { applyWeeklyMetric } from './worldEngine';
-import { CHEST_KEY_PRICES, chestDropChances, chestTierUnlocked, chooseChance } from '@workspace/game-economy';
+import { CHEST_KEY_PRICES, chestDropChances, chestKeyPrice, chestTierUnlocked, chooseChance } from '@workspace/game-economy';
 
 export { CHEST_TIERS } from '@workspace/game-economy';
 
@@ -42,6 +42,11 @@ function chestSourceLabel(source: string): string {
   }
   if (source.startsWith('weekly:')) return 'Wöchentliche Herausforderung';
   if (source.startsWith('challenge:')) return 'Einmaliger Minispiel-Meilenstein';
+  if (source.startsWith('minigame-daily:')) {
+    const gameId = source.split(':')[2];
+    const gameName = ({ catch: 'Fangspiel', memory: 'Gedächtnis', turbo: 'Turbo', bone: 'Becher', run: 'Laufspiel' } as Record<string, string>)[gameId] || 'Minispiel';
+    return `${gameName} · Tagesaufgabe`;
+  }
   if (source.startsWith('legacy-')) return 'Übernommene Belohnung';
   if (source === 'milestone:all-world-quests') return 'Alle Weltaufgaben abgeschlossen';
   if (source === 'milestone:all-minigame-challenges') return 'Alle Minispiel-Challenges';
@@ -70,7 +75,7 @@ export type BuyChestKeyResult =
 
 export function buyChestKey(data: FullPetData, tier: RewardChestTier, playerLevel: number): BuyChestKeyResult {
   if (!chestTierUnlocked(tier, playerLevel)) return { ok: false, reason: 'locked' };
-  const price = CHEST_KEY_PRICES[tier];
+  const price = chestKeyPrice(tier, playerLevel);
   if (!Number.isSafeInteger(price) || data.coins < price) return { ok: false, reason: 'not-enough-coins' };
   return {
     ok: true,

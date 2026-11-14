@@ -15,22 +15,28 @@ import { ARTIFACTS, artifactBonusPercent } from './artifactSystem';
 import { RARITY_LABEL } from './collectionWorld';
 
 export type ChallengeChestReward = { id: string; title: string; tier: RewardChestTier };
-export type RewardSummary = { coins: number; xp: number; newBest: boolean; best: number; challenges: string[]; challengeChests: ChallengeChestReward[]; reduced: boolean };
+export type RewardSummary = {
+  coins: number; xp: number; newBest: boolean; best: number; challenges: string[];
+  challengeChests: ChallengeChestReward[]; reduced: boolean;
+  dailyXp: number; dailyXpCap: number; dailyCoins: number; dailyCoinCap: number;
+  taskProgress: number; taskTarget: number; taskPointsEarned: number;
+};
 type Props = {
   id: GameId; name: string; rules: string; best: number; difficulty?: number; extras?: string[];
   sound: SoundFn;
   /** Checks/deducts energy. Returns false if the round may not start. */
   onRequestStart: () => boolean;
   /** Must grant rewards exactly once per session id. */
-  onComplete: (sessionId: string, result: GameResult) => RewardSummary;
+  onComplete: (game: GameId, sessionId: string, result: GameResult) => Promise<RewardSummary>;
   onOpenChest: (tier: RewardChestTier) => ChestOpenReward | null;
   onExit: () => void;
 };
 
 export function GameStage({ id, name, rules, best, difficulty, extras, sound, onRequestStart, onComplete, onOpenChest, onExit }: Props) {
-  const [phase, setPhase] = useState<'loading' | 'intro' | 'playing' | 'done'>('loading');
+  const [phase, setPhase] = useState<'loading' | 'intro' | 'playing' | 'rewarding' | 'done'>('loading');
   const [session, setSession] = useState('');
-  const [result, setResult] = useState<{ r: GameResult; reward: RewardSummary } | null>(null);
+  const [result, setResult] = useState<{ r: GameResult; reward: RewardSummary | null; sessionId: string } | null>(null);
+  const [submitError, setSubmitError] = useState(false);
   const [openedChests, setOpenedChests] = useState<Record<string, ChestOpenReward>>({});
   const finished = useRef<Set<string>>(new Set());
   const sessionRef = useRef(session); sessionRef.current = session;
@@ -55,17 +61,29 @@ export function GameStage({ id, name, rules, best, difficulty, extras, sound, on
     if (!onRequestStart()) return;
     setResult(null);
     setOpenedChests({});
-    setSession(`${id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
+    setSession(crypto.randomUUID());
     setPhase('playing'); sound(430);
   };
+  const submitResult = useCallback(async (sid: string, r: GameResult) => {
+    setSubmitError(false);
+    setPhase('rewarding');
+    try {
+      const reward = await completeRef.current(id, sid, r);
+      setResult({ r, reward, sessionId: sid });
+      setPhase('done');
+    } catch {
+      setResult({ r, reward: null, sessionId: sid });
+      setSubmitError(true);
+      setPhase('done');
+    }
+  }, [id]);
   const handleEnd = useCallback((r: GameResult) => {
     const sid = sessionRef.current;
     if (!sid || finished.current.has(sid)) return;
     finished.current.add(sid);
-    const reward = completeRef.current(sid, r);
-    setResult({ r, reward }); setPhase('done');
-  }, []);
-  const pendingChest = result?.reward.challengeChests.find((chest) => !openedChests[chest.id]);
+    void submitResult(sid, r);
+  }, [submitResult]);
+  const pendingChest = result?.reward?.challengeChests.find((chest) => !openedChests[chest.id]);
   const openNextChest = () => {
     if (!pendingChest) return;
     const reward = onOpenChest(pendingChest.tier);
@@ -74,9 +92,10 @@ export function GameStage({ id, name, rules, best, difficulty, extras, sound, on
 
   const common = { onEnd: handleEnd, sound, difficulty, extras };
   return <section className={`game-screen stage-${id}`} data-testid="game-board">
-    <div className="game-top"><button className="button small ghost" onClick={onExit} data-testid="button-exit-game"><ChevronLeft size={15}/> Zurück</button><span className="eyebrow">{name}</span><span className="stat-pill"><Trophy size={14}/>{best}</span></div>
+    <div className="game-top"><button className="button small ghost" onClick={onExit} disabled={phase === 'rewarding'} data-testid="button-exit-game"><ChevronLeft size={15}/> Zurück</button><span className="eyebrow">{name}</span><span className="stat-pill"><Trophy size={14}/>{best}</span></div>
     <div className="stage-body">
       {phase === 'loading' && <div className="stage-skeleton" data-testid="status-loading"><div/><div/><div/></div>}
+      {phase === 'rewarding' && <div className="stage-skeleton" role="status" data-testid="status-saving-game-reward"><div/><div/><div/><p>Belohnung wird sicher gespeichert …</p></div>}
       {phase === 'intro' && <div className="stage-intro"><img src={CHARACTER.happy} alt="" className="intro-pet"/><h2 className="panel-title">{name}</h2><p>{rules}</p><p className="eyebrow">BESTWERT {best} · KOSTET 8 ENERGIE</p><button className="button orange" onClick={start} data-testid="button-start-round"><Play size={15}/> Los geht's</button></div>}
       {phase === 'playing' && session && <div key={session}>
         {id === 'catch' && <CatchGame {...common}/>}
@@ -87,12 +106,15 @@ export function GameStage({ id, name, rules, best, difficulty, extras, sound, on
       </div>}
       {phase === 'done' && result && <div className="overlay-result" data-testid="game-result"><div className="result-card">
         <div className="result-scroll">
-          <img src={result.reward.newBest ? CHARACTER.excited : CHARACTER.happy} alt="" className="result-pet"/>
-          <div className="eyebrow">{result.reward.newBest ? 'NEUER BESTWERT' : 'RUNDENENDE'}</div>
+          <img src={result.reward?.newBest ? CHARACTER.excited : CHARACTER.happy} alt="" className="result-pet"/>
+          <div className="eyebrow">{result.reward?.newBest ? 'NEUER BESTWERT' : 'RUNDENENDE'}</div>
           <div className="score-big" data-testid="text-final-score">{result.r.score}</div>
-          <div className="result-rewards"><span><Coins size={14}/> +{result.reward.coins}</span><span><Star size={14}/> +{result.reward.xp} XP</span></div>
-          {result.reward.reduced && <p className="subline">Viele Runden heute: Belohnung halbiert.</p>}
-          {result.reward.challengeChests.map((chest) => {
+          {result.reward
+            ? <><div className="result-rewards"><span><Coins size={14}/> +{result.reward.coins}</span><span><Star size={14}/> +{result.reward.xp} XP</span></div>
+              {result.reward.reduced && <p className="subline">Viele Runden heute: Grundbelohnung halbiert.</p>}
+              <p className="subline">Tageslimit: {result.reward.dailyXp}/{result.reward.dailyXpCap} XP · {result.reward.dailyCoins}/{result.reward.dailyCoinCap} Coins · Tagesaufgabe {result.reward.taskProgress}/{result.reward.taskTarget}</p></>
+            : <p className="subline" role="alert">{submitError ? 'Die Belohnung konnte nicht gespeichert werden. Bitte versuche es erneut.' : 'Die Belohnung wartet auf die Cloud.'}</p>}
+          {result.reward?.challengeChests.map((chest) => {
             const opened = openedChests[chest.id];
             return <div key={chest.id} className={`challenge-pop ${opened ? 'opened' : ''}`}>
               <span>Herausforderung geschafft: {chest.title}</span>
@@ -115,12 +137,14 @@ export function GameStage({ id, name, rules, best, difficulty, extras, sound, on
               </small>}
             </div>;
           })}
-          {result.reward.challenges.filter((title) => !result.reward.challengeChests.some((chest) => chest.title === title)).map((title) => <p key={title} className="challenge-pop">Herausforderung geschafft: {title}</p>)}
+          {result.reward?.challenges.filter((title) => !result.reward!.challengeChests.some((chest) => chest.title === title)).map((title) => <p key={title} className="challenge-pop">Herausforderung geschafft: {title}</p>)}
         </div>
         <div className="dialog-actions result-actions">
           {pendingChest && <button className="button orange" onClick={openNextChest} data-testid="button-open-earned-chest"><Sparkles size={15}/> Kiste öffnen</button>}
           <button className="button" onClick={onExit} data-testid="button-games-done">Spielauswahl</button>
-          <button className="button ghost" onClick={start} data-testid="button-replay"><RotateCcw size={15}/> Nochmal</button>
+          {result.reward
+            ? <button className="button ghost" onClick={start} data-testid="button-replay"><RotateCcw size={15}/> Nochmal</button>
+            : <button className="button orange" onClick={() => void submitResult(result.sessionId, result.r)} data-testid="button-retry-game-reward"><RotateCcw size={15}/> Belohnung erneut senden</button>}
         </div>
       </div></div>}
     </div>

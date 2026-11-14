@@ -13,4 +13,6 @@ export const OnlineEconomyActionResponseOutcome = {
   'key-purchased': 'key-purchased',
   'chest-opened': 'chest-opened',
   'daily-chest-claimed': 'daily-chest-claimed',
+  'minigame-completed': 'minigame-completed',
+  'minigame-chest-claimed': 'minigame-chest-claimed',
 } as const;

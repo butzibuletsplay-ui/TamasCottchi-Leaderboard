@@ -3,6 +3,10 @@ import { clerkClient, getAuth } from "@clerk/express";
 import {
   ClaimOnlineDailyWorldChestBody,
   ClaimOnlineDailyWorldChestResponse,
+  ClaimOnlineMinigameDailyChestBody,
+  ClaimOnlineMinigameDailyChestResponse,
+  CompleteOnlineMinigameRoundBody,
+  CompleteOnlineMinigameRoundResponse,
   CreateOnlineProfileBody,
   GetOnlineProfileResponse,
   GetOnlineSaveResponse,
@@ -23,14 +27,21 @@ import { and, eq } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import {
-  CHEST_KEY_PRICES,
   CHEST_TIERS,
   CHEST_UNLOCK_LEVEL,
   COLLECTION_ITEM_LINKS,
   COLLECTION_RARITY_POOLS,
   artifactBonusForEquipped,
+  applyMinigameRound,
+  claimMinigameDailyChest,
+  chestKeyPrice,
   chestDropChances,
   chooseChance,
+  MINIGAME_DAILY_TASK_TARGET,
+  MINIGAME_DAILY_XP_CAP,
+  minigameDailyCoinCap,
+  minigameDailyDayKey,
+  normalizeMinigameDailyState,
   dailyWorldChestTier,
   highestUnlockedChestTier,
   MAX_PLAYER_XP,
@@ -38,6 +49,7 @@ import {
   playerLevelForXp,
   worldStageLevel,
   type CollectionRarity,
+  type MinigameId,
   type RewardChestTier,
 } from "@workspace/game-economy";
 
@@ -191,6 +203,8 @@ function normalizeEconomySave(input: JsonRecord, now: number): JsonRecord {
   const save = { ...input };
   const rawXp = integer(save.xp);
   const xp = integer(save.saveSchema) < 10 ? migrateLegacyPlayerXp(rawXp) : Math.min(MAX_PLAYER_XP, rawXp);
+  const playerLevel = playerLevelForXp(xp);
+  const minigameDaily = normalizeMinigameDailyState(save.minigameDaily, now, playerLevel);
   const world = { ...asRecord(save.world) };
   const keys = Object.fromEntries(CHEST_TIERS.map((tier) => [tier, integer(asRecord(world.keys)[tier])]));
   const instances = Array.isArray(world.chestInstances)
@@ -221,7 +235,8 @@ function normalizeEconomySave(input: JsonRecord, now: number): JsonRecord {
     ...save,
     coins: integer(save.coins),
     xp,
-    saveSchema: 10,
+    saveSchema: 11,
+    minigameDaily,
     collectionIds: stringArray(save.collectionIds),
     artifactLevels: { ...asRecord(save.artifactLevels) },
     owned: stringArray(save.owned),
@@ -242,13 +257,15 @@ function normalizeEconomySave(input: JsonRecord, now: number): JsonRecord {
 }
 
 function preserveServerEconomy(incoming: JsonRecord, current: JsonRecord): JsonRecord {
-  if (integer(current.economyVersion) < 1) return incoming;
+  const currentLevel = playerLevelForXp(integer(current.xp));
+  const minigameDaily = normalizeMinigameDailyState(current.minigameDaily, Date.now(), currentLevel);
+  if (integer(current.economyVersion) < 1) return { ...incoming, minigameDaily };
   const oldWorld = asRecord(current.world);
   const newWorld = asRecord(incoming.world);
   const openedChestIds = stringArray(oldWorld.openedChestIds);
   const chestInstances = [
     ...(Array.isArray(oldWorld.chestInstances) ? oldWorld.chestInstances : []),
-    ...(Array.isArray(newWorld.chestInstances) ? newWorld.chestInstances : []),
+      ...(Array.isArray(newWorld.chestInstances) ? newWorld.chestInstances : []).filter((entry) => !String(asRecord(entry).source || "").startsWith("minigame-daily:")),
   ].map((entry) => ({ ...asRecord(entry) }))
     .filter((entry) =>
       typeof entry.id === "string"
@@ -263,6 +280,7 @@ function preserveServerEconomy(incoming: JsonRecord, current: JsonRecord): JsonR
   return {
     ...incoming,
     economyVersion: 1,
+    minigameDaily,
     world: {
       ...newWorld,
       keys: oldWorld.keys,
@@ -449,7 +467,7 @@ router.use((_req, res, next) => {
 });
 
 type EconomyMutation =
-  | { ok: true; saveData: JsonRecord; outcome: "key-purchased" | "chest-opened" | "daily-chest-claimed"; reward?: JsonRecord }
+  | { ok: true; saveData: JsonRecord; outcome: "key-purchased" | "chest-opened" | "daily-chest-claimed" | "minigame-completed" | "minigame-chest-claimed"; reward?: JsonRecord }
   | { ok: false; status: number; error: string };
 
 async function runEconomyAction(
@@ -511,7 +529,7 @@ async function runEconomyAction(
     const savedState: JsonRecord = {
       ...mutation.saveData,
       xp: Math.max(0, Math.min(MAX_PLAYER_XP, integer(mutation.saveData.xp))),
-      saveSchema: 10,
+      saveSchema: 11,
       economyVersion: 1,
     };
     const response = PurchaseOnlineChestKeyResponse.parse({
@@ -559,7 +577,7 @@ router.post(
     const result = await runEconomyAction(playerId(res), requestId, "key-purchase", (save) => {
       const level = playerLevelForXp(integer(save.xp));
       if (level < CHEST_UNLOCK_LEVEL[tier]) return { ok: false, status: 409, error: `Dieser Schlüssel wird ab Level ${CHEST_UNLOCK_LEVEL[tier]} freigeschaltet.` };
-      const price = CHEST_KEY_PRICES[tier];
+      const price = chestKeyPrice(tier, level);
       if (integer(save.coins) < price) return { ok: false, status: 409, error: "Dafür fehlen Münzen." };
       const world = asRecord(save.world);
       const keys = asRecord(world.keys);
@@ -766,6 +784,126 @@ router.post(
   },
 );
 
+router.post(
+  "/online/economy/minigames/complete",
+  requireSameOrigin,
+  limitRequests(120, 60_000),
+  async (req, res): Promise<void> => {
+    const parsed = CompleteOnlineMinigameRoundBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Die Minispiel-Runde ist ungültig." });
+      return;
+    }
+    const { gameId, score, requestId } = parsed.data;
+    const result = await runEconomyAction(playerId(res), requestId, "minigame-complete", (save, now) => {
+      const level = playerLevelForXp(integer(save.xp));
+      const artifactLevels = asRecord(save.artifactLevels);
+      const payout = applyMinigameRound(
+        save.minigameDaily,
+        gameId as MinigameId,
+        score,
+        level,
+        now,
+        {
+          coins: artifactBonusForEquipped(stringArray(save.equippedArtifacts), artifactLevels, "coins", "games"),
+          xp: artifactBonusForEquipped(stringArray(save.equippedArtifacts), artifactLevels, "xp", "games"),
+        },
+      );
+      return {
+        ok: true,
+        saveData: {
+          ...save,
+          coins: integer(save.coins) + payout.coins,
+          xp: integer(save.xp) + payout.xp,
+          minigameDaily: payout.state,
+          lastUpdated: now,
+        },
+        outcome: "minigame-completed",
+        reward: {
+          gameId,
+          xp: payout.xp,
+          coins: payout.coins,
+          dailyXp: payout.state.xp,
+          dailyXpCap: MINIGAME_DAILY_XP_CAP,
+          dailyCoins: payout.state.coins,
+          dailyCoinCap: minigameDailyCoinCap(level),
+          rounds: payout.state.rounds,
+          taskProgress: payout.taskProgress,
+          taskTarget: MINIGAME_DAILY_TASK_TARGET,
+          taskPointsEarned: payout.taskPointsEarned,
+          reduced: payout.reduced,
+        },
+      };
+    });
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+    res.json(CompleteOnlineMinigameRoundResponse.parse(result.response));
+  },
+);
+
+router.post(
+  "/online/economy/minigames/chest/claim",
+  requireSameOrigin,
+  limitRequests(60, 60_000),
+  async (req, res): Promise<void> => {
+    const parsed = ClaimOnlineMinigameDailyChestBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Die Minispiel-Kiste ist ungültig." });
+      return;
+    }
+    const { gameId, requestId } = parsed.data;
+    const result = await runEconomyAction(playerId(res), requestId, "minigame-chest-claim", (save, now) => {
+      const level = playerLevelForXp(integer(save.xp));
+      const claim = claimMinigameDailyChest(save.minigameDaily, gameId as MinigameId, level, now, secureRandom);
+      if (!claim.ok) {
+        return {
+          ok: false,
+          status: 409,
+          error: claim.error === "task-incomplete"
+            ? "Schließe zuerst die Tagesaufgabe dieses Minispiels ab."
+            : "Die Tageskiste dieses Minispiels wurde bereits abgeholt.",
+        };
+      }
+      const world = asRecord(save.world);
+      const day = minigameDailyDayKey(now);
+      const source = `minigame-daily:${day}:${gameId}`;
+      const instances = Array.isArray(world.chestInstances)
+        ? world.chestInstances.map((entry) => ({ ...asRecord(entry) }))
+        : [];
+      if (instances.some((entry) => entry.source === source)) {
+        return { ok: false, status: 409, error: "Diese Tageskiste wurde bereits vergeben." };
+      }
+      const instance = { id: `chest-${source}`, source, tier: claim.tier, earnedAt: now };
+      instances.push(instance);
+      const rewardChests = Object.fromEntries(
+        CHEST_TIERS.map((tier) => [tier, instances.filter((entry) => entry.tier === tier).length]),
+      );
+      return {
+        ok: true,
+        saveData: {
+          ...save,
+          minigameDaily: claim.state,
+          world: {
+            ...world,
+            chestInstances: instances,
+            rewardChests,
+          },
+          lastUpdated: now,
+        },
+        outcome: "minigame-chest-claimed",
+        reward: { gameId, tier: claim.tier, day, source },
+      };
+    });
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+    res.json(ClaimOnlineMinigameDailyChestResponse.parse(result.response));
+  },
+);
+
 router.get("/online/profile", async (_req, res): Promise<void> => {
   const [profile] = await db
     .select()
@@ -921,7 +1059,7 @@ router.put(
     const saveData: JsonRecord = {
       ...rawSaveData,
       xp: integer(rawSaveData.saveSchema) < 10 ? migrateLegacyPlayerXp(rawXp) : Math.min(MAX_PLAYER_XP, rawXp),
-      saveSchema: 10,
+      saveSchema: 11,
     };
     const userId = playerId(res);
     const result = await db.transaction(async (tx) => {
@@ -1016,7 +1154,7 @@ router.post(
     const saveData: JsonRecord = {
       ...rawSaveData,
       xp: integer(rawSaveData.saveSchema) < 10 ? migrateLegacyPlayerXp(rawXp) : Math.min(MAX_PLAYER_XP, rawXp),
-      saveSchema: 10,
+      saveSchema: 11,
     };
     if (parsed.data.expectedRevision !== 0) {
       res.status(409).json({ error: "Ein bestehender Cloud-Spielstand wird nicht überschrieben." });
