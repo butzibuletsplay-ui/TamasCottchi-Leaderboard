@@ -1,16 +1,17 @@
 import { LOCATIONS, itemById, type FullPetData, type RewardChestTier } from './data';
-import { applicableArtifactBonus, applyArtifactBonus, ARTIFACTS, DUPLICATE_REWARDS, RARITY_CHEST_WEIGHTS, unlockArtifact } from './artifactSystem';
+import { applicableArtifactBonus, applyArtifactBonus, ARTIFACTS, DUPLICATE_REWARDS, unlockArtifact } from './artifactSystem';
 import { type CollectionItem, type Rarity } from './collectionWorld';
 import { applyWeeklyMetric } from './worldEngine';
+import { CHEST_KEY_PRICES, chestDropChances, chestTierUnlocked, chooseChance } from '@workspace/game-economy';
 
-export const CHEST_TIERS: RewardChestTier[] = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
+export { CHEST_TIERS } from '@workspace/game-economy';
 
-export const CHEST_DEFINITIONS: Record<RewardChestTier, { label: string; coins: number; xp: number }> = {
-  common: { label: 'Holzkiste', coins: 10, xp: 5 },
-  uncommon: { label: 'Wiesenkiste', coins: 16, xp: 8 },
-  rare: { label: 'Kristallkiste', coins: 25, xp: 13 },
-  epic: { label: 'Sternenkiste', coins: 42, xp: 22 },
-  legendary: { label: 'Königskiste', coins: 70, xp: 36 },
+export const CHEST_DEFINITIONS: Record<RewardChestTier, { label: string; coins: number; xp: number; keyPrice: number }> = {
+  common: { label: 'Gewöhnliche Kiste', coins: 10, xp: 5, keyPrice: CHEST_KEY_PRICES.common },
+  uncommon: { label: 'Ungewöhnliche Kiste', coins: 16, xp: 8, keyPrice: CHEST_KEY_PRICES.uncommon },
+  rare: { label: 'Seltene Kiste', coins: 25, xp: 13, keyPrice: CHEST_KEY_PRICES.rare },
+  epic: { label: 'Epische Kiste', coins: 42, xp: 22, keyPrice: CHEST_KEY_PRICES.epic },
+  legendary: { label: 'Legendäre Kiste', coins: 70, xp: 36, keyPrice: CHEST_KEY_PRICES.legendary },
 };
 
 export type ChestOpenReward = {
@@ -59,24 +60,39 @@ function nextIndex(random: () => number, length: number) {
   return Math.min(length - 1, Math.max(0, Math.floor(Math.max(0, Math.min(0.999999999, random())) * length)));
 }
 
-export function chooseRarity(tier: RewardChestTier, random: () => number = Math.random): Rarity {
-  const weights = RARITY_CHEST_WEIGHTS[tier];
-  const roll = Math.max(0, Math.min(99.999999999, random() * 100));
-  let cursor = 0;
-  for (const rarity of ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary'] as const) {
-    cursor += weights[rarity];
-    if (roll < cursor) return rarity;
-  }
-  return 'Legendary';
+export function chooseRarity(tier: RewardChestTier, random: () => number = Math.random, playerLevel = 1): Rarity {
+  return chooseChance(chestDropChances(tier, playerLevel), random) as Rarity;
+}
+
+export type BuyChestKeyResult =
+  | { ok: true; data: FullPetData }
+  | { ok: false; reason: 'locked' | 'not-enough-coins' };
+
+export function buyChestKey(data: FullPetData, tier: RewardChestTier, playerLevel: number): BuyChestKeyResult {
+  if (!chestTierUnlocked(tier, playerLevel)) return { ok: false, reason: 'locked' };
+  const price = CHEST_KEY_PRICES[tier];
+  if (!Number.isSafeInteger(price) || data.coins < price) return { ok: false, reason: 'not-enough-coins' };
+  return {
+    ok: true,
+    data: {
+      ...data,
+      coins: Math.max(0, data.coins - price),
+      world: {
+        ...data.world,
+        keys: { ...data.world.keys, [tier]: Math.min(1_000_000, (data.world.keys[tier] || 0) + 1) },
+      },
+    },
+  };
 }
 
 /** Opens one unique stored chest. Rarity is selected before the artifact pool, so pool sizes never skew odds. */
-export function openRewardChest(data: FullPetData, tier: RewardChestTier, random: () => number = Math.random): ChestOpenResult | null {
+export function openRewardChest(data: FullPetData, tier: RewardChestTier, random: () => number = Math.random, playerLevel = 1): ChestOpenResult | null {
+  if (!chestTierUnlocked(tier, playerLevel) || (data.world.keys[tier] || 0) < 1) return null;
   const chest = data.world.chestInstances.find((instance) => instance.tier === tier);
   if (!chest || data.world.openedChestIds.includes(chest.id)) return null;
 
   const definition = CHEST_DEFINITIONS[tier];
-  const rarity = chooseRarity(tier, random);
+  const rarity = chooseRarity(tier, random, playerLevel);
   const candidates = ARTIFACTS.filter((item) => item.rarity === rarity);
   const collectible = candidates.length ? candidates[nextIndex(random, candidates.length)] : undefined;
   const fallback = itemById(rarity === 'Legendary' ? 'legendary-essence' : rarity === 'Epic' ? 'epic-essence' : 'artifact-dust');
@@ -104,6 +120,7 @@ export function openRewardChest(data: FullPetData, tier: RewardChestTier, random
     world: {
       ...nextData.world,
       chestInstances,
+      keys: { ...nextData.world.keys, [tier]: Math.max(0, (nextData.world.keys[tier] || 0) - 1) },
       openedChestIds: [...new Set([...nextData.world.openedChestIds, chest.id])],
       rewardChests: { ...nextData.world.rewardChests, [tier]: nextCount },
     },

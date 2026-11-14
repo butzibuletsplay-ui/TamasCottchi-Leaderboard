@@ -394,6 +394,30 @@
 @media(prefers-reduced-motion:reduce){.inventory-card,.room-item{transition:none!important}}
 
 /* Scottchi 6.2 artifact workshop and region chest progression */
+.collection-view-tabs{display:flex;gap:7px;flex-wrap:wrap;margin:14px 0}
+.chest-collection{margin:16px 0}
+.chest-collection-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:12px}
+.chest-collection-card{min-width:0;padding:12px;border:1.5px solid #c6aa7b;border-radius:13px;background:#fffaf0;box-shadow:0 4px 12px #51391c12}
+.chest-collection-card.locked{opacity:.76;background:#f4efe4}
+.chest-collection-card-top{display:flex;align-items:center;gap:9px;min-height:66px}
+.chest-collection-card-top .reward-chest-art{width:76px;height:62px;flex:0 0 76px;object-fit:contain}
+.chest-collection-card-top h4{margin:2px 0 5px;font:600 17px Fredoka}
+.chest-key-count{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--muted)}
+.chest-drop-preview{display:grid;gap:5px;margin:8px 0;padding:9px;border-radius:9px;background:#fffdf7}
+.chest-drop-row{display:grid;grid-template-columns:92px minmax(32px,1fr) 34px;align-items:center;gap:6px;font-size:9px}
+.chest-drop-row>b{text-align:right;font:700 10px 'DM Mono'}
+.chest-drop-track{height:7px;overflow:hidden;border-radius:99px;background:#eee7d8}
+.chest-drop-track i{display:block;height:100%;min-width:0;border-radius:99px;background:#b18b5e}
+.chest-drop-track i.rarity-uncommon{background:#83a85b}.chest-drop-track i.rarity-rare{background:#5e98c3}.chest-drop-track i.rarity-epic{background:#a26ac6}.chest-drop-track i.rarity-legendary{background:#e2ad35}
+.chest-reward-examples{display:flex;align-items:center;gap:6px;min-height:36px;margin:6px 0}
+.chest-reward-examples>span{width:34px;height:34px;display:grid;place-items:center;border:1px solid #e5d6bc;border-radius:7px;background:#fff}
+.chest-reward-examples img{width:28px;height:28px;object-fit:contain}
+.chest-reward-examples small{margin-left:auto;font-size:9px;color:var(--muted);text-align:right}
+.chest-collection-actions{display:flex;justify-content:space-between;gap:8px;margin-top:8px}
+.chest-collection-actions .button{min-height:40px}
+.chest-needs-key{display:block;margin-top:6px;color:#8c6732;font-size:10px}
+.chest-opening{animation:chest-opening .38s ease-in-out both}
+@keyframes chest-opening{50%{transform:scale(1.18) rotate(-3deg);filter:brightness(1.25)}}
 .artifact-workshop{margin:18px 0;padding:16px;border:2px solid var(--ink);border-radius:14px;background:#fff8e9;box-shadow:var(--shadow)}
 .artifact-loadout{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:12px 0}
 .artifact-slot{min-width:0;min-height:78px;padding:7px 4px;display:grid;place-items:center;gap:4px;border:1.5px solid #b89460;border-radius:10px;background:#fffdf7;color:var(--ink)}
@@ -436,6 +460,7 @@
 .chest-reveal.rarity-legendary:before{content:"";position:absolute;inset:0;pointer-events:none;background-image:radial-gradient(circle at 12% 20%,#f1c74caa 1px,transparent 3px),radial-gradient(circle at 84% 22%,#f1c74caa 1.5px,transparent 4px),radial-gradient(circle at 20% 68%,#fff1a9 1px,transparent 3px),radial-gradient(circle at 78% 75%,#fff1a9 1.5px,transparent 4px);animation:artifact-glow 1.6s ease-in-out infinite alternate}
 @keyframes artifact-reveal-in{from{transform:translateY(10px) scale(.82);opacity:0}to{transform:translateY(0) scale(1);opacity:1}}
 @media(max-width:680px){
+ .chest-collection-card{padding:10px}.chest-collection-grid{grid-template-columns:1fr}.chest-collection-actions{gap:6px}.chest-collection-actions .button{padding:8px 7px;font-size:10px}
  .artifact-workshop{padding:12px}.artifact-grid{grid-template-columns:1fr 1fr;gap:6px}.artifact-card{gap:6px;padding:6px;min-height:72px}.artifact-card-art{width:52px;height:34px;flex-basis:52px}.artifact-card-copy b{font-size:10px}.artifact-card-copy small{font-size:9px}.artifact-equipped-badge{font-size:8px}
  .artifact-detail-body{padding:16px 15px 12px}.artifact-detail-art{width:min(100%,270px);min-height:0}.artifact-detail-actions{gap:7px;padding-right:12px;padding-left:12px}.artifact-detail-actions .button{padding:8px 5px;font-size:11px}
  .region-task-progress{gap:4px}.region-task-progress span{padding:6px 3px}.region-task-progress b{font-size:9px}.weekly-chest-status{font-size:10px}

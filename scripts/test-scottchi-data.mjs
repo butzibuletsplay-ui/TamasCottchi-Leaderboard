@@ -52,6 +52,11 @@ const artifactBuild = await build({
   define: { 'import.meta.env.BASE_URL': '"/"' },
 });
 const artifactModule = await import(`data:text/javascript;base64,${Buffer.from(artifactBuild.outputFiles[0].text).toString('base64')}`);
+const economyBuild = await build({
+  entryPoints: ['lib/game-economy/src/index.ts'],
+  bundle: true, write: false, format: 'esm', platform: 'node',
+});
+const economy = await import(`data:text/javascript;base64,${Buffer.from(economyBuild.outputFiles[0].text).toString('base64')}`);
 const timeBuild = await build({
   entryPoints: ['artifacts/tamascottchi/src/game/worldClock.ts'],
   bundle: true, write: false, format: 'esm', platform: 'node',
@@ -203,14 +208,15 @@ test('schema 6 saves keep a raw 6.1 backup and migrate unopened chest counts', (
   assert.equal(next.coins, 275);
   assert.deepEqual(next.owned, ['ball']);
 });
-test('challenge rewards no longer issue repeatable chests and stored chest instances open once', () => {
+test('keyed chests open once and consume one matching key', () => {
   const chestTiers = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
   assert.ok(dataModule.CHALLENGES.every((challenge) => !challenge.chestTier && challenge.dust > 0));
-  let data = normalize({ ...initialData(), world: { ...initialData().world, rewardChests: Object.fromEntries(chestTiers.map((tier) => [tier, 1])) } });
+  let data = normalize({ ...initialData(), coins: 5000, xp: 2000, world: { ...initialData().world, keys: Object.fromEntries(chestTiers.map((tier) => [tier, 1])), rewardChests: Object.fromEntries(chestTiers.map((tier) => [tier, 1])) } });
   for (const tier of chestTiers) {
-    const opened = chestModule.openRewardChest(data, tier, () => 0);
+    const opened = chestModule.openRewardChest(data, tier, () => 0, 21);
     assert.ok(opened, `${tier} chest should open`);
     assert.equal(opened.data.world.rewardChests[tier], 0);
+    assert.equal(opened.data.world.keys[tier], 0);
     assert.equal(opened.data.coins, data.coins + chestModule.CHEST_DEFINITIONS[tier].coins);
     assert.equal(opened.data.xp, data.xp + chestModule.CHEST_DEFINITIONS[tier].xp);
     assert.equal(opened.data.world.chestInstances.length, data.world.chestInstances.length - 1);
@@ -219,7 +225,7 @@ test('challenge rewards no longer issue repeatable chests and stored chest insta
   }
   const commonFinds = worldModule.COLLECTION_ITEMS.filter((item) => item.rarity === 'Common').map((item) => item.id);
   const fullAlbum = normalize({
-    ...initialData(), collectionIds: commonFinds, world: { ...initialData().world, discoveries: commonFinds, rewardChests: { common: 1 } },
+    ...initialData(), collectionIds: commonFinds, world: { ...initialData().world, keys: { common: 1 }, discoveries: commonFinds, rewardChests: { common: 1 } },
   });
   const duplicate = chestModule.openRewardChest(fullAlbum, 'common', () => 0);
   assert.equal(duplicate.reward.isCollectionFind, false);
@@ -227,25 +233,38 @@ test('challenge rewards no longer issue repeatable chests and stored chest insta
   assert.equal(duplicate.reward.duplicateDust, 5);
   assert.equal(duplicate.data.inventory['artifact-dust'], (fullAlbum.inventory['artifact-dust'] || 0) + 5);
   assert.equal(chestModule.openRewardChest(duplicate.data, 'common'), null);
+  assert.equal(chestModule.openRewardChest(normalize({ ...initialData(), world: { ...initialData().world, rewardChests: { common: 1 } } }), 'common'), null, 'a chest without its key stays unopened');
 });
-test('all rarity tables total 100 percent and 100,000 chest simulations match their configured weights', () => {
+test('world rarity tables match configured weights and all boosted chests total 100 percent', () => {
   const rarities = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary'];
-  for (const [tier, weights] of Object.entries(artifactModule.RARITY_CHEST_WEIGHTS)) {
-    assert.equal(Object.values(weights).reduce((sum, weight) => sum + weight, 0), 100, `${tier} total`);
+  for (const row of economy.WORLD_LEVEL_DROP_TABLE) {
+    assert.equal(Object.values(row.chances).reduce((sum, weight) => sum + weight, 0), 100, `${row.minLevel} level table`);
+  }
+  for (const level of [1, 3, 5, 7, 9, 11, 16, 21]) {
+    for (const tier of economy.CHEST_TIERS) {
+      const chances = economy.chestDropChances(tier, level);
+      assert.equal(Object.values(chances).reduce((sum, weight) => sum + weight, 0), 100, `${tier} at ${level}`);
+    }
+  }
+  for (const level of [1, 3, 5, 7, 9, 11, 16, 21]) {
+    const weights = economy.worldLevelDropChances(level);
     let state = 0x12345678;
     const random = () => {
       state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
       return state / 0x1_0000_0000;
     };
     const counts = Object.fromEntries(rarities.map((rarity) => [rarity, 0]));
-    for (let draw = 0; draw < 100_000; draw += 1) counts[chestModule.chooseRarity(tier, random)] += 1;
+    for (let draw = 0; draw < 100_000; draw += 1) counts[economy.chooseChance(weights, random)] += 1;
     for (const rarity of rarities) {
       const expected = weights[rarity] / 100;
       const actual = counts[rarity] / 100_000;
       const tolerance = expected === 0 ? 0 : Math.max(0.0012, 6 * Math.sqrt(expected * (1 - expected) / 100_000));
-      assert.ok(Math.abs(actual - expected) <= tolerance, `${tier}/${rarity}: expected ${expected}, got ${actual}`);
+      assert.ok(Math.abs(actual - expected) <= tolerance, `level ${level}/${rarity}: expected ${expected}, got ${actual}`);
     }
   }
+  assert.equal(economy.worldLevelDropChances(1).Legendary, 0);
+  assert.equal(economy.chestDropChances('legendary', 2).Legendary, 0);
+  assert.equal(economy.dailyWorldChestTier(21, () => 0), 'common', 'daily chests never award epic or legendary tiers');
 });
 test('legacy collection finds migrate to level-one artifacts without losing balances or chests', () => {
   storage.clear();
@@ -436,7 +455,7 @@ test('resource nodes award once, stay exhausted until their configured respawn, 
   assert.equal(respawn.data.inventory['bone-scrap'], (base.inventory['bone-scrap'] || 0) + 4);
 });
 
-test('regional daily tasks pay once, offer one chest per region, and share the three-chest cap', () => {
+test('regional daily tasks award one chest per unlocked region and reset after Berlin day rollover', () => {
   const start = Date.now() + 60_000;
   let data = worldDataAt(start);
   data = worldEngine.recordRegionActivity(data, 'park', 4, 2, 0, start, 1);
@@ -458,14 +477,14 @@ test('regional daily tasks pay once, offer one chest per region, and share the t
       }])),
     },
   };
-  for (const region of readyRegions.slice(0, 3)) {
-    const result = worldEngine.claimRegionDailyChest(data, region, start, 1, false, () => 0);
+  for (const region of readyRegions) {
+    const result = worldEngine.claimRegionDailyChest(data, region, start, 8, false, () => 0);
     assert.equal(result.outcome, 'claimed');
     data = result.data;
   }
-  assert.equal(data.world.dailyChestCount, 3);
-  assert.equal(worldEngine.claimRegionDailyChest(data, 'beach', start, 1).outcome, 'daily-limit');
-  assert.equal(worldEngine.claimRegionDailyChest(data, 'park', start, 1).outcome, 'already-claimed');
+  assert.equal(data.world.dailyChestCount, 4);
+  assert.equal(worldEngine.claimRegionDailyChest(data, 'beach', start, 8).outcome, 'already-claimed');
+  assert.equal(worldEngine.claimRegionDailyChest(data, 'park', start, 8).outcome, 'already-claimed');
   const nextDay = worldEngine.ensureWorldDay(data, start + 26 * 60 * 60 * 1000, 1);
   assert.equal(nextDay.world.dailyChestCount, 0);
   assert.deepEqual(nextDay.world.dailyChestLocations, []);

@@ -1,5 +1,6 @@
 import type { FullPetData, RewardChestTier } from './data';
 import { COLLECTION_ITEM_LINKS, COLLECTION_ITEMS, type CollectionItem, type Rarity } from './collectionWorld';
+import { chestDropChances, chooseChance, type CollectionRarity } from '@workspace/game-economy';
 
 export const ARTIFACT_MAX_LEVEL = 20;
 export const ARTIFACT_SLOTS = [
@@ -20,14 +21,6 @@ export const MINIGAME_SCORE_CHEST_MILESTONES = [
   { id: 'score-1000', score: 1000, tier: 'common' as const, title: 'Erster Tausender', dust: 20 },
   { id: 'score-5000', score: 5000, tier: 'uncommon' as const, title: 'Punkte-Meister', dust: 40 },
 ];
-
-export const RARITY_CHEST_WEIGHTS: Record<RewardChestTier, Record<Rarity, number>> = {
-  common: { Common: 80, Uncommon: 18, Rare: 1.8, Epic: 0.2, Legendary: 0 },
-  uncommon: { Common: 45, Uncommon: 45, Rare: 9, Epic: 1, Legendary: 0 },
-  rare: { Common: 15, Uncommon: 45, Rare: 35, Epic: 4.8, Legendary: 0.2 },
-  epic: { Common: 0, Uncommon: 20, Rare: 55, Epic: 24, Legendary: 1 },
-  legendary: { Common: 0, Uncommon: 0, Rare: 25, Epic: 55, Legendary: 20 },
-};
 
 export const DUPLICATE_REWARDS: Record<Rarity, { dust: number; epicEssence?: number; legendaryEssence?: number }> = {
   Common: { dust: 5 },
@@ -292,7 +285,7 @@ export function grantRegularChest(
   earnedAt: number,
   dailyLocation = source,
 ): FullPetData {
-  if (data.world.dailyChestLocations.includes(dailyLocation) || data.world.dailyChestCount >= 3) return data;
+  if (data.world.dailyChestLocations.includes(dailyLocation)) return data;
   const next = grantChest(data, tier, source, earnedAt);
   if (next === data) return data;
   return {

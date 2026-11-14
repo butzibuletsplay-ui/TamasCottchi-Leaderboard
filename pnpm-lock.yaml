@@ -187,6 +187,9 @@ importers:
       '@workspace/db':
         specifier: workspace:*
         version: link:../../lib/db
+      '@workspace/game-economy':
+        specifier: workspace:*
+        version: link:../../lib/game-economy
       cookie-parser:
         specifier: ^1.4.7
         version: 1.4.7
@@ -425,6 +428,9 @@ importers:
       '@clerk/react':
         specifier: ^6.18.7
         version: 6.18.7(react-dom@19.1.4(react@19.1.4))(react@19.1.4)
+      '@workspace/game-economy':
+        specifier: workspace:*
+        version: link:../../lib/game-economy
     devDependencies:
       '@hookform/resolvers':
         specifier: ^3.10.0
@@ -658,6 +664,8 @@ importers:
       drizzle-kit:
         specifier: ^0.31.11
         version: 0.31.11
+
+  lib/game-economy: {}
 
   scripts:
     devDependencies:

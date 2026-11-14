@@ -4,12 +4,13 @@ import type { GameId } from './engine';
 import { absenceDecay, initialPersonality, type Personality } from './personality';
 import { worldDayKey, worldWeekKey } from './worldClock';
 import { COLLECTION_ITEMS, COLLECTION_ITEM_LINKS } from './collectionWorld';
+import { CHEST_TIERS, type RewardChestTier } from '@workspace/game-economy';
 
 export type Room = 'Wohnzimmer' | 'Küche' | 'Bad' | 'Schlafzimmer' | 'Spielzimmer';
 export type NeedKey = 'hunger' | 'glueck' | 'energie' | 'sauberkeit';
 export type GameRecord = { id: string; game: GameId; score: number; date: number };
 export type ItemType = 'food' | 'toy' | 'accessory' | 'room' | 'background' | 'material';
-export type RewardChestTier = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
+export type { RewardChestTier } from '@workspace/game-economy';
 export type RewardChestInstance = { id: string; tier: RewardChestTier; source: string; earnedAt: number };
 export type Item = {
   id: string; name: string; icon: string; price: number; type: ItemType; effect?: NeedKey; amount?: number;
@@ -63,6 +64,7 @@ export type PetData = {
     fishingRewardsToday?: number;
     lastKnownWorldTime?: number;
     rewardChests?: Partial<Record<RewardChestTier, number>>;
+    keys?: Partial<Record<RewardChestTier, number>>;
     chestInstances?: RewardChestInstance[];
     openedChestIds?: string[];
     dailyChestCount?: number;
@@ -83,7 +85,7 @@ export type FullPetData = PetData
   & { world: Required<NonNullable<PetData['world']>> & Required<Pick<NonNullable<PetData['world']>,
     'resourceCollectedAt' | 'worldDay' | 'dailyGoals' | 'dailyMetrics' | 'dailyClaimed' | 'dailyVisitedLocations' |
     'dailyMasteryGained' | 'weeklyKey' | 'weeklyMetrics' | 'weeklyClaimed' | 'areaMastery' | 'worldEvent' | 'worldEventClaimedDay' |
-    'fishingRewardsToday' | 'lastKnownWorldTime' | 'rewardChests' | 'chestInstances' | 'openedChestIds' | 'dailyChestCount' | 'dailyChestLocations' |
+    'fishingRewardsToday' | 'lastKnownWorldTime' | 'rewardChests' | 'keys' | 'chestInstances' | 'openedChestIds' | 'dailyChestCount' | 'dailyChestLocations' |
     'regionDailyProgress' | 'weeklyChestClaimed' | 'milestoneChestsClaimed'>> };
 
 export const STORE_KEY = 'tamascottchi-save-v1';
@@ -265,7 +267,7 @@ export const initialData = (): FullPetData => ({
     worldDay: worldDayKey(Date.now()), dailyGoals: [], dailyMetrics: {}, dailyClaimed: [], dailyVisitedLocations: [],
      dailyMasteryGained: 0, weeklyKey: worldWeekKey(Date.now()), weeklyMetrics: {}, weeklyClaimed: [],
      areaMastery: {}, worldEvent: null, worldEventClaimedDay: '',
-       fishingRewardsToday: 0, lastKnownWorldTime: Date.now(), rewardChests: {}, chestInstances: [], openedChestIds: [],
+       fishingRewardsToday: 0, lastKnownWorldTime: Date.now(), rewardChests: {}, keys: { common: 0, uncommon: 0, rare: 0, epic: 0, legendary: 0 }, chestInstances: [], openedChestIds: [],
       dailyChestCount: 0, dailyChestLocations: [], regionDailyProgress: {}, weeklyChestClaimed: false,
       milestoneChestsClaimed: [], petPosition: { x: 32, y: 38 },
    },
@@ -302,7 +304,7 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
   const savedWeeklyMetrics = { ...(parsed.world?.weeklyMetrics || {}) };
   if (savedWeeklyMetrics.materials === undefined) savedWeeklyMetrics.materials = Math.max(0, num(savedWeeklyMetrics.gather, 0));
   if (savedWeeklyMetrics.activities === undefined) savedWeeklyMetrics.activities = Math.max(0, num(savedWeeklyMetrics.gather, 0));
-  const validTiers: RewardChestTier[] = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
+  const validTiers: RewardChestTier[] = [...CHEST_TIERS];
   const chestInstances = Array.isArray(parsed.world?.chestInstances) && parsed.world.chestInstances.length > 0
     ? parsed.world.chestInstances
       .filter((chest) => chest && typeof chest.id === 'string' && typeof chest.source === 'string' && validTiers.includes(chest.tier) && Number.isFinite(chest.earnedAt))
@@ -381,9 +383,10 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
       fishingRewardsToday: Math.max(0, Math.floor(num(parsed.world?.fishingRewardsToday, 0))),
       lastKnownWorldTime: Math.max(num(parsed.world?.lastKnownWorldTime, now), num(parsed.lastUpdated, now)),
       rewardChests: chestCounts,
+      keys: Object.fromEntries(CHEST_TIERS.map((tier) => [tier, Math.max(0, Math.min(1_000_000, Math.floor(num(parsed.world?.keys?.[tier], 0))))])) as Record<RewardChestTier, number>,
       chestInstances,
        openedChestIds: [...new Set(Array.isArray(parsed.world?.openedChestIds) ? parsed.world.openedChestIds.filter((id) => typeof id === 'string') : [])],
-      dailyChestCount: Math.max(0, Math.min(3, Math.floor(num(parsed.world?.dailyChestCount, 0)))),
+      dailyChestCount: Math.max(0, Math.min(1000, Math.floor(num(parsed.world?.dailyChestCount, 0)))),
       dailyChestLocations: [...new Set(Array.isArray(parsed.world?.dailyChestLocations) ? parsed.world.dailyChestLocations.filter((id) => typeof id === 'string') : [])],
       regionDailyProgress: Object.fromEntries(Object.entries(parsed.world?.regionDailyProgress || {}).map(([id, progress]) => [id, {
         materials: Math.max(0, Math.floor(num(progress?.materials, 0))),

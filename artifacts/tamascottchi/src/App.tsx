@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth, useUser } from '@clerk/react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  Activity, Award, Backpack, Bath, BookOpen, Check, CircleHelp, Coins, Download, Dumbbell, Gamepad2, Gift, Hammer, Heart, Home, House,
+  Activity, Award, Backpack, Bath, BookOpen, Check, CircleHelp, Coins, Download, Dumbbell, Gamepad2, Gift, Hammer, Heart, Home, House, KeyRound,
   Medal, Moon, Play, Plus, Settings, Shirt, ShoppingBag, Sparkles, Star, Target, Trophy,
   Utensils, Volume2, VolumeX, X, Sun, Sunset, Library, Shirt as ShirtIcon, Compass, Users,
 } from 'lucide-react';
@@ -32,12 +32,13 @@ import { completeQuestAction } from './game/questEngine';
 import { hasMaterialArt, MaterialArt } from './game/MaterialArt';
 import { getGetOnlineProfileQueryKey, getGetOnlineSaveQueryKey, useGetOnlineProfile, useGetOnlineSave, useUpdateOnlineSave } from '@workspace/api-client-react';
 import { OnlinePage } from './game/OnlinePage';
-import { openRewardChest } from './game/rewardChests';
+import { buyChestKey, CHEST_DEFINITIONS, CHEST_TIERS, openRewardChest } from './game/rewardChests';
 import {
   applicableArtifactBonus, applyArtifactBonus, equipArtifact, grantRegularChest, unlockArtifact,
   grantMilestoneChest, MINIGAME_SCORE_CHEST_MILESTONES, upgradeArtifact,
 } from './game/artifactSystem';
 import { COLLECTION_ITEM_LINKS } from './game/collectionWorld';
+import { CHEST_KEY_PRICES, CHEST_UNLOCK_LEVEL } from '@workspace/game-economy';
 type PetData = FullPetData;
 
 type PetAction = 'idle' | 'happy' | 'eating' | 'washing' | 'petting' | 'sleeping' | 'spin' | 'wiggle' | 'run' | 'chew' | 'wake' | 'yawn' | 'cuddle';
@@ -164,7 +165,7 @@ function Game({ initial }: { initial: PetData }) {
   const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>('offline');
   const cloudSyncBusy = useRef(false);
   const [page, setPage] = useState('home');
-  const [shopTab, setShopTab] = useState<Item['type']>('food');
+  const [shopTab, setShopTab] = useState<Item['type'] | 'keys'>('food');
   const [selectedFood, setSelectedFood] = useState('kibble');
   const [modal, setModal] = useState<'settings' | 'reset' | 'import' | 'name' | null>(null);
   const [nameDraft, setNameDraft] = useState(data.name);
@@ -584,8 +585,11 @@ function Game({ initial }: { initial: PetData }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sound]);
   const openChest = useCallback((tier: RewardChestTier) => {
-    const opened = openRewardChest(dataRef.current, tier);
-    if (!opened) return null;
+    const opened = openRewardChest(dataRef.current, tier, Math.random, levelFor(dataRef.current.xp));
+    if (!opened) {
+      notify((dataRef.current.world.keys[tier] || 0) < 1 ? `Für diese Kiste brauchst du einen ${CHEST_DEFINITIONS[tier].label}-Schlüssel.` : 'Diese Kiste ist noch nicht verfügbar.');
+      return null;
+    }
     const next = advanceDaily(opened.data, 'coins', opened.reward.coins);
     dataRef.current = next;
     setData(next);
@@ -597,6 +601,18 @@ function Game({ initial }: { initial: PetData }) {
     if (opened.reward.rarity === 'Legendary') cheer(3000);
     return opened.reward;
   }, [sound]);
+  function purchaseChestKey(tier: RewardChestTier): boolean {
+    const result = buyChestKey(dataRef.current, tier, levelFor(dataRef.current.xp));
+    if (!result.ok) {
+      notify(result.reason === 'locked' ? `Der Schlüssel wird ab Level ${CHEST_UNLOCK_LEVEL[tier]} freigeschaltet.` : 'Dafür fehlen Münzen.');
+      return false;
+    }
+    dataRef.current = result.data;
+    setData(result.data);
+    notify(`${CHEST_DEFINITIONS[tier].label}-Schlüssel gekauft.`);
+    sound(760);
+    return true;
+  }
   function openGame(id: GameId) { setPage('games'); setActiveGame(id); }
 
   // ---------- care ----------
@@ -1013,7 +1029,7 @@ function Game({ initial }: { initial: PetData }) {
         </>}
 
         {page === 'world' && <World data={data} level={level} serverClockOffsetMs={serverClockOffsetMs} onChange={changeWorld} onNotice={notify} onStore={(tab) => { setShopTab(tab); setPage('shop'); }}/>}
-        {page === 'collections' && <CollectionsPage data={data} playerLevel={level} onClaim={claimWorldReward} onUpgradeArtifact={upgradeCollectedArtifact} onToggleArtifact={toggleArtifactEquipment}/>}
+        {page === 'collections' && <CollectionsPage data={data} playerLevel={level} onClaim={claimWorldReward} onUpgradeArtifact={upgradeCollectedArtifact} onToggleArtifact={toggleArtifactEquipment} onBuyChestKey={purchaseChestKey} onOpenChest={openChest}/>}
         {page === 'inventory' && <InventoryPage data={data} onUse={useInventoryItem} onEquip={equip} onPlace={equip} onOpenChest={openChest}/>}
         {page === 'crafting' && <CraftingPage data={data} onCraft={craft}/>}
         {page === 'journal' && <JournalPage data={data}/>}
@@ -1032,8 +1048,9 @@ function Game({ initial }: { initial: PetData }) {
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}><button className="button orange" onClick={() => setActiveGame(g.id)} data-testid={`button-start-${g.id}`}><Play size={14}/> Spielen</button></div>
           </article>)}</section>)}
 
-        {page === 'shop' && <section className="panel"><div className="panel-head"><h2 className="panel-title">Ein paar gute Dinge</h2><span className="stat-pill"><Coins size={14}/>{data.coins}</span></div><div className="room-controls" style={{ position: 'static', margin: '0 0 14px', flexWrap: 'wrap' }}>{(['food', 'toy', 'accessory', 'room', 'background'] as const).map((tab) => <button className={`room-chip ${shopTab === tab ? 'selected' : ''}`} key={tab} onClick={() => setShopTab(tab)} data-testid={`shop-tab-${tab}`}>{tab === 'food' ? 'Futter & Pflege' : tab === 'toy' ? 'Spielzeug' : tab === 'accessory' ? 'Kleidung & Hüte' : tab === 'room' ? 'Zimmer' : 'Hintergründe'}</button>)}</div>
-          <div className="page-grid">{ITEMS.filter((item) => item.type === shopTab && !item.craftOnly).map((item) => <div className="shop-item" key={item.id} data-testid={`shop-item-${item.id}`}><ItemIcon item={item}/><div className="item-info"><div className="item-title">{item.name}</div><div className="item-meta">{item.unlockLevel && level < item.unlockLevel ? `Ab Level ${item.unlockLevel} freigeschaltet` : item.type === 'food' ? `${item.amount || 0}% ${NEEDS.find((n) => n.id === item.effect)?.name.toLowerCase() || 'Wirkung'} · Vorrat: ${data.inventory[item.id] || 0}` : item.type === 'room' ? 'Dekoration für dein Zuhause' : item.type === 'background' ? 'Ersetzt das Zimmerbild durch ein Motiv' : item.type === 'toy' ? item.desc : SLOT_OF[item.id] === 'hat' ? 'Kopfbedeckung' : SLOT_OF[item.id] === 'outfit' ? 'Kleidung' : 'Accessoire'}</div></div><button className="button small" onClick={() => buy(item)} disabled={(item.type !== 'food' && item.id !== 'shampoo' && data.owned.includes(item.id)) || (!!item.unlockLevel && level < item.unlockLevel)} data-testid={`button-buy-${item.id}`}><Coins size={13}/>{item.type !== 'food' && item.id !== 'shampoo' && data.owned.includes(item.id) ? 'Gekauft' : item.unlockLevel && level < item.unlockLevel ? `Level ${item.unlockLevel}` : item.price}</button></div>)}</div>
+        {page === 'shop' && <section className="panel"><div className="panel-head"><h2 className="panel-title">Ein paar gute Dinge</h2><span className="stat-pill"><Coins size={14}/>{data.coins}</span></div><div className="room-controls" style={{ position: 'static', margin: '0 0 14px', flexWrap: 'wrap' }}>{(['food', 'toy', 'accessory', 'room', 'background', 'keys'] as const).map((tab) => <button className={`room-chip ${shopTab === tab ? 'selected' : ''}`} key={tab} onClick={() => setShopTab(tab)} data-testid={`shop-tab-${tab}`}>{tab === 'food' ? 'Futter & Pflege' : tab === 'toy' ? 'Spielzeug' : tab === 'accessory' ? 'Kleidung & Hüte' : tab === 'room' ? 'Zimmer' : tab === 'background' ? 'Hintergründe' : 'Kistenschlüssel'}</button>)}</div>
+          {shopTab === 'keys' ? <div className="page-grid">{CHEST_TIERS.map((tier) => <div className="shop-item" key={tier} data-testid={`shop-key-${tier}`}><span className={`item-icon chest-key-icon rarity-${tier}`}><KeyRound size={24}/></span><div className="item-info"><div className="item-title">{CHEST_DEFINITIONS[tier].label}-Schlüssel</div><div className="item-meta">{data.world.keys[tier] || 0} vorhanden · ab Level {CHEST_UNLOCK_LEVEL[tier]}</div></div><button className="button small" onClick={() => purchaseChestKey(tier)} disabled={level < CHEST_UNLOCK_LEVEL[tier] || data.coins < CHEST_KEY_PRICES[tier]} data-testid={`button-buy-key-shop-${tier}`}><Coins size={13}/>{CHEST_KEY_PRICES[tier]}</button></div>)}</div>
+            : <div className="page-grid">{ITEMS.filter((item) => item.type === shopTab && !item.craftOnly).map((item) => <div className="shop-item" key={item.id} data-testid={`shop-item-${item.id}`}><ItemIcon item={item}/><div className="item-info"><div className="item-title">{item.name}</div><div className="item-meta">{item.unlockLevel && level < item.unlockLevel ? `Ab Level ${item.unlockLevel} freigeschaltet` : item.type === 'food' ? `${item.amount || 0}% ${NEEDS.find((n) => n.id === item.effect)?.name.toLowerCase() || 'Wirkung'} · Vorrat: ${data.inventory[item.id] || 0}` : item.type === 'room' ? 'Dekoration für dein Zuhause' : item.type === 'background' ? 'Ersetzt das Zimmerbild durch ein Motiv' : item.type === 'toy' ? item.desc : SLOT_OF[item.id] === 'hat' ? 'Kopfbedeckung' : SLOT_OF[item.id] === 'outfit' ? 'Kleidung' : 'Accessoire'}</div></div><button className="button small" onClick={() => buy(item)} disabled={(item.type !== 'food' && item.id !== 'shampoo' && data.owned.includes(item.id)) || (!!item.unlockLevel && level < item.unlockLevel)} data-testid={`button-buy-${item.id}`}><Coins size={13}/>{item.type !== 'food' && item.id !== 'shampoo' && data.owned.includes(item.id) ? 'Gekauft' : item.unlockLevel && level < item.unlockLevel ? `Level ${item.unlockLevel}` : item.price}</button></div>)}</div>}
         </section>}
 
         {page === 'closet' && <div className="closet-grid">

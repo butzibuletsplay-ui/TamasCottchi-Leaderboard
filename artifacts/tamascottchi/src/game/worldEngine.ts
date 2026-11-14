@@ -3,6 +3,7 @@ import { recordJournal } from './journal';
 import { hoursRemaining } from './worldClock';
 import { worldDayKey, worldWeekKey } from './worldClock';
 import { applicableArtifactBonus, applyArtifactBonus, applyArtifactQuantityBonus, grantChest, grantMilestoneChest, grantRegularChest, tierForMastery } from './artifactSystem';
+import { dailyWorldChestTier } from '@workspace/game-economy';
 
 export type ResourceNode = {
   id: string;
@@ -302,10 +303,11 @@ export function claimRegionDailyChest(
 ): { data: FullPetData; outcome: 'claimed' | 'not-ready' | 'already-claimed' | 'daily-limit' | 'invalid'; tier?: RewardChestTier } {
   const current = ensureWorldDay(data, now, level, authoritativeClock);
   if (!REGION_DAILY_TASKS[locationId]) return { data: current, outcome: 'invalid' };
+  const location = LOCATIONS.find((entry) => entry.id === locationId);
+  if (!location || location.level > level) return { data: current, outcome: 'invalid' };
   if (current.world.dailyChestLocations.includes(locationId)) return { data: current, outcome: 'already-claimed' };
   if (!regionTaskComplete(current, locationId)) return { data: current, outcome: 'not-ready' };
-  if (current.world.dailyChestCount >= 3) return { data: current, outcome: 'daily-limit' };
-  const tier = tierForMastery(masteryLevel(current.world.areaMastery[locationId] || 0), random);
+  const tier = dailyWorldChestTier(level, random);
   const next = grantRegularChest(current, tier, `world:${current.world.worldDay}:${locationId}`, now, locationId);
   return next === current ? { data: current, outcome: 'daily-limit' } : { data: next, outcome: 'claimed', tier };
 }

@@ -262,23 +262,22 @@ export function World({ data, level, serverClockOffsetMs, onChange, onNotice, on
           <small>{locationMastery} Meisterschafts-XP · {questCount.completed}/{questCount.total} Hauptquests · {locationDiscoveries} dauerhafte Geheimnisse</small>
         </section>
         <section className="world-region-daily" data-testid={`region-daily-${location}`}>
-          <div className="world-section-heading"><Sparkles size={15}/><b>Tagesauftrag · {place.name}</b><small>Kisten {w.dailyChestCount}/3</small></div>
+          <div className="world-section-heading"><Sparkles size={15}/><b>Tagesauftrag · {place.name}</b><small>Weltkisten {w.dailyChestCount}</small></div>
           <div className="region-task-progress">
             <span><b>Materialien</b><small>{Math.min(regionTask.materials, regionProgress.materials)}/{regionTask.materials}</small></span>
             <span><b>Aktivitäten</b><small>{Math.min(regionTask.activities, regionProgress.activities)}/{regionTask.activities}</small></span>
             <span><b>Besondere Funde</b><small>{Math.min(regionTask.rare, regionProgress.rare)}/{regionTask.rare}</small></span>
           </div>
-          <small className={`region-task-status ${regionChestClaimed ? 'done' : regionTaskComplete ? w.dailyChestCount >= 3 ? 'capped' : 'ready' : ''}`}>
+          <small className={`region-task-status ${regionChestClaimed ? 'done' : regionTaskComplete ? 'ready' : ''}`}>
             {regionChestClaimed ? 'Heute abgeholt'
-              : regionTaskComplete && w.dailyChestCount >= 3 ? 'Tageslimit erreicht · Münzen, XP und Material bleiben erhalten'
-                : regionTaskComplete ? 'Kiste bereit · Qualität steigt mit der Gebietsmeisterschaft'
-                  : regionTaskRewardClaimed ? 'Auftrag erledigt · Deine Belohnung bleibt erhalten'
-                    : 'Aufgaben noch offen'}
+              : regionTaskComplete ? 'Kiste bereit · Qualität steigt mit deinem Weltlevel'
+                : regionTaskRewardClaimed ? 'Auftrag erledigt · Deine Belohnung bleibt erhalten'
+                  : 'Aufgaben noch offen'}
           </small>
           <button className="button orange small" onClick={claimRegionChest}
-            disabled={!regionTaskComplete || regionChestClaimed || w.dailyChestCount >= 3}
+            disabled={!regionTaskComplete || regionChestClaimed}
             data-testid={`button-region-chest-${location}`}>
-            {regionChestClaimed ? 'Heute abgeholt' : w.dailyChestCount >= 3 && regionTaskComplete ? 'Tageslimit erreicht' : 'Weltkiste abholen'}
+            {regionChestClaimed ? 'Heute abgeholt' : 'Weltkiste abholen'}
           </button>
         </section>
         {npc && <section className={`world-npc ${npcClaimed ? 'done' : ''}`} data-testid={`world-npc-${npc.id}`}>

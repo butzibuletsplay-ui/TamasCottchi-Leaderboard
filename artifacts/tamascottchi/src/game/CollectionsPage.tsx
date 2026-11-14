@@ -5,6 +5,9 @@ import { itemById } from './data';
 import { assetUrl } from './assets';
 import { COLLECTION_ITEMS, COLLECTION_CATEGORIES, COLLECTION_ITEM_LINKS, COLLECTION_REWARDS, RARITIES, RARITY_FRAME_ASSETS, RARITY_LABEL } from './collectionWorld';
 import { ARTIFACTS, artifactBonusPercent, artifactUpgradeCost, equippedArtifactBonuses, playerArtifactSlots } from './artifactSystem';
+import { ChestCollectionPanel } from './ChestCollectionPanel';
+import type { RewardChestTier } from './data';
+import type { ChestOpenReward } from './rewardChests';
 
 type Props = {
   data: FullPetData;
@@ -12,9 +15,12 @@ type Props = {
   onClaim: (id: string, name: string, coins: number, xp: number) => void;
   onUpgradeArtifact: (id: string) => void;
   onToggleArtifact: (id: string) => void;
+  onBuyChestKey: (tier: RewardChestTier) => boolean;
+  onOpenChest: (tier: RewardChestTier) => ChestOpenReward | null;
 };
 
-export function CollectionsPage({ data, playerLevel, onClaim, onUpgradeArtifact, onToggleArtifact }: Props) {
+export function CollectionsPage({ data, playerLevel, onClaim, onUpgradeArtifact, onToggleArtifact, onBuyChestKey, onOpenChest }: Props) {
+  const [view, setView] = useState<'kisten' | 'sammlung' | 'artefakte'>('kisten');
   const [category, setCategory] = useState('Alle');
   const [rarity, setRarity] = useState('Alle');
   const [selected, setSelected] = useState<string | null>(null);
@@ -45,8 +51,14 @@ export function CollectionsPage({ data, playerLevel, onClaim, onUpgradeArtifact,
     </div>
     <div className="collection-progress"><i style={{ width: `${found / COLLECTION_ITEMS.length * 100}%` }}/></div>
     <p className="subline">{Math.round(found / COLLECTION_ITEMS.length * 100)} % entdeckt · {found} von {COLLECTION_ITEMS.length} Artefakten</p>
+    <div className="collection-view-tabs" role="tablist" aria-label="Sammelmenü">
+      {([['kisten', 'Kisten'], ['sammlung', 'Sammlung'], ['artefakte', 'Artefakt-Werkstatt']] as const).map(([id, label]) =>
+        <button key={id} role="tab" aria-selected={view === id} className={`room-chip ${view === id ? 'selected' : ''}`}
+          onClick={() => setView(id)} data-testid={`collection-view-${id}`}>{label}</button>)}
+    </div>
 
-    <section className="artifact-workshop" aria-label="Artefakt-Werkstatt" data-testid="artifact-workshop">
+    {view === 'kisten' && <ChestCollectionPanel data={data} playerLevel={playerLevel} onBuyKey={onBuyChestKey} onOpenChest={onOpenChest}/>}
+    {view === 'artefakte' && <section className="artifact-workshop" aria-label="Artefakt-Werkstatt" data-testid="artifact-workshop">
       <div className="panel-head">
         <div><div className="eyebrow">AUSRÜSTEN · AUFWERTEN</div><h3 className="panel-title">Artefakt-Werkstatt</h3></div>
         <span className="stat-pill">{data.equippedArtifacts.length}/{slotCount} Plätze</span>
@@ -91,8 +103,9 @@ export function CollectionsPage({ data, playerLevel, onClaim, onUpgradeArtifact,
           </button>;
         })}
       </div> : <div className="empty-state artifact-empty"><Sparkles size={24}/><p>Deine ersten Artefakte erscheinen hier. Entdecke sie in der Welt und in Belohnungskisten.</p></div>}
-    </section>
+    </section>}
 
+    {view === 'sammlung' && <>
     <section className="collection-reward-grid" aria-label="Sammlungsbelohnungen">
       {COLLECTION_REWARDS.map((reward) => {
         const complete = reward.items.every(hasItem);
@@ -124,6 +137,7 @@ export function CollectionsPage({ data, playerLevel, onClaim, onUpgradeArtifact,
         </button>;
       })}
     </div>
+    </>}
 
     {item && <div className="quest-backdrop" role="presentation" onClick={() => setSelected(null)}>
       <section className={`collection-detail panel rarity-${item.rarity.toLowerCase()}`} role="dialog" aria-modal="true" aria-labelledby="collection-detail-title" onClick={(event) => event.stopPropagation()}>
