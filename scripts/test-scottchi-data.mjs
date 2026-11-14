@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 const require = createRequire(resolve('artifacts/api-server/package.json'));
 const { build } = require('esbuild');
@@ -24,6 +24,7 @@ const BACKUP_KEY_30 = dataModule.BACKUP_KEY_30;
 const BACKUP_KEY_40 = dataModule.BACKUP_KEY_40;
 const BACKUP_KEY_66 = dataModule.BACKUP_KEY_66;
 const BACKUP_KEY_67 = dataModule.BACKUP_KEY_67;
+const BACKUP_KEY_68 = dataModule.BACKUP_KEY_68;
 const questBuild = await build({
   entryPoints: ['artifacts/tamascottchi/src/game/questEngine.ts'],
   bundle: true, write: false, format: 'esm', platform: 'node',
@@ -314,6 +315,7 @@ test('schema 12 saves keep an untouched 6.7 backup and never auto-evolve from le
   storage.clear();
   const old = { ...initialData(), saveSchema: 12, coins: 810, xp: economy.playerLevelXpThreshold(1000) };
   delete old.evolutionStage;
+  delete old.activeEvolutionStage;
   const raw = JSON.stringify(old);
   storage.set(STORE_KEY, raw);
   const next = loadData();
@@ -325,17 +327,72 @@ test('schema 12 saves keep an untouched 6.7 backup and never auto-evolve from le
 
   const alreadyEvolved = normalize({ ...old, evolutionStage: 7 });
   assert.equal(alreadyEvolved.evolutionStage, 7, 'a saved form remains unlocked');
+  assert.equal(alreadyEvolved.activeEvolutionStage, 7, 'the highest unlocked form becomes active on migration');
+});
+test('schema 13 saves preserve their unlocked stage and default to that form once', () => {
+  storage.clear();
+  const old = { ...initialData(), saveSchema: 13, coins: 810, evolutionStage: 6 };
+  delete old.activeEvolutionStage;
+  const raw = JSON.stringify(old);
+  storage.set(STORE_KEY, raw);
+  const next = loadData();
+  assert.equal(storage.get(BACKUP_KEY_68), raw);
+  assert.equal(next.evolutionStage, 6);
+  assert.equal(next.activeEvolutionStage, 6);
+
+  const selectedPrevious = normalize({ ...next, activeEvolutionStage: 2 });
+  assert.equal(selectedPrevious.evolutionStage, 6, 'choosing an old form does not lower the highest unlocked stage');
+  assert.equal(selectedPrevious.activeEvolutionStage, 2);
+  const clampedSelection = normalize({ ...next, activeEvolutionStage: 9 });
+  assert.equal(clampedSelection.activeEvolutionStage, 6, 'unlocked forms cannot be bypassed by importing a later active form');
+});
+test('the ten uploaded transparent form images map to stages in the requested order', () => {
+  const source = readFileSync('artifacts/tamascottchi/src/game/evolutionArtwork.ts', 'utf8');
+  const imports = Object.fromEntries(
+    [...source.matchAll(/import (\w+) from '@assets\/([^']+)'/g)].map(([, identifier, filename]) => [identifier, filename]),
+  );
+  const arrayBody = source.match(/export const EVOLUTION_ARTWORK = \[([\s\S]*?)\] as const/)?.[1] || '';
+  const orderedFiles = [...arrayBody.matchAll(/\b[A-Za-z][A-Za-z0-9]*Scotchi\b/g)].map((match) => imports[match[0]]);
+  const expected = [
+    '9F565728-1506-4265-B4FC-AB66189F9024_1794669072942.png',
+    '7A1344AA-7099-4162-B91F-1C8878AFB393_1794669072942.png',
+    '92D59578-2EE2-4A20-A72D-D9F0EF557A63_1794669072942.png',
+    'BCC410E4-FBE0-49A4-B7AC-8966418AD851_1794669072942.png',
+    '031AEEDE-35AB-462A-BB2B-46C093B18B89_1794669072942.png',
+    '93F3AFC6-AF47-4813-B9A2-35E5CEE704EE_1794669072942.png',
+    'EACC95D2-D52A-4A2C-B8C0-EB5D33F85B14_1794669072942.png',
+    'E5C67D88-4927-4439-968F-EB3578D3C68B_1794669072942.png',
+    '0AA10B07-C065-49CE-917E-44AAAF42798D_1794669072942.png',
+    'CF363CD3-49AC-4F2D-8EC6-32282425EA14_1794669072942.png',
+  ];
+  assert.deepEqual(orderedFiles, expected);
+  for (const file of expected) {
+    const filePath = `attached_assets/${file}`;
+    assert.ok(existsSync(filePath), `${file} exists`);
+    const png = readFileSync(filePath);
+    assert.equal(png.toString('hex', 0, 8), '89504e470d0a1a0a', `${file} is PNG`);
+    assert.equal(png.readUInt32BE(16), 1254, `${file} keeps the uploaded width`);
+    assert.equal(png.readUInt32BE(20), 1254, `${file} keeps the uploaded height`);
+    assert.equal(png[25], 6, `${file} retains PNG transparency`);
+  }
 });
 test('manual evolution checks level and coins, charges once, and unlocks cosmetic rewards', () => {
-  const { EVOLUTION_STAGES, purchaseNextEvolution } = evolutionModule;
+  const { EVOLUTION_STAGES, purchaseNextEvolution, selectUnlockedEvolution } = evolutionModule;
   assert.deepEqual(EVOLUTION_STAGES.map(({ stage, name, playerLevel, coinCost }) => [stage, name, playerLevel, coinCost]), [
-    [1, 'Ei', 1, 0], [2, 'Schlüpfling', 10, 500], [3, 'Jungtier', 25, 2000], [4, 'Entdecker', 50, 6000],
-    [5, 'Abenteurer', 100, 15000], [6, 'Naturgeist', 175, 35000], [7, 'Zauberwesen', 275, 75000],
-    [8, 'Sternenwesen', 400, 150000], [9, 'Königliches Wesen', 600, 300000], [10, 'Ultimative Form', 850, 600000],
+    [1, 'Original Scotchi', 1, 0], [2, 'Sprössling Scotchi', 10, 500], [3, 'Entdecker Scotchi', 25, 2000], [4, 'Magischer Scotchi', 50, 6000],
+    [5, 'Blumen Scotchi', 100, 15000], [6, 'Naturwächter Scotchi', 175, 35000], [7, 'Sternenkristall Scotchi', 275, 75000],
+    [8, 'Himmlischer Scotchi', 400, 150000], [9, 'Königlicher Scotchi', 600, 300000], [10, 'Transzendenter Scotchi', 850, 600000],
   ]);
   assert.equal(EVOLUTION_STAGES.slice(1).reduce((sum, stage) => sum + stage.coinCost, 0), 1_183_500);
 
-  let data = normalize({ ...initialData(), coins: 2_000_000, xp: economy.playerLevelXpThreshold(1000) });
+  let data = normalize({
+    ...initialData(),
+    coins: 2_000_000,
+    xp: economy.playerLevelXpThreshold(1000),
+    owned: ['crown'],
+    equipped: ['crown'],
+    inventory: { ...initialData().inventory, ball: 3 },
+  });
   assert.equal(data.evolutionStage, 1, 'even a level-1000 save starts at its explicitly saved form');
   assert.equal(purchaseNextEvolution(data, 9).reason, 'level');
   assert.equal(purchaseNextEvolution({ ...data, coins: 499 }, 10).reason, 'coins');
@@ -345,6 +402,7 @@ test('manual evolution checks level and coins, charges once, and unlocks cosmeti
   assert.equal(result.data.coins, data.coins - 500);
   assert.equal(result.data.xp, data.xp, 'evolution does not grant XP multipliers or bonus XP');
   assert.equal(result.data.evolutionStage, 2);
+  assert.equal(result.data.activeEvolutionStage, 2);
   assert.equal(purchaseNextEvolution(result.data, 10).reason, 'level', 'the paid stage cannot be purchased again');
   data = result.data;
 
@@ -355,13 +413,27 @@ test('manual evolution checks level and coins, charges once, and unlocks cosmeti
     if (!result.ok) return;
     assert.equal(result.stage.stage, stage.stage);
     assert.equal(result.data.evolutionStage, stage.stage);
+    assert.equal(result.data.activeEvolutionStage, stage.stage, 'a newly purchased form becomes active');
     assert.equal(result.data.coins, before.coins - stage.coinCost);
     if (stage.unlockItem) assert.ok(result.data.owned.includes(stage.unlockItem), `${stage.name} grants its cosmetic item`);
     data = result.data;
   }
   assert.equal(data.evolutionStage, 10);
   assert.equal(data.xp, economy.playerLevelXpThreshold(1000), 'the final form does not reduce the level-1000 endgame');
+  assert.deepEqual(data.owned.slice(0, 1), ['crown'], 'purchased inventory is retained alongside stage rewards');
+  assert.deepEqual(data.equipped, ['crown'], 'equipped clothing remains in the save even when illustration overlays are hidden');
+  assert.equal(data.inventory.ball, 3);
   assert.equal(purchaseNextEvolution(data, 1000).reason, 'complete');
+  const coinsBeforeSelection = data.coins;
+  for (const stage of EVOLUTION_STAGES) {
+    const selected = selectUnlockedEvolution(data, stage.stage);
+    assert.ok(selected, `${stage.name} is selectable once unlocked`);
+    assert.equal(selected.activeEvolutionStage, stage.stage);
+    assert.equal(selected.evolutionStage, 10, 'selecting an older form never reduces the unlocked maximum');
+    assert.equal(selected.coins, coinsBeforeSelection, 'form selection is free');
+    assert.equal(selected.xp, data.xp);
+  }
+  assert.equal(selectUnlockedEvolution(data, 11), null, 'locked future forms cannot be selected');
 });
 test('keyed chests open once and consume one matching key', () => {
   const chestTiers = ['common', 'uncommon', 'rare', 'epic', 'legendary'];

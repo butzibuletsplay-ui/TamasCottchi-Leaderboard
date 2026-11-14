@@ -54,7 +54,7 @@ import {
 } from "@workspace/game-economy";
 
 const router: IRouter = Router();
-const CURRENT_SAVE_SCHEMA = 13;
+const CURRENT_SAVE_SCHEMA = 14;
 const friendCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const allowedRooms = new Set([
   "Wohnzimmer",
@@ -231,6 +231,8 @@ function normalizeEconomySave(input: JsonRecord, now: number): JsonRecord {
   const rewardChests = Object.fromEntries(
     CHEST_TIERS.map((tier) => [tier, instances.filter((entry) => entry.tier === tier).length]),
   );
+  const evolutionStage = Math.max(1, Math.min(10, integer(save.evolutionStage, 1)));
+  const activeEvolutionStage = Math.max(1, Math.min(evolutionStage, integer(save.activeEvolutionStage, evolutionStage)));
   const day = worldDayKey(now);
   const sameDay = world.worldDay === day;
   return {
@@ -238,7 +240,8 @@ function normalizeEconomySave(input: JsonRecord, now: number): JsonRecord {
     coins: integer(save.coins),
     xp,
     saveSchema: CURRENT_SAVE_SCHEMA,
-    evolutionStage: Math.max(1, Math.min(10, integer(save.evolutionStage, 1))),
+    evolutionStage,
+    activeEvolutionStage,
     minigameDaily,
     collectionIds: stringArray(save.collectionIds),
     artifactLevels: { ...asRecord(save.artifactLevels) },
@@ -1061,11 +1064,13 @@ router.put(
       return;
     }
     const rawXp = integer(rawSaveData.xp);
+    const evolutionStage = Math.max(1, Math.min(10, integer(rawSaveData.evolutionStage, 1)));
     const saveData: JsonRecord = {
       ...rawSaveData,
       xp: integer(rawSaveData.saveSchema) < 10 ? migrateLegacyPlayerXp(rawXp) : Math.min(MAX_PLAYER_XP, rawXp),
       saveSchema: CURRENT_SAVE_SCHEMA,
-      evolutionStage: Math.max(1, Math.min(10, integer(rawSaveData.evolutionStage, 1))),
+      evolutionStage,
+      activeEvolutionStage: Math.max(1, Math.min(evolutionStage, integer(rawSaveData.activeEvolutionStage, evolutionStage))),
     };
     const userId = playerId(res);
     const result = await db.transaction(async (tx) => {
@@ -1157,11 +1162,13 @@ router.post(
       return;
     }
     const rawXp = integer(rawSaveData.xp);
+    const evolutionStage = Math.max(1, Math.min(10, integer(rawSaveData.evolutionStage, 1)));
     const saveData: JsonRecord = {
       ...rawSaveData,
       xp: integer(rawSaveData.saveSchema) < 10 ? migrateLegacyPlayerXp(rawXp) : Math.min(MAX_PLAYER_XP, rawXp),
       saveSchema: CURRENT_SAVE_SCHEMA,
-      evolutionStage: Math.max(1, Math.min(10, integer(rawSaveData.evolutionStage, 1))),
+      evolutionStage,
+      activeEvolutionStage: Math.max(1, Math.min(evolutionStage, integer(rawSaveData.activeEvolutionStage, evolutionStage))),
     };
     if (parsed.data.expectedRevision !== 0) {
       res.status(409).json({ error: "Ein bestehender Cloud-Spielstand wird nicht überschrieben." });

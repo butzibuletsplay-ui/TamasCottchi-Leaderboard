@@ -14,7 +14,7 @@ import { OutfitLab } from './game/OutfitLab';
 import { World } from './game/World';
 import { CollectionsPage } from './game/CollectionsPage';
 import { EvolutionPage } from './game/EvolutionPage';
-import { purchaseNextEvolution } from './game/evolution';
+import { EVOLUTION_STAGES, purchaseNextEvolution, selectUnlockedEvolution } from './game/evolution';
 import { AimLayer, FlyingToy, type Point, type Throw } from './game/ToyPlay';
 import {
   FAVORITE_TOY, FOOD_LINES, IDLE_CLASS, IDLE_LINES, PHASE_INFO, SURPRISES, TOY_LINES, TRAITS, absenceDecay, dayPhase, dominant, hasCharacter, nudge,
@@ -1204,6 +1204,14 @@ function Game({ initial }: { initial: PetData }) {
     notify(`Scottchi ist jetzt ${result.stage.name}!`);
     return result;
   }
+  function selectEvolutionForm(stage: number) {
+    const current = dataRef.current;
+    const updated = selectUnlockedEvolution(current, stage);
+    if (!updated || stage === current.activeEvolutionStage) return;
+    dataRef.current = updated;
+    setData(updated);
+    notify(`Aktive Form: ${EVOLUTION_STAGES[stage - 1].name}.`);
+  }
   function exportSave() {
     const blob = new Blob([JSON.stringify({ ...data, lastUpdated: Date.now() }, null, 2)], { type: 'application/json' });
     const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'tamascottchi-save.json'; link.click(); URL.revokeObjectURL(link.href); notify('Spielstand exportiert.');
@@ -1374,7 +1382,7 @@ function Game({ initial }: { initial: PetData }) {
     <div className="pet-anchor">
       <div className={`pet-runner ${run.flip ? 'flip' : ''}`} style={{ transform: `translateX(${run.dx}px)` }}>
         <div className="pet-facing">
-          <Scottchi mood={mood} equipped={data.equipped} action={petAction} sleeping={sleeping} onTap={pet} idle={idleStyle} evolutionStage={data.evolutionStage}/>
+          <Scottchi mood={mood} equipped={data.equipped} action={petAction} sleeping={sleeping} onTap={pet} idle={idleStyle} formStage={data.activeEvolutionStage}/>
           {chewing && <img src={itemById('bone-toy')!.img} alt="" className="chew-bone" data-testid="img-chew-bone"/>}
         </div>
         {petAction === 'washing' && <div className="bubbles" aria-hidden><i/><i/><i/><i/><i/></div>}
@@ -1431,7 +1439,7 @@ function Game({ initial }: { initial: PetData }) {
               <div className="traits" data-testid="panel-personality">
                 <div className="traits-head"><strong>Charakter</strong><span>{showsTrait ? `meist ${TRAITS.find((t) => t.id === trait)!.name.toLowerCase()}` : 'formt sich noch'}</span></div>
                 {TRAITS.map((t) => <div key={t.id} className={`trait-row ${showsTrait && t.id === trait ? 'lead' : ''}`} title={t.hint} data-testid={`trait-${t.id}`}><span>{t.name}</span><div className="trait-bar"><i style={{ transform: `scaleX(${data.personality[t.id] / 100})` }}/></div></div>)}
-                <button className="text-link evolution-home-link" onClick={() => { setPage('closet'); setClosetTab('evolution'); }} data-testid="link-evolution">Entwicklung ansehen · Stufe {data.evolutionStage}/10</button>
+                <button className="text-link evolution-home-link" onClick={() => { setPage('closet'); setClosetTab('evolution'); }} data-testid="link-evolution">Form {data.activeEvolutionStage} · {data.evolutionStage}/10 freigeschaltet</button>
               </div>
             </section>
           </div>
@@ -1501,10 +1509,10 @@ function Game({ initial }: { initial: PetData }) {
             <button className={`character-tab ${closetTab === 'evolution' ? 'active' : ''}`} role="tab" aria-selected={closetTab === 'evolution'} onClick={() => setClosetTab('evolution')} data-testid="tab-evolution"><Sparkles/>Entwicklung</button>
           </div>
           {closetTab === 'evolution'
-            ? <EvolutionPage data={data as FullPetData} level={level} onPurchase={purchaseEvolution}/>
+            ? <EvolutionPage data={data as FullPetData} level={level} onPurchase={purchaseEvolution} onSelect={selectEvolutionForm}/>
             : <div className="closet-grid">
           <section className="panel closet-preview"><div className="panel-head"><h2 className="panel-title">Anprobe</h2></div>
-            <div className="preview-stage"><Scottchi mood={mood} equipped={data.equipped} idle={idleStyle} evolutionStage={data.evolutionStage}/></div>
+            <div className="preview-stage"><Scottchi mood={mood} equipped={data.equipped} idle={idleStyle} formStage={data.activeEvolutionStage}/></div>
             <div className="style-sets"><div className="nav-label" style={{ padding: '12px 0 6px' }}>Outfit-Stile</div>
               {STYLE_SETS.map((s) => { const have = s.items.filter((i) => data.owned.includes(i)).length; const full = have === s.items.length; return <div key={s.id} className={`style-row ${full ? 'full' : ''}`} data-testid={`style-${s.id}`}>
                 <ShirtIcon size={14}/><div className="item-info"><div className="mission-title">{s.name}{data.stylesWorn.includes(s.id) ? ' · getragen' : ''}</div><div className="mission-progress">{s.items.map((i) => itemById(i)?.name).join(' + ')} · {have}/{s.items.length}</div></div>

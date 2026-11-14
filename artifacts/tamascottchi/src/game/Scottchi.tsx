@@ -1,6 +1,7 @@
 import { useMemo, type CSSProperties } from 'react';
 import { CHARACTER, MOODS, type Mood } from './assets';
 import { BASE_CONFIG, SLOT_OF, layerSrc, readDevConfig, resolveFit, type OutfitConfig } from './outfits';
+import { evolutionArtworkFor } from './evolutionArtwork';
 
 export { SLOT_OF } from './outfits';
 export type { Slot } from './outfits';
@@ -9,7 +10,7 @@ type Props = {
   mood: Mood; equipped: string[]; action?: string; sleeping?: boolean;
   onTap?: () => void; className?: string;
   /** Explicit config (DEV editor/gallery). Ordinary gameplay always uses the checked-in config. */
-  config?: OutfitConfig; idle?: string; highlight?: string; evolutionStage?: number; evolving?: boolean;
+  config?: OutfitConfig; idle?: string; highlight?: string; formStage?: number; transitionFromStage?: number; evolving?: boolean;
 };
 
 export function layerStyle(item: string, mood: Mood, cfg: OutfitConfig): CSSProperties | null {
@@ -29,10 +30,13 @@ export function layerStyle(item: string, mood: Mood, cfg: OutfitConfig): CSSProp
  */
 const EVOLUTION_COLORS = ['#d8a75f', '#9bc6a1', '#e6aa71', '#6e9e87', '#d58c53', '#7abf8d', '#9b7acb', '#83b8db', '#e1b750', '#ffd36b'];
 
-export function Scottchi({ mood, equipped, action = 'idle', sleeping, onTap, className = '', config, idle, highlight, evolutionStage = 1, evolving = false }: Props) {
+export function Scottchi({ mood, equipped, action = 'idle', sleeping, onTap, className = '', config, idle, highlight, formStage, transitionFromStage, evolving = false }: Props) {
   const cfg = useMemo(() => config ?? readDevConfig() ?? BASE_CONFIG, [config]);
-  const stage = Math.max(1, Math.min(10, Math.floor(evolutionStage)));
-  const worn = equipped.filter((id) => SLOT_OF[id] && cfg.items[id]);
+  const useEvolutionArtwork = formStage !== undefined && config === undefined;
+  const stage = Math.max(1, Math.min(10, Math.floor(formStage ?? 1)));
+  const transitionFrom = transitionFromStage === undefined ? null : Math.max(1, Math.min(10, Math.floor(transitionFromStage)));
+  const showFormTransition = useEvolutionArtwork && evolving && transitionFrom !== null && transitionFrom !== stage;
+  const worn = useEvolutionArtwork ? [] : equipped.filter((id) => SLOT_OF[id] && cfg.items[id]);
   const hasOutfit = worn.some((id) => SLOT_OF[id] === 'outfit');
   return <div
     className={`scottchi ${className} act-${action} evolution-stage-${stage} ${stage >= 5 ? 'has-evolved-idle' : ''} ${stage >= 3 ? 'has-play-reaction' : ''} ${stage >= 8 ? 'has-stellar-evolution' : ''} ${evolving ? 'is-evolving' : ''} ${idle ? `idle-${idle}` : ''} ${sleeping ? 'is-sleeping' : ''}`}
@@ -47,17 +51,37 @@ export function Scottchi({ mood, equipped, action = 'idle', sleeping, onTap, cla
     <div className="evolution-aura" aria-hidden="true"/>
     <div className="scottchi-motion">
       <div className="scottchi-body">
-        {MOODS.map((m) => <img key={m} src={CHARACTER[m]} alt="" draggable={false} className={`scottchi-sprite ${m === mood ? 'on' : ''}`} data-testid={m === mood ? `sprite-${m}` : undefined}/>)}
-        {hasOutfit && MOODS.map((m) => <img key={`face-${m}`} src={CHARACTER[m]} alt="" draggable={false} style={{ clipPath: cfg.anchors[m]?.faceClip }} className={`scottchi-sprite scottchi-face ${m === mood ? 'on' : ''}`}/>)}
-        {worn.map((id) => {
-          const style = layerStyle(id, mood, cfg);
-          if (!style) return null;
-          const cls = `scottchi-layer layer-${SLOT_OF[id]} ${highlight === id ? 'is-highlight' : ''}`;
-          const src = layerSrc(id);
-          if (src) return <img key={id} src={src} alt="" draggable={false} className={cls} style={style} data-testid={`layer-${id}`}/>;
-          if (id === 'sunglasses') return <div key={id} className={`${cls} css-glasses`} style={style} data-testid={`layer-${id}`}><span/><span/></div>;
-          return <div key={id} className={`${cls} css-bow`} style={style} data-testid={`layer-${id}`}><span/><span/></div>;
-        })}
+        {useEvolutionArtwork ? <>
+          {showFormTransition && <img
+            src={evolutionArtworkFor(transitionFrom ?? stage)}
+            alt=""
+            draggable={false}
+            decoding="async"
+            className="scottchi-evolution-sprite evolution-transition-from"
+            aria-hidden="true"
+          />}
+          <img
+            src={evolutionArtworkFor(stage)}
+            alt={`Scotchi, Entwicklungsstufe ${stage}`}
+            draggable={false}
+            loading="lazy"
+            decoding="async"
+            className={`scottchi-evolution-sprite ${showFormTransition ? 'evolution-transition-to' : ''}`}
+            data-testid={`evolution-art-${stage}`}
+          />
+        </> : <>
+          {MOODS.map((m) => <img key={m} src={CHARACTER[m]} alt="" draggable={false} className={`scottchi-sprite ${m === mood ? 'on' : ''}`} data-testid={m === mood ? `sprite-${m}` : undefined}/>)}
+          {hasOutfit && MOODS.map((m) => <img key={`face-${m}`} src={CHARACTER[m]} alt="" draggable={false} style={{ clipPath: cfg.anchors[m]?.faceClip }} className={`scottchi-sprite scottchi-face ${m === mood ? 'on' : ''}`}/>)}
+          {worn.map((id) => {
+            const style = layerStyle(id, mood, cfg);
+            if (!style) return null;
+            const cls = `scottchi-layer layer-${SLOT_OF[id]} ${highlight === id ? 'is-highlight' : ''}`;
+            const src = layerSrc(id);
+            if (src) return <img key={id} src={src} alt="" draggable={false} className={cls} style={style} data-testid={`layer-${id}`}/>;
+            if (id === 'sunglasses') return <div key={id} className={`${cls} css-glasses`} style={style} data-testid={`layer-${id}`}><span/><span/></div>;
+            return <div key={id} className={`${cls} css-bow`} style={style} data-testid={`layer-${id}`}><span/><span/></div>;
+          })}
+        </>}
       </div>
     </div>
   </div>;
