@@ -599,3 +599,4 @@
 }
 @media(min-width:681px) and (max-width:1050px){.evolution-stage-list{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(prefers-reduced-motion:reduce){.scottchi.has-evolved-idle.act-idle .scottchi-motion,.scottchi.is-evolving .evolution-aura,.evolution-burst,.evolution-transition-from,.evolution-transition-to{animation:none}}
+@media(max-width:900px){.toast{bottom:calc(72px + env(safe-area-inset-bottom));max-width:calc(100vw - 24px);white-space:normal;text-align:center;line-height:1.35}}
