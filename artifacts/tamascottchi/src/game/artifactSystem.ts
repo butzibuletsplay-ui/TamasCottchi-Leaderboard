@@ -1,6 +1,6 @@
-import type { FullPetData, RewardChestTier } from './data';
+import { levelFor, type FullPetData, type RewardChestTier } from './data';
 import { COLLECTION_ITEM_LINKS, COLLECTION_ITEMS, type CollectionItem, type Rarity } from './collectionWorld';
-import { chestDropChances, chooseChance, type CollectionRarity } from '@workspace/game-economy';
+import { CHEST_TIERS, chestDropChances, chooseChance, highestUnlockedChestTier, worldMasteryChestTier, type CollectionRarity } from '@workspace/game-economy';
 
 export const ARTIFACT_MAX_LEVEL = 20;
 export const ARTIFACT_SLOTS = [
@@ -267,13 +267,15 @@ export function grantChest(
   earnedAt: number,
 ): FullPetData {
   if (data.world.chestInstances.some((chest) => chest.source === source)) return data;
-  const instance = { id: `chest-${source}`, tier, source, earnedAt };
+  const maxTierIndex = CHEST_TIERS.indexOf(highestUnlockedChestTier(levelFor(data.xp)));
+  const safeTier = CHEST_TIERS[Math.min(CHEST_TIERS.indexOf(tier), maxTierIndex)];
+  const instance = { id: `chest-${source}`, tier: safeTier, source, earnedAt };
   return {
     ...data,
     world: {
       ...data.world,
       chestInstances: [...data.world.chestInstances, instance],
-      rewardChests: { ...data.world.rewardChests, [tier]: (data.world.rewardChests[tier] || 0) + 1 },
+      rewardChests: { ...data.world.rewardChests, [safeTier]: (data.world.rewardChests[safeTier] || 0) + 1 },
     },
   };
 }
@@ -308,13 +310,8 @@ export function grantMilestoneChest(data: FullPetData, milestoneId: string, tier
   };
 }
 
-export function tierForMastery(level: number, random: () => number = Math.random): RewardChestTier {
-  const roll = Math.max(0, Math.min(0.999999999, random()));
-  if (level >= 20) return 'rare';
-  if (level >= 15) return roll < 0.5 ? 'uncommon' : 'rare';
-  if (level >= 10) return roll < 0.8 ? 'uncommon' : 'rare';
-  if (level >= 5) return roll < 0.7 ? 'common' : 'uncommon';
-  return 'common';
+export function tierForMastery(level: number, random: () => number = Math.random, playerLevel = 1): RewardChestTier {
+  return worldMasteryChestTier(level, playerLevel, random);
 }
 
 export function addArtifactMaterial(data: FullPetData, id: string, quantity: number): FullPetData {

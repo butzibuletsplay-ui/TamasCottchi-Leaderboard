@@ -52,6 +52,12 @@ const artifactBuild = await build({
   define: { 'import.meta.env.BASE_URL': '"/"' },
 });
 const artifactModule = await import(`data:text/javascript;base64,${Buffer.from(artifactBuild.outputFiles[0].text).toString('base64')}`);
+const discoveriesBuild = await build({
+  entryPoints: ['artifacts/tamascottchi/src/game/worldDiscoveries.ts'],
+  bundle: true, write: false, format: 'esm', platform: 'node',
+  define: { 'import.meta.env.BASE_URL': '"/"' },
+});
+const discoveriesModule = await import(`data:text/javascript;base64,${Buffer.from(discoveriesBuild.outputFiles[0].text).toString('base64')}`);
 const economyBuild = await build({
   entryPoints: ['lib/game-economy/src/index.ts'],
   bundle: true, write: false, format: 'esm', platform: 'node',
@@ -222,12 +228,26 @@ test('schema 8 saves get a raw 6.3 backup while retaining old chests and purchas
   assert.equal(next.world.rewardChests.rare, 2);
   assert.deepEqual(next.world.keys, { common: 0, uncommon: 0, rare: 0, epic: 0, legendary: 0 });
 });
+test('schema 9 XP migrates to the extended curve without losing the old level or progress', () => {
+  storage.clear();
+  const old = { ...initialData(), saveSchema: 9, coins: 820, xp: 5150, owned: ['ball'] };
+  const raw = JSON.stringify(old);
+  storage.set(STORE_KEY, raw);
+  const next = loadData();
+  assert.equal(storage.get(dataModule.BACKUP_KEY_64), raw);
+  assert.equal(next.saveSchema, SAVE_SCHEMA);
+  assert.equal(dataModule.levelFor(next.xp), Math.floor(old.xp / 100) + 1);
+  const progress = economy.playerLevelProgress(next.xp);
+  assert.equal(progress.earned / progress.required, (old.xp % 100) / 100);
+  assert.equal(next.coins, old.coins);
+  assert.deepEqual(next.owned, old.owned);
+});
 test('keyed chests open once and consume one matching key', () => {
   const chestTiers = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
   assert.ok(dataModule.CHALLENGES.every((challenge) => !challenge.chestTier && challenge.dust > 0));
-  let data = normalize({ ...initialData(), coins: 5000, xp: 2000, world: { ...initialData().world, keys: Object.fromEntries(chestTiers.map((tier) => [tier, 1])), rewardChests: Object.fromEntries(chestTiers.map((tier) => [tier, 1])) } });
+  let data = normalize({ ...initialData(), coins: 5000, xp: economy.playerLevelXpThreshold(100), world: { ...initialData().world, keys: Object.fromEntries(chestTiers.map((tier) => [tier, 1])), rewardChests: Object.fromEntries(chestTiers.map((tier) => [tier, 1])) } });
   for (const tier of chestTiers) {
-    const opened = chestModule.openRewardChest(data, tier, () => 0, 21);
+    const opened = chestModule.openRewardChest(data, tier, () => 0, 100);
     assert.ok(opened, `${tier} chest should open`);
     assert.equal(opened.data.world.rewardChests[tier], 0);
     assert.equal(opened.data.world.keys[tier], 0);
@@ -249,33 +269,70 @@ test('keyed chests open once and consume one matching key', () => {
   assert.equal(chestModule.openRewardChest(duplicate.data, 'common'), null);
   assert.equal(chestModule.openRewardChest(normalize({ ...initialData(), world: { ...initialData().world, rewardChests: { common: 1 } } }), 'common'), null, 'a chest without its key stays unopened');
 });
+test('new chest rewards are capped at the highest globally unlocked tier', () => {
+  const starting = normalize(initialData());
+  const early = artifactModule.grantChest(starting, 'legendary', 'test-early', 1);
+  assert.equal(early.world.chestInstances[0].tier, 'common');
+  const epicUnlocked = normalize({ ...initialData(), xp: economy.playerLevelXpThreshold(70) });
+  const capped = artifactModule.grantChest(epicUnlocked, 'legendary', 'test-epic-cap', 2);
+  assert.equal(capped.world.chestInstances[0].tier, 'epic');
+  const legendaryUnlocked = normalize({ ...initialData(), xp: economy.playerLevelXpThreshold(100) });
+  const allowed = artifactModule.grantChest(legendaryUnlocked, 'legendary', 'test-legendary', 3);
+  assert.equal(allowed.world.chestInstances[0].tier, 'legendary');
+});
 test('key purchases charge exact prices and enforce unlock levels and sufficient coins', () => {
   for (const tier of economy.CHEST_TIERS) {
     const level = economy.CHEST_UNLOCK_LEVEL[tier];
-    const base = normalize({ ...initialData(), coins: economy.CHEST_KEY_PRICES[tier], xp: (level - 1) * 100 });
+    const base = normalize({ ...initialData(), coins: economy.CHEST_KEY_PRICES[tier], xp: economy.playerLevelXpThreshold(level) });
     const purchased = chestModule.buyChestKey(base, tier, level);
     assert.equal(purchased.ok, true, `${tier} purchase should work at its unlock level`);
     assert.equal(purchased.data.coins, 0);
     assert.equal(purchased.data.world.keys[tier], 1);
-    const short = normalize({ ...initialData(), coins: economy.CHEST_KEY_PRICES[tier] - 1, xp: (level - 1) * 100 });
+    const short = normalize({ ...initialData(), coins: economy.CHEST_KEY_PRICES[tier] - 1, xp: economy.playerLevelXpThreshold(level) });
     assert.deepEqual(chestModule.buyChestKey(short, tier, level), { ok: false, reason: 'not-enough-coins' });
     if (level > 1) assert.deepEqual(chestModule.buyChestKey(base, tier, level - 1), { ok: false, reason: 'locked' });
   }
   assert.deepEqual(economy.CHEST_KEY_PRICES, { common: 50, uncommon: 150, rare: 400, epic: 1000, legendary: 2500 });
 });
-test('world rarity tables match configured weights and all boosted chests total 100 percent', () => {
+test('player levels, fixed chest odds, and area-gated world loot use the configured rules', () => {
   const rarities = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary'];
-  for (const row of economy.WORLD_LEVEL_DROP_TABLE) {
-    assert.equal(Object.values(row.chances).reduce((sum, weight) => sum + weight, 0), 100, `${row.minLevel} level table`);
+  assert.equal(dataModule.levelFor(0), 1);
+  assert.equal(dataModule.levelFor(1900), 20);
+  assert.equal(dataModule.levelFor(1999), 20);
+  assert.equal(dataModule.levelFor(2000), 21);
+  assert.equal(dataModule.levelFor(economy.playerLevelXpThreshold(1000)), 1000);
+  assert.equal(dataModule.levelFor(1_000_000_000), 1000);
+  assert.equal(economy.playerLevelXpNeeded(1), 100);
+  assert.equal(economy.playerLevelXpNeeded(20), 100);
+  assert.equal(economy.playerLevelXpNeeded(21), 101);
+  assert.ok(economy.playerLevelXpNeeded(1000) > economy.playerLevelXpNeeded(21));
+  assert.equal(economy.playerLevelProgress(economy.MAX_PLAYER_XP).isMaxLevel, true);
+  assert.equal(economy.playerLevelProgress(economy.MAX_PLAYER_XP).percent, 100);
+  assert.equal(normalize({ ...initialData(), xp: 1_000_000_000 }).xp, economy.MAX_PLAYER_XP);
+  assert.deepEqual(dataModule.PLAYER_LEVEL_MILESTONES.map((item) => item.level), [25, 50, 100, 150, 250, 500, 750, 1000]);
+  const expectedChestOdds = {
+    common: [90, 10, 0, 0, 0],
+    uncommon: [55, 40, 5, 0, 0],
+    rare: [20, 50, 27, 3, 0],
+    epic: [5, 20, 50, 23, 2],
+    legendary: [0, 5, 20, 55, 20],
+  };
+  for (const tier of economy.CHEST_TIERS) {
+    const chances = economy.chestDropChances(tier);
+    assert.deepEqual(rarities.map((rarity) => chances[rarity]), expectedChestOdds[tier]);
+    assert.equal(Object.values(chances).reduce((sum, weight) => sum + weight, 0), 100, `${tier} chest`);
   }
-  for (const level of [1, 3, 5, 7, 9, 11, 16, 21]) {
+  for (const row of economy.WORLD_LEVEL_DROP_TABLE) {
+    assert.equal(Object.values(row.chances).reduce((sum, weight) => sum + weight, 0), 100, `${row.minLevel} world table`);
+  }
+  for (const level of [1, 3, 5, 7, 9, 11, 16, 20]) {
     for (const tier of economy.CHEST_TIERS) {
       const chances = economy.chestDropChances(tier, level);
       assert.equal(Object.values(chances).reduce((sum, weight) => sum + weight, 0), 100, `${tier} at ${level}`);
     }
   }
-  for (const level of [1, 3, 5, 7, 9, 11, 16, 21]) {
-    const weights = economy.worldLevelDropChances(level);
+  for (const level of [1, 3, 5, 7, 9, 11, 16, 20]) {
+    const weights = economy.worldLevelDropChances(level, 1000);
     let state = 0x12345678;
     const random = () => {
       state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
@@ -290,9 +347,14 @@ test('world rarity tables match configured weights and all boosted chests total 
       assert.ok(Math.abs(actual - expected) <= tolerance, `level ${level}/${rarity}: expected ${expected}, got ${actual}`);
     }
   }
-  assert.equal(economy.worldLevelDropChances(1).Legendary, 0);
-  assert.equal(economy.chestDropChances('legendary', 2).Legendary, 0);
-  assert.equal(economy.dailyWorldChestTier(21, () => 0), 'common', 'daily chests never award epic or legendary tiers');
+  assert.equal(economy.worldLevelDropChances(1, 1000).Legendary, 0, 'early areas do not produce legendary world loot');
+  assert.deepEqual(economy.worldLevelDropChances(20, 1), { Common: 100, Uncommon: 0, Rare: 0, Epic: 0, Legendary: 0 }, 'low-level players remain capped even in advanced areas');
+  assert.equal(economy.chestDropChances('legendary', 2).Legendary, 20, 'the shown table remains the actual tier-specific table even while locked');
+  assert.equal(economy.chestTierUnlocked('rare', 39), false);
+  assert.equal(economy.chestTierUnlocked('rare', 40), true);
+  assert.equal(economy.dailyWorldChestTier(20, 1, () => 0), 'common', 'low player level caps daily world chests');
+  assert.equal(economy.dailyWorldChestTier(1, 1000, () => 0.99), 'common', 'the starter region remains common even for high-level players');
+  assert.notEqual(economy.dailyWorldChestTier(20, 1000, () => 0.99), 'legendary', 'daily world chests stay below epic and legendary');
   for (const rarity of rarities) {
     const clientIds = worldModule.COLLECTION_ITEMS.filter((item) => item.rarity === rarity).map((item) => item.id).sort();
     assert.deepEqual([...economy.COLLECTION_RARITY_POOLS[rarity]].sort(), clientIds, `${rarity} server pool matches the album`);
@@ -387,6 +449,31 @@ test('quest rewards, material pickups and multi-step actions are saved and one-t
   assert.equal(finished.outcome, 'completed');
   assert.ok(finished.data.world.completedQuests.includes('park-lost-toy'));
   assert.equal(questModule.completeQuestAction(finished.data, 'use:ball').outcome, 'invalid');
+});
+test('city quest finds wait for both global rarity and local world-stage unlocks', () => {
+  let data = normalize({ ...initialData(), xp: economy.playerLevelXpThreshold(3) });
+  data = questModule.startQuest(data, 'city-delivery');
+  for (const point of [0, 1, 2]) data = questModule.pickQuestPoint(data, 'city-delivery', point).data;
+  assert.deepEqual(data.world.pendingDiscoveries.map((entry) => entry.artifactId).sort(), ['key-gold', 'royal-armor', 'royal-cape']);
+  assert.equal(data.collectionIds.includes('royal-cape'), false);
+
+  data = {
+    ...data,
+    xp: economy.playerLevelXpThreshold(15),
+  };
+  data = discoveriesModule.releasePendingWorldDiscoveries(data);
+  assert.ok(data.collectionIds.includes('key-gold'), 'uncommon discoveries unlock at global level 15');
+  assert.equal(data.collectionIds.includes('royal-cape'), false, 'epic discoveries remain pending');
+
+  data = {
+    ...data,
+    xp: economy.playerLevelXpThreshold(70),
+    world: { ...data.world, areaMastery: { ...data.world.areaMastery, city: 400 } },
+  };
+  data = discoveriesModule.releasePendingWorldDiscoveries(data);
+  assert.ok(data.collectionIds.includes('royal-cape'));
+  assert.ok(data.collectionIds.includes('royal-armor'));
+  assert.deepEqual(data.world.pendingDiscoveries, []);
 });
 test('forest sequence requires its actual order and does not duplicate puzzle loot', () => {
   let data = questModule.startQuest(normalize(initialData()), 'forest-riddle');
@@ -540,10 +627,10 @@ test('regional daily tasks award one chest per unlocked region and reset after B
 
 test('area mastery unlocks rare resource nodes instead of only showing a progress bar', () => {
   const start = Date.now() + 60_000;
-  const base = worldDataAt(start);
-  assert.equal(worldEngine.collectResource(base, 'park-lost-coins', start, 1).outcome, 'locked');
+  const base = { ...worldDataAt(start), xp: economy.playerLevelXpThreshold(15) };
+  assert.equal(worldEngine.collectResource(base, 'park-lost-coins', start, 14).outcome, 'locked');
   const mastered = { ...base, world: { ...base.world, areaMastery: { ...base.world.areaMastery, park: 100 } } };
-  assert.equal(worldEngine.collectResource(mastered, 'park-lost-coins', start, 1).outcome, 'collected');
+  assert.equal(worldEngine.collectResource(mastered, 'park-lost-coins', start, 15).outcome, 'collected');
 });
 
 test('daily world reset is idempotent and keeps permanent progress and resources', () => {
@@ -572,7 +659,8 @@ test('weekly goals award one rare chest once and reset separately from permanent
   const rewardedCoins = progress.coins;
   assert.ok(progress.world.weeklyClaimed.includes('weekly-materials'));
   assert.equal(progress.world.weeklyChestClaimed, true);
-  assert.equal(progress.world.rewardChests.rare, 1);
+  assert.equal(progress.world.rewardChests.common, 1, 'level-one players cannot receive a rare chest');
+  assert.equal(progress.world.rewardChests.rare, 0);
   progress = worldEngine.applyWeeklyMetric(progress, 'materials', 1, start, 1);
   assert.equal(progress.coins, rewardedCoins);
   const nextWeek = worldEngine.ensureWorldDay(progress, start + 8 * 24 * 60 * 60 * 1000, 1);
@@ -580,7 +668,7 @@ test('weekly goals award one rare chest once and reset separately from permanent
   assert.deepEqual(nextWeek.world.weeklyMetrics, {});
   assert.deepEqual(nextWeek.world.weeklyClaimed, []);
   assert.equal(nextWeek.world.weeklyChestClaimed, false);
-  assert.equal(nextWeek.world.rewardChests.rare, 1);
+  assert.equal(nextWeek.world.rewardChests.common, 1);
   assert.equal(nextWeek.coins, progress.coins);
 });
 
@@ -607,20 +695,21 @@ test('an authenticated server clock repairs a locally advanced clock', () => {
 
 test('daily goals award only once and the daily event cannot be claimed twice', () => {
   const start = Date.now() + 60_000;
-  const base = worldEngine.ensureWorldDay(worldDataAt(start), start, 1);
+  let base = worldEngine.ensureWorldDay({ ...worldDataAt(start), xp: economy.playerLevelXpThreshold(100) }, start, 100);
+  base = { ...base, world: { ...base.world, dailyGoals: ['gather-three'] } };
   const goal = base.world.dailyGoals.find((id) => id === 'gather-three');
   assert.ok(goal);
   let progress = base;
-  for (let i = 0; i < 3; i += 1) progress = worldEngine.applyWorldMetric(progress, 'gather', 1, start, 1);
+  for (let i = 0; i < 3; i += 1) progress = worldEngine.applyWorldMetric(progress, 'gather', 1, start, 100);
   const rewardedCoins = progress.coins;
-  progress = worldEngine.applyWorldMetric(progress, 'gather', 1, start, 1);
+  progress = worldEngine.applyWorldMetric(progress, 'gather', 1, start, 100);
   assert.equal(progress.coins, rewardedCoins);
   assert.ok(progress.world.dailyClaimed.includes(goal));
-  const event = worldEngine.claimWorldEvent(progress, start, 1);
+  const event = worldEngine.claimWorldEvent(progress, start, 100);
   assert.equal(event.outcome, 'claimed');
   const eventItem = event.data.world.worldEvent.resourceId;
   const itemCount = event.data.inventory[eventItem];
-  const duplicate = worldEngine.claimWorldEvent(event.data, start, 1);
+  const duplicate = worldEngine.claimWorldEvent(event.data, start, 100);
   assert.equal(duplicate.outcome, 'already-claimed');
   assert.equal(duplicate.data.inventory[eventItem], itemCount);
 });
@@ -645,6 +734,7 @@ test('area NPC orders consume the requested material and pay only once per world
 test('fishing has a daily reward cap but remains available for practice', () => {
   const start = Date.now() + 60_000;
   let data = worldEngine.ensureWorldDay(worldDataAt(start), start, 8);
+  assert.equal(worldEngine.catchFish(data, 'fish-rare', start, 8).outcome, 'locked', 'rare fish require the global rarity unlock');
   for (let count = 0; count < 3; count += 1) {
     const catchResult = worldEngine.catchFish(data, 'fish-common', start, 8);
     assert.equal(catchResult.outcome, 'caught');
@@ -654,6 +744,8 @@ test('fishing has a daily reward cap but remains available for practice', () => 
   assert.equal(practiced.outcome, 'practice');
   assert.equal(practiced.data.inventory['fish-rare'] || 0, 0);
   assert.equal(practiced.data.world.fishingRewardsToday, 3);
+  const unlocked = { ...worldDataAt(start), xp: economy.playerLevelXpThreshold(40) };
+  assert.equal(worldEngine.catchFish(unlocked, 'fish-rare', start, 40).outcome, 'caught');
 });
 
 test('all 24 craft recipes resolve to defined usable game items', () => {

@@ -15,12 +15,11 @@ type Props = {
   onClaim: (id: string, name: string, coins: number, xp: number) => void;
   onUpgradeArtifact: (id: string) => void;
   onToggleArtifact: (id: string) => void;
-  onBuyChestKey: (tier: RewardChestTier) => boolean | Promise<boolean>;
   onOpenChest: (tier: RewardChestTier) => ChestOpenReward | null | Promise<ChestOpenReward | null>;
   economySecured: boolean;
 };
 
-export function CollectionsPage({ data, playerLevel, onClaim, onUpgradeArtifact, onToggleArtifact, onBuyChestKey, onOpenChest, economySecured }: Props) {
+export function CollectionsPage({ data, playerLevel, onClaim, onUpgradeArtifact, onToggleArtifact, onOpenChest, economySecured }: Props) {
   const [view, setView] = useState<'kisten' | 'sammlung' | 'artefakte'>('kisten');
   const [category, setCategory] = useState('Alle');
   const [rarity, setRarity] = useState('Alle');
@@ -58,7 +57,7 @@ export function CollectionsPage({ data, playerLevel, onClaim, onUpgradeArtifact,
           onClick={() => setView(id)} data-testid={`collection-view-${id}`}>{label}</button>)}
     </div>
 
-    {view === 'kisten' && <ChestCollectionPanel data={data} playerLevel={playerLevel} economySecured={economySecured} onBuyKey={onBuyChestKey} onOpenChest={onOpenChest}/>}
+    {view === 'kisten' && <ChestCollectionPanel data={data} playerLevel={playerLevel} economySecured={economySecured} onOpenChest={onOpenChest}/>}
     {view === 'artefakte' && <section className="artifact-workshop" aria-label="Artefakt-Werkstatt" data-testid="artifact-workshop">
       <div className="panel-head">
         <div><div className="eyebrow">AUSRÜSTEN · AUFWERTEN</div><h3 className="panel-title">Artefakt-Werkstatt</h3></div>

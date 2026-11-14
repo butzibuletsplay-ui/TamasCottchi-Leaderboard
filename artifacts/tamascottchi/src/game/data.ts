@@ -4,7 +4,7 @@ import type { GameId } from './engine';
 import { absenceDecay, initialPersonality, type Personality } from './personality';
 import { worldDayKey, worldWeekKey } from './worldClock';
 import { COLLECTION_ITEMS, COLLECTION_ITEM_LINKS } from './collectionWorld';
-import { CHEST_TIERS, type RewardChestTier } from '@workspace/game-economy';
+import { CHEST_TIERS, MAX_PLAYER_XP, migrateLegacyPlayerXp, playerLevelForXp, type RewardChestTier } from '@workspace/game-economy';
 
 export type Room = 'Wohnzimmer' | 'Küche' | 'Bad' | 'Schlafzimmer' | 'Spielzimmer';
 export type NeedKey = 'hunger' | 'glueck' | 'energie' | 'sauberkeit';
@@ -17,6 +17,7 @@ export type Item = {
   effects?: Partial<Record<NeedKey, number>>; unlockLevel?: number; img?: string; desc?: string;
   rarity?: 'Gewöhnlich' | 'Ungewöhnlich' | 'Selten' | 'Episch' | 'Legendär';
   origin?: string; purpose?: string; stackable?: boolean; craftOnly?: boolean;
+  milestoneOnly?: boolean;
 };
 export type DailyProgress = { feeds: number; games: number; baths: number; pets: number; coins: number };
 export type JournalEntry = { id: string; date: number; icon: string; title: string; detail: string };
@@ -72,6 +73,7 @@ export type PetData = {
     regionDailyProgress?: Record<string, { materials: number; activities: number; rare: number }>;
     weeklyChestClaimed?: boolean;
     milestoneChestsClaimed?: string[];
+    pendingDiscoveries?: Array<{ artifactId: string; locationId: string; questId: string }>;
     petPosition: { x: number; y: number };
   };
   collectionIds?: string[];
@@ -86,7 +88,7 @@ export type FullPetData = PetData
     'resourceCollectedAt' | 'worldDay' | 'dailyGoals' | 'dailyMetrics' | 'dailyClaimed' | 'dailyVisitedLocations' |
     'dailyMasteryGained' | 'weeklyKey' | 'weeklyMetrics' | 'weeklyClaimed' | 'areaMastery' | 'worldEvent' | 'worldEventClaimedDay' |
     'fishingRewardsToday' | 'lastKnownWorldTime' | 'rewardChests' | 'keys' | 'chestInstances' | 'openedChestIds' | 'dailyChestCount' | 'dailyChestLocations' |
-    'regionDailyProgress' | 'weeklyChestClaimed' | 'milestoneChestsClaimed'>> };
+    'regionDailyProgress' | 'weeklyChestClaimed' | 'milestoneChestsClaimed' | 'pendingDiscoveries'>> };
 
 export const STORE_KEY = 'tamascottchi-save-v1';
 export const BACKUP_KEY = 'tamascottchi-save-v1-backup-before-2.0';
@@ -97,7 +99,8 @@ export const BACKUP_KEY_60 = 'tamascottchi-save-v1-backup-before-6.0';
 export const BACKUP_KEY_61 = 'tamascottchi-save-v1-backup-before-6.1';
 export const BACKUP_KEY_62 = 'tamascottchi-save-v1-backup-before-6.2';
 export const BACKUP_KEY_63 = 'tamascottchi-save-v1-backup-before-6.3';
-export const SAVE_SCHEMA = 9;
+export const BACKUP_KEY_64 = 'tamascottchi-save-v1-backup-before-6.4';
+export const SAVE_SCHEMA = 10;
 export const LOCATIONS = [
   { id: 'park', name: 'Scottchi Park', level: 1, point: { x: 25, y: 29 }, desc: 'Der erste Spaziergang: Wege, Wiesen und verlorene Knochen.' },
   { id: 'city', name: 'Scottchi City', level: 3, point: { x: 45, y: 53 }, desc: 'Ein lebendiger Platz für kleine Besorgungen.' },
@@ -224,6 +227,11 @@ export const ITEMS: Item[] = [
   { id: 'crafted-fossil-treat', name: 'Fossil-Keks', icon: '●', price: 0, type: 'food', amount: 26, effect: 'hunger', desc: 'Ein knuspriger Keks in Knochenform.', rarity: 'Selten', origin: 'Werkstatt · Crafting', purpose: 'Wird verbraucht und füllt Sattheit.', stackable: true, craftOnly: true },
   { id: 'crafted-berry-juice', name: 'Beeren-Smoothie', icon: '●', price: 0, type: 'food', amount: 16, effect: 'hunger', effects: { energie: 8 }, desc: 'Ein fruchtiger Energieschub für unterwegs.', rarity: 'Gewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Wird verbraucht und füllt Sattheit und Energie.', stackable: true, craftOnly: true },
   { id: 'crafted-ocean-decor', name: 'Strand-Mobile', icon: '◉', price: 0, type: 'room', desc: 'Ein Mobile aus Perlen, Muscheln und Treibholz.', rarity: 'Episch', origin: 'Werkstatt · Crafting', purpose: 'Dekoration für dein Zimmer', stackable: false, craftOnly: true },
+  { id: 'level-150-lamp', name: 'Kristallwächter-Lampe', icon: '💎', price: 0, type: 'room', desc: 'Eine besondere Lampe für erfahrene Entdecker.', rarity: 'Episch', origin: 'Spielerlevel 150', purpose: 'Einmalige Meilenstein-Dekoration', stackable: false, milestoneOnly: true },
+  { id: 'level-250-medal', name: 'Goldene Sammlermedaille', icon: '🏅', price: 0, type: 'room', desc: 'Ein exklusives Abzeichen für eine außergewöhnliche Sammlung.', rarity: 'Legendär', origin: 'Spielerlevel 250', purpose: 'Einmalige Meilenstein-Dekoration', stackable: false, milestoneOnly: true },
+  { id: 'level-500-plant', name: 'Sternenstaub-Pflanze', icon: '🌟', price: 0, type: 'room', desc: 'Eine seltene Pflanze für langjährige Scottchi-Fans.', rarity: 'Legendär', origin: 'Spielerlevel 500', purpose: 'Einmalige Meilenstein-Dekoration', stackable: false, milestoneOnly: true },
+  { id: 'level-750-banner', name: 'Sternenpfoten-Banner', icon: '🌌', price: 0, type: 'room', desc: 'Ein kosmisches Banner als Zeichen großer Ausdauer.', rarity: 'Legendär', origin: 'Spielerlevel 750', purpose: 'Einmalige Meilenstein-Dekoration', stackable: false, craftOnly: true, milestoneOnly: true },
+  { id: 'level-1000-statue', name: 'Endgame-Pfotenstatue', icon: '🐾', price: 0, type: 'room', desc: 'Eine einzigartige Statue für das Erreichen des maximalen Spielerlevels.', rarity: 'Legendär', origin: 'Spielerlevel 1000', purpose: 'Einmalige Endgame-Dekoration', stackable: false, craftOnly: true, milestoneOnly: true },
 ];
 export const itemById = (id: string) => ITEMS.find((i) => i.id === id);
 
@@ -248,11 +256,32 @@ export function rewardFor(game: GameId, score: number, gamesToday: number) {
 }
 
 export const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
-export const levelFor = (xp: number) => Math.floor(xp / 100) + 1;
+export const levelFor = (xp: number) => playerLevelForXp(xp);
+export type PlayerLevelMilestone = {
+  id: string;
+  level: number;
+  title: string;
+  description: string;
+  rewardCoins?: number;
+  rewardMaterials?: Array<{ id: string; quantity: number }>;
+  rewardChest?: RewardChestTier;
+  rewardRoomItem?: string;
+  playerTitle?: string;
+};
+export const PLAYER_LEVEL_MILESTONES: PlayerLevelMilestone[] = [
+  { id: 'player-level-25', level: 25, title: 'Erste große Pfote', description: 'Erreiche Spielerlevel 25.', rewardCoins: 200, rewardMaterials: [{ id: 'wood', quantity: 5 }, { id: 'cloth', quantity: 5 }] },
+  { id: 'player-level-50', level: 50, title: 'Seltene Pfote', description: 'Erreiche Spielerlevel 50.', rewardCoins: 80, rewardChest: 'rare' },
+  { id: 'player-level-100', level: 100, title: 'Legendenstart', description: 'Erreiche Spielerlevel 100.', rewardCoins: 180, rewardChest: 'legendary' },
+  { id: 'player-level-150', level: 150, title: 'Kristallwächter', description: 'Erreiche Spielerlevel 150.', rewardRoomItem: 'level-150-lamp' },
+  { id: 'player-level-250', level: 250, title: 'Sammlungs-Ikone', description: 'Erreiche Spielerlevel 250.', rewardRoomItem: 'level-250-medal', playerTitle: 'Sammlungs-Ikone' },
+  { id: 'player-level-500', level: 500, title: 'Scottchi-Legende', description: 'Erreiche Spielerlevel 500.', rewardRoomItem: 'level-500-plant', playerTitle: 'Scottchi-Legende' },
+  { id: 'player-level-750', level: 750, title: 'Sternenpfote', description: 'Erreiche Spielerlevel 750.', rewardRoomItem: 'level-750-banner', playerTitle: 'Sternenpfote' },
+  { id: 'player-level-1000', level: 1000, title: 'Tamascottchi-Mythos', description: 'Erreiche das Endgame auf Spielerlevel 1000.', rewardRoomItem: 'level-1000-statue', playerTitle: 'Tamascottchi-Mythos' },
+];
 export const today = () => new Date().toLocaleDateString('de-DE');
 
 export const initialData = (): FullPetData => ({
-  version: 1, saveSchema: SAVE_SCHEMA, name: 'Wuschel', needs: { hunger: 78, glueck: 83, energie: 72, sauberkeit: 88 },
+    version: 1, saveSchema: SAVE_SCHEMA, name: 'Wuschel', needs: { hunger: 78, glueck: 83, energie: 72, sauberkeit: 88 },
   lastUpdated: Date.now(), coins: 55, xp: 0, inventory: { kibble: 2, soap: 1 }, owned: [], equipped: [],
   room: 'Wohnzimmer', roomItems: [], activeBackground: 'classic', records: [], sleepUntil: null,
   stats: { games: 0, catches: 0, taps: 0, care: 0, rooms: 0, purchases: 0, toys: 0 },
@@ -270,7 +299,7 @@ export const initialData = (): FullPetData => ({
      areaMastery: {}, worldEvent: null, worldEventClaimedDay: '',
        fishingRewardsToday: 0, lastKnownWorldTime: Date.now(), rewardChests: {}, keys: { common: 0, uncommon: 0, rare: 0, epic: 0, legendary: 0 }, chestInstances: [], openedChestIds: [],
       dailyChestCount: 0, dailyChestLocations: [], regionDailyProgress: {}, weeklyChestClaimed: false,
-      milestoneChestsClaimed: [], petPosition: { x: 32, y: 38 },
+       milestoneChestsClaimed: [], pendingDiscoveries: [], petPosition: { x: 32, y: 38 },
    },
   journal: [], roomPlacements: {}, tutorialSeen: false, collectionIds: [],
   artifactLevels: {}, equippedArtifacts: [], artifactUpgradeCount: 0,
@@ -330,11 +359,15 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
   for (const [index, id] of (parsed.roomItems || []).entries()) {
     if (!roomPlacements[id]) roomPlacements[id] = { x: 16 + (index % 5) * 16, y: 67 + (Math.floor(index / 5) % 2) * 8 };
   }
+  const parsedXp = Math.max(0, num(parsed.xp, d.xp));
+  const normalizedXp = (parsed.saveSchema || 0) < SAVE_SCHEMA
+    ? migrateLegacyPlayerXp(parsedXp)
+    : Math.min(MAX_PLAYER_XP, parsedXp);
   return {
     ...d, ...parsed,
     version: 1, saveSchema: SAVE_SCHEMA,
     name: typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.slice(0, 18) : d.name,
-    coins: Math.max(0, num(parsed.coins, d.coins)), xp: Math.max(0, num(parsed.xp, d.xp)),
+    coins: Math.max(0, num(parsed.coins, d.coins)), xp: normalizedXp,
     needs: {
       hunger: clamp(decay(num(needs.hunger, d.needs.hunger))), glueck: clamp(decay(num(needs.glueck, d.needs.glueck))),
       energie: clamp(decay(num(needs.energie, d.needs.energie))), sauberkeit: clamp(decay(num(needs.sauberkeit, d.needs.sauberkeit))),
@@ -396,6 +429,11 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
       }])),
       weeklyChestClaimed: Boolean(parsed.world?.weeklyChestClaimed),
       milestoneChestsClaimed: [...milestoneChestsClaimed],
+      pendingDiscoveries: Array.isArray(parsed.world?.pendingDiscoveries)
+        ? [...new Map(parsed.world.pendingDiscoveries.filter((entry) => entry && typeof entry.artifactId === 'string' && typeof entry.locationId === 'string' && typeof entry.questId === 'string')
+          .filter((entry) => COLLECTION_ITEMS.some((item) => item.id === entry.artifactId))
+          .map((entry) => [entry.artifactId, entry])).values()]
+        : [],
       petPosition: {
         x: Math.max(3, Math.min(97, num(parsed.world?.petPosition?.x, d.world.petPosition.x))),
         y: Math.max(3, Math.min(97, num(parsed.world?.petPosition?.y, d.world.petPosition.y))),
@@ -404,7 +442,7 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
     collectionIds,
     artifactLevels,
     equippedArtifacts: [...new Set((Array.isArray(parsed.equippedArtifacts) ? parsed.equippedArtifacts : []).filter((id) => artifactLevels[id]))]
-      .slice(0, levelFor(num(parsed.xp, d.xp)) >= 20 ? 4 : levelFor(num(parsed.xp, d.xp)) >= 10 ? 3 : 2),
+      .slice(0, levelFor(normalizedXp) >= 20 ? 4 : levelFor(normalizedXp) >= 10 ? 3 : 2),
     artifactUpgradeCount: Math.max(0, Math.floor(num(parsed.artifactUpgradeCount, 0))),
     journal: Array.isArray(parsed.journal) ? parsed.journal.filter((entry) => entry && typeof entry.id === 'string' && typeof entry.icon === 'string' && typeof entry.title === 'string' && typeof entry.detail === 'string' && Number.isFinite(entry.date)).slice(-100) : [],
     roomPlacements: Object.fromEntries(Object.entries(roomPlacements).filter(([, pos]) => pos && Number.isFinite(pos.x) && Number.isFinite(pos.y)).map(([id, pos]) => [id, { x: Math.max(4, Math.min(96, pos.x)), y: Math.max(42, Math.min(88, pos.y)) }])),
@@ -442,6 +480,7 @@ export function loadData(): FullPetData {
     if ((parsed.saveSchema || 0) < 7 && !localStorage.getItem(BACKUP_KEY_61)) localStorage.setItem(BACKUP_KEY_61, raw);
     if ((parsed.saveSchema || 0) < 8 && !localStorage.getItem(BACKUP_KEY_62)) localStorage.setItem(BACKUP_KEY_62, raw);
     if ((parsed.saveSchema || 0) < 9 && !localStorage.getItem(BACKUP_KEY_63)) localStorage.setItem(BACKUP_KEY_63, raw);
+    if ((parsed.saveSchema || 0) < 10 && !localStorage.getItem(BACKUP_KEY_64)) localStorage.setItem(BACKUP_KEY_64, raw);
     return normalize(parsed);
   } catch (cause) {
     // Never replace an unreadable save with a new game through the autosave effect.

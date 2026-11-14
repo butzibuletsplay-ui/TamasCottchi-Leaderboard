@@ -32,6 +32,11 @@ import {
   chestDropChances,
   chooseChance,
   dailyWorldChestTier,
+  highestUnlockedChestTier,
+  MAX_PLAYER_XP,
+  migrateLegacyPlayerXp,
+  playerLevelForXp,
+  worldStageLevel,
   type CollectionRarity,
   type RewardChestTier,
 } from "@workspace/game-economy";
@@ -184,6 +189,8 @@ function worldDayKey(timestamp: number): string {
 
 function normalizeEconomySave(input: JsonRecord, now: number): JsonRecord {
   const save = { ...input };
+  const rawXp = integer(save.xp);
+  const xp = integer(save.saveSchema) < 10 ? migrateLegacyPlayerXp(rawXp) : Math.min(MAX_PLAYER_XP, rawXp);
   const world = { ...asRecord(save.world) };
   const keys = Object.fromEntries(CHEST_TIERS.map((tier) => [tier, integer(asRecord(world.keys)[tier])]));
   const instances = Array.isArray(world.chestInstances)
@@ -213,7 +220,8 @@ function normalizeEconomySave(input: JsonRecord, now: number): JsonRecord {
   return {
     ...save,
     coins: integer(save.coins),
-    xp: integer(save.xp),
+    xp,
+    saveSchema: 10,
     collectionIds: stringArray(save.collectionIds),
     artifactLevels: { ...asRecord(save.artifactLevels) },
     owned: stringArray(save.owned),
@@ -500,7 +508,12 @@ async function runEconomyAction(
 
     const revision = current.revision + 1;
     const updatedAt = new Date(now);
-    const savedState: JsonRecord = { ...mutation.saveData, economyVersion: 1 };
+    const savedState: JsonRecord = {
+      ...mutation.saveData,
+      xp: Math.max(0, Math.min(MAX_PLAYER_XP, integer(mutation.saveData.xp))),
+      saveSchema: 10,
+      economyVersion: 1,
+    };
     const response = PurchaseOnlineChestKeyResponse.parse({
       saveData: savedState,
       revision,
@@ -515,7 +528,7 @@ async function runEconomyAction(
     await tx
       .update(onlineProfilesTable)
       .set({
-        level: Math.floor(integer(savedState.xp) / 100) + 1,
+        level: playerLevelForXp(integer(savedState.xp)),
         updatedAt,
       })
       .where(eq(onlineProfilesTable.userId, userId));
@@ -544,7 +557,7 @@ router.post(
     }
     const { tier, requestId } = parsed.data;
     const result = await runEconomyAction(playerId(res), requestId, "key-purchase", (save) => {
-      const level = Math.floor(integer(save.xp) / 100) + 1;
+      const level = playerLevelForXp(integer(save.xp));
       if (level < CHEST_UNLOCK_LEVEL[tier]) return { ok: false, status: 409, error: `Dieser Schlüssel wird ab Level ${CHEST_UNLOCK_LEVEL[tier]} freigeschaltet.` };
       const price = CHEST_KEY_PRICES[tier];
       if (integer(save.coins) < price) return { ok: false, status: 409, error: "Dafür fehlen Münzen." };
@@ -580,7 +593,7 @@ router.post(
     }
     const { tier, requestId } = parsed.data;
     const result = await runEconomyAction(playerId(res), requestId, "chest-open", (save, now) => {
-      const level = Math.floor(integer(save.xp) / 100) + 1;
+      const level = playerLevelForXp(integer(save.xp));
       if (level < CHEST_UNLOCK_LEVEL[tier]) return { ok: false, status: 409, error: "Diese Kiste ist noch nicht freigeschaltet." };
       const world = asRecord(save.world);
       const keys = asRecord(world.keys);
@@ -654,11 +667,12 @@ router.post(
       };
       if (!wasOwned && Object.keys(artifactLevels).length > 0 && Object.keys(artifactLevels).filter((id) => integer(artifactLevels[id]) > 0).length >= Object.values(COLLECTION_RARITY_POOLS).flat().length && !milestoneChestsClaimed.includes("complete-artifact-collection")) {
         const milestoneSource = "milestone:complete-artifact-collection";
-        instances.push({ id: `chest-${milestoneSource}`, source: milestoneSource, tier: "legendary", earnedAt: now });
+        const milestoneTier = highestUnlockedChestTier(level);
+        instances.push({ id: `chest-${milestoneSource}`, source: milestoneSource, tier: milestoneTier, earnedAt: now });
         nextWorld.chestInstances = instances;
         nextWorld.rewardChests = {
           ...rewardChests,
-          legendary: integer(rewardChests.legendary) + 1,
+          [milestoneTier]: integer(rewardChests[milestoneTier]) + 1,
         };
         nextWorld.milestoneChestsClaimed = [...milestoneChestsClaimed, "complete-artifact-collection"];
       }
@@ -702,7 +716,7 @@ router.post(
     }
     const { locationId, requestId } = parsed.data;
     const result = await runEconomyAction(playerId(res), requestId, "daily-world-chest", (save, now) => {
-      const level = Math.floor(integer(save.xp) / 100) + 1;
+      const level = playerLevelForXp(integer(save.xp));
       const requiredLevel = locationUnlockLevel[locationId];
       if (!requiredLevel || level < requiredLevel) return { ok: false, status: 409, error: "Dieses Weltgebiet ist noch gesperrt." };
       const world = asRecord(save.world);
@@ -716,7 +730,8 @@ router.post(
       const sameDay = world.worldDay === day;
       const claims = sameDay ? stringArray(world.dailyChestLocations) : [];
       if (claims.includes(locationId)) return { ok: false, status: 409, error: "Die Weltkiste für dieses Gebiet wurde heute schon abgeholt." };
-      const tier = dailyWorldChestTier(level, secureRandom);
+      const areaMastery = asRecord(world.areaMastery);
+      const tier = dailyWorldChestTier(worldStageLevel(requiredLevel, integer(areaMastery[locationId])), level, secureRandom);
       const source = `region-daily:${locationId}:${day}`;
       const instance = { id: `chest-${source}`, source, tier, earnedAt: now };
       const instances = Array.isArray(world.chestInstances) ? world.chestInstances.map((entry) => ({ ...asRecord(entry) })) : [];
@@ -897,11 +912,17 @@ router.put(
       return;
     }
     const checked = validateSaveData(parsed.data.saveData);
-    const saveData = checked.value;
-    if (!saveData) {
+    const rawSaveData = checked.value;
+    if (!rawSaveData) {
       res.status(422).json({ error: checked.error });
       return;
     }
+    const rawXp = integer(rawSaveData.xp);
+    const saveData: JsonRecord = {
+      ...rawSaveData,
+      xp: integer(rawSaveData.saveSchema) < 10 ? migrateLegacyPlayerXp(rawXp) : Math.min(MAX_PLAYER_XP, rawXp),
+      saveSchema: 10,
+    };
     const userId = playerId(res);
     const result = await db.transaction(async (tx) => {
       const [profile] = await tx
@@ -923,7 +944,7 @@ router.put(
       if (current && current.revision !== parsed.data.expectedRevision) {
         return { kind: "conflict" as const, revision: current.revision };
       }
-      const nextSaveData = current
+      const nextSaveData: JsonRecord = current
         ? preserveServerEconomy(saveData, current.saveData)
         : saveData;
       const revision = (current?.revision ?? 0) + 1;
@@ -948,7 +969,7 @@ router.put(
         .update(onlineProfilesTable)
         .set({
           petName: cleanPetName(name) || "Wuschel",
-          level: Math.floor(xp / 100) + 1,
+          level: playerLevelForXp(xp),
           updatedAt: now,
         })
         .where(eq(onlineProfilesTable.userId, userId));
@@ -986,11 +1007,17 @@ router.post(
       return;
     }
     const checked = validateSaveData(parsed.data.saveData);
-    const saveData = checked.value;
-    if (!saveData) {
+    const rawSaveData = checked.value;
+    if (!rawSaveData) {
       res.status(422).json({ error: checked.error });
       return;
     }
+    const rawXp = integer(rawSaveData.xp);
+    const saveData: JsonRecord = {
+      ...rawSaveData,
+      xp: integer(rawSaveData.saveSchema) < 10 ? migrateLegacyPlayerXp(rawXp) : Math.min(MAX_PLAYER_XP, rawXp),
+      saveSchema: 10,
+    };
     if (parsed.data.expectedRevision !== 0) {
       res.status(409).json({ error: "Ein bestehender Cloud-Spielstand wird nicht überschrieben." });
       return;
@@ -1037,7 +1064,7 @@ router.post(
         .update(onlineProfilesTable)
         .set({
           petName: cleanPetName(saveData.name as string) || "Wuschel",
-          level: Math.floor(xp / 100) + 1,
+          level: playerLevelForXp(xp),
           updatedAt: now,
         })
         .where(eq(onlineProfilesTable.userId, userId));

@@ -19,7 +19,7 @@ import {
   type Trait,
 } from './game/personality';
 import {
-  CHALLENGES, COLLECTIONS, GAMES, ITEMS, ROOM_BG, ROOM_LIST, STORE_KEY, STYLE_SETS, SaveLoadError, assertSave, clamp, initialData, itemById, levelFor, loadData,
+  CHALLENGES, COLLECTIONS, GAMES, ITEMS, PLAYER_LEVEL_MILESTONES, ROOM_BG, ROOM_LIST, STORE_KEY, STYLE_SETS, SaveLoadError, assertSave, clamp, initialData, itemById, levelFor, loadData,
   moodFor, normalize, rewardFor, today, type DailyProgress, type FullPetData, type GameRecord, type Item, type NeedKey, type RewardChestTier, type Room,
 } from './game/data';
 import { craftItem } from './game/crafting';
@@ -29,6 +29,7 @@ import { InventoryPage } from './game/InventoryPage';
 import { JournalPage } from './game/JournalPage';
 import { recordJournal } from './game/journal';
 import { completeQuestAction } from './game/questEngine';
+import { releasePendingWorldDiscoveries } from './game/worldDiscoveries';
 import { hasMaterialArt, MaterialArt } from './game/MaterialArt';
 import {
   getGetOnlineProfileQueryKey, getGetOnlineSaveQueryKey, useClaimOnlineDailyWorldChest, useGetOnlineProfile, useGetOnlineSave,
@@ -42,7 +43,7 @@ import {
   grantMilestoneChest, MINIGAME_SCORE_CHEST_MILESTONES, upgradeArtifact,
 } from './game/artifactSystem';
 import { COLLECTION_ITEM_LINKS } from './game/collectionWorld';
-import { CHEST_KEY_PRICES, CHEST_UNLOCK_LEVEL } from '@workspace/game-economy';
+import { CHEST_KEY_PRICES, CHEST_UNLOCK_LEVEL, MAX_PLAYER_XP, playerLevelProgress } from '@workspace/game-economy';
 type PetData = FullPetData;
 
 type PetAction = 'idle' | 'happy' | 'eating' | 'washing' | 'petting' | 'sleeping' | 'spin' | 'wiggle' | 'run' | 'chew' | 'wake' | 'yawn' | 'cuddle';
@@ -151,7 +152,14 @@ function App() {
 }
 
 function Game({ initial }: { initial: PetData }) {
-  const [data, setData] = useState<PetData>(initial);
+  const [data, setDataState] = useState<PetData>(initial);
+  const setData = useCallback((update: PetData | ((current: PetData) => PetData)) => {
+    setDataState((current) => {
+      const next = typeof update === 'function' ? update(current) : update;
+      const xp = Math.max(0, Math.min(MAX_PLAYER_XP, next.xp));
+      return xp === next.xp ? next : { ...next, xp };
+    });
+  }, []);
   const dataRef = useRef(data); dataRef.current = data;
   const { isSignedIn } = useAuth();
   const { user } = useUser();
@@ -467,7 +475,10 @@ function Game({ initial }: { initial: PetData }) {
 
   const level = levelFor(data.xp);
   const previousLevel = useRef(level);
-  const xpProgress = data.xp % 100;
+  const levelProgress = playerLevelProgress(data.xp);
+  const xpProgress = levelProgress.percent;
+  const playerTitle = [...PLAYER_LEVEL_MILESTONES].reverse()
+    .find((milestone) => milestone.playerTitle && data.claimedAchievements.includes(milestone.id))?.playerTitle || 'Scottchi-Fan';
   const topScore = useMemo(() => [...data.records].sort((a, b) => b.score - a.score).slice(0, 10), [data.records]);
   const notify = useCallback((message: string) => { setToast(message); later('toast', () => setToast(''), 2400); }, [later]);
   useEffect(() => {
@@ -478,6 +489,9 @@ function Game({ initial }: { initial: PetData }) {
       notify(`Level ${level}! ${gained * 20} Münzen warten auf dich.`);
     }
   }, [level, notify]);
+  useEffect(() => {
+    setData((old) => releasePendingWorldDiscoveries(old));
+  }, [level]);
 
   const settingsRef = useRef(data.settings); settingsRef.current = data.settings;
   const sound: SoundFn = useCallback((frequency = 540, opts = {}) => {
@@ -1085,18 +1099,33 @@ function Game({ initial }: { initial: PetData }) {
   const stylesOwned = STYLE_SETS.filter((s) => ownsAll(data.owned, s.items)).length;
   const missions = DAILY_GOALS.map((goal) => ({ ...goal, progress: Math.min(data.daily[goal.id], goal.target), done: data.missions[goal.id] || false, reward: `+${goal.rewardCoins} Münzen · +${goal.rewardXp} XP` }));
   const achievements = [
-    { id: 'first-game', title: 'Pfoten in Bewegung', detail: 'Schließe dein erstes Spiel ab', progress: data.stats.games, goal: 1, icon: '✦', rewardCoins: 12, rewardXp: 10 },
-    { id: 'ten-games', title: 'Spielplatz-Stammgast', detail: 'Spiele insgesamt 10 Runden', progress: data.stats.games, goal: 10, icon: '▦', rewardCoins: 30, rewardXp: 20 },
-    { id: 'careful', title: 'Gute Pfote', detail: 'Kümmere dich 5-mal um Scottchi', progress: data.stats.care, goal: 5, icon: '♥', rewardCoins: 16, rewardXp: 12 },
-    { id: 'collector', title: 'Kleiner Sammler', detail: 'Kaufe 3 Dinge im Laden', progress: data.stats.purchases, goal: 3, icon: '◇', rewardCoins: 18, rewardXp: 12 },
-    { id: 'room-hop', title: 'Zimmerreise', detail: 'Wechsle 5-mal den Raum', progress: data.stats.rooms, goal: 5, icon: '⌂', rewardCoins: 14, rewardXp: 12 },
-    { id: 'snack', title: 'Snack-Spezialist', detail: 'Fang 25 Snacks', progress: data.stats.catches, goal: 25, icon: '●', rewardCoins: 22, rewardXp: 16 },
-    { id: 'toybox', title: 'Spielkamerad', detail: 'Spiele 15-mal mit Spielzeug', progress: data.stats.toys || 0, goal: 15, icon: '◎', rewardCoins: 20, rewardXp: 15 },
-    { id: 'level-10', title: 'Großer Scottchi', detail: 'Bring Scottchi auf Level 10', progress: level, goal: 10, icon: '★', rewardCoins: 80, rewardXp: 0 },
-    { id: 'own-25', title: 'Schatzkammer', detail: 'Besitze 25 verschiedene Gegenstände', progress: uniqueOwned, goal: 25, icon: '◆', rewardCoins: 70, rewardXp: 40 },
-    { id: 'games-100', title: 'Arcade-Legende', detail: 'Schließe 100 Minispiele ab', progress: data.stats.games, goal: 100, icon: '▲', rewardCoins: 90, rewardXp: 60 },
-    { id: 'full-style', title: 'Stilsicher', detail: 'Sammle alle Teile eines Outfit-Stils', progress: stylesOwned > 0 ? 1 : 0, goal: 1, icon: '✧', rewardCoins: 35, rewardXp: 25 },
-    { id: 'all-rooms', title: 'Hausrundgang', detail: `Besuche alle ${ROOM_LIST.length} Räume`, progress: data.visitedRooms.length, goal: ROOM_LIST.length, icon: '⌂', rewardCoins: 20, rewardXp: 15 },
+    ...[
+      { id: 'first-game', title: 'Pfoten in Bewegung', detail: 'Schließe dein erstes Spiel ab', progress: data.stats.games, goal: 1, icon: '✦', rewardCoins: 12, rewardXp: 10 },
+      { id: 'ten-games', title: 'Spielplatz-Stammgast', detail: 'Spiele insgesamt 10 Runden', progress: data.stats.games, goal: 10, icon: '▦', rewardCoins: 30, rewardXp: 20 },
+      { id: 'careful', title: 'Gute Pfote', detail: 'Kümmere dich 5-mal um Scottchi', progress: data.stats.care, goal: 5, icon: '♥', rewardCoins: 16, rewardXp: 12 },
+      { id: 'collector', title: 'Kleiner Sammler', detail: 'Kaufe 3 Dinge im Laden', progress: data.stats.purchases, goal: 3, icon: '◇', rewardCoins: 18, rewardXp: 12 },
+      { id: 'room-hop', title: 'Zimmerreise', detail: 'Wechsle 5-mal den Raum', progress: data.stats.rooms, goal: 5, icon: '⌂', rewardCoins: 14, rewardXp: 12 },
+      { id: 'snack', title: 'Snack-Spezialist', detail: 'Fang 25 Snacks', progress: data.stats.catches, goal: 25, icon: '●', rewardCoins: 22, rewardXp: 16 },
+      { id: 'toybox', title: 'Spielkamerad', detail: 'Spiele 15-mal mit Spielzeug', progress: data.stats.toys || 0, goal: 15, icon: '◎', rewardCoins: 20, rewardXp: 15 },
+      { id: 'level-10', title: 'Großer Scottchi', detail: 'Bring Scottchi auf Level 10', progress: level, goal: 10, icon: '★', rewardCoins: 80, rewardXp: 0 },
+      { id: 'own-25', title: 'Schatzkammer', detail: 'Besitze 25 verschiedene Gegenstände', progress: uniqueOwned, goal: 25, icon: '◆', rewardCoins: 70, rewardXp: 40 },
+      { id: 'games-100', title: 'Arcade-Legende', detail: 'Schließe 100 Minispiele ab', progress: data.stats.games, goal: 100, icon: '▲', rewardCoins: 90, rewardXp: 60 },
+      { id: 'full-style', title: 'Stilsicher', detail: 'Sammle alle Teile eines Outfit-Stils', progress: stylesOwned > 0 ? 1 : 0, goal: 1, icon: '✧', rewardCoins: 35, rewardXp: 25 },
+      { id: 'all-rooms', title: 'Hausrundgang', detail: `Besuche alle ${ROOM_LIST.length} Räume`, progress: data.visitedRooms.length, goal: ROOM_LIST.length, icon: '⌂', rewardCoins: 20, rewardXp: 15 },
+    ].map((achievement) => ({ ...achievement, rewardSummary: `${achievement.rewardCoins} Münzen · ${achievement.rewardXp} XP` })),
+    ...PLAYER_LEVEL_MILESTONES.map((milestone) => {
+      const rewardParts = [
+        milestone.rewardCoins ? `${milestone.rewardCoins} Münzen` : '',
+        milestone.rewardMaterials?.map(({ id, quantity }) => `${quantity} ${id}`).join(', ') || '',
+        milestone.rewardChest ? `${CHEST_DEFINITIONS[milestone.rewardChest].label}-Kiste` : '',
+        milestone.rewardRoomItem ? itemById(milestone.rewardRoomItem)?.name || 'exklusive Dekoration' : '',
+        milestone.playerTitle ? `Titel „${milestone.playerTitle}“` : '',
+      ].filter(Boolean);
+      return {
+        id: milestone.id, title: milestone.title, detail: milestone.description, progress: level, goal: milestone.level,
+        icon: '🐾', rewardCoins: milestone.rewardCoins || 0, rewardXp: 0, rewardSummary: rewardParts.join(' · '),
+      };
+    }),
   ];
   const collections = COLLECTIONS.map((c) => ({ ...c, have: c.items.filter((i) => data.owned.includes(i)).length }));
   function claimCollection(id: string) {
@@ -1146,8 +1175,25 @@ function Game({ initial }: { initial: PetData }) {
   function claimAchievement(id: string) {
     const a = achievements.find((item) => item.id === id);
     if (!a || a.progress < a.goal || data.claimedAchievements.includes(id)) return;
-    setData((old) => old.claimedAchievements.includes(id) ? old : advanceDaily({ ...old, coins: old.coins + a.rewardCoins, xp: old.xp + a.rewardXp, claimedAchievements: [...old.claimedAchievements, id] }, 'coins', a.rewardCoins));
-    notify(`Erfolg abgeholt: +${a.rewardCoins} Münzen.`);
+    const milestone = PLAYER_LEVEL_MILESTONES.find((item) => item.id === id);
+    setData((old) => {
+      if (old.claimedAchievements.includes(id)) return old;
+      let next: FullPetData = {
+        ...old,
+        coins: old.coins + a.rewardCoins,
+        xp: old.xp + a.rewardXp,
+        claimedAchievements: [...old.claimedAchievements, id],
+      };
+      if (milestone?.rewardMaterials?.length) {
+        const inventory = { ...next.inventory };
+        for (const material of milestone.rewardMaterials) inventory[material.id] = (inventory[material.id] || 0) + material.quantity;
+        next = { ...next, inventory };
+      }
+      if (milestone?.rewardRoomItem) next = { ...next, owned: [...new Set([...next.owned, milestone.rewardRoomItem])] };
+      if (milestone?.rewardChest) next = grantMilestoneChest(next, id, milestone.rewardChest, Date.now());
+      return advanceDaily(next, 'coins', a.rewardCoins);
+    });
+    notify(`Erfolg abgeholt: ${a.rewardSummary}.`);
   }
   const roomDecor = data.roomItems.map(itemById).filter(Boolean) as Item[];
   const ownedToys = data.owned.filter((id) => TOY_USE[id]);
@@ -1209,7 +1255,7 @@ function Game({ initial }: { initial: PetData }) {
     <div className="layout">
       <aside className="sidebar">
         <div className="nav-card"><div className="nav-label">DEIN KLEINES UNIVERSUM</div><div className="nav-list">{nav.map(({ id, label, icon: Icon }) => <button key={id} onClick={() => { setPage(id); setActiveGame(null); }} className={`nav-button ${page === id ? 'active' : ''}`} data-testid={`nav-${id}`}><Icon/>{label}</button>)}</div></div>
-        <div className="side-note"><strong>Level {level} · Scottchi-Fan</strong><div className="progress-track"><span style={{ width: `${xpProgress}%` }}/></div><div style={{ marginTop: 7 }}>{xpProgress} / 100 XP bis zum nächsten Level</div></div>
+        <div className="side-note"><strong>Level {level} · {playerTitle}</strong><div className="progress-track"><span style={{ width: `${xpProgress}%` }}/></div><div style={{ marginTop: 7 }}>{levelProgress.isMaxLevel ? 'Maximallevel erreicht' : `${levelProgress.earned} / ${levelProgress.required} XP bis zum nächsten Level`}</div></div>
       </aside>
       <main className="main">
         {!activeGame && page !== 'online' && <div className="main-head"><div><div className="eyebrow">{page === 'home' ? 'DEIN ZUHAUSE' : 'TAMASCOTTCHI 6.2'}</div><h1>{page === 'home' ? `Hallo, ${data.name}.` : page === 'shop' ? 'Der kleine Laden' : page === 'world' ? 'Scottchi World' : page === 'collections' ? 'Scottchi Collections' : page === 'games' ? 'Spielzeit!' : page === 'closet' ? 'Kleiderschrank' : page === 'leaderboard' ? 'Bestenliste' : page === 'inventory' ? 'Inventar' : page === 'crafting' ? 'Werkstatt' : page === 'journal' ? 'Scottchis Tagebuch' : page === 'help' ? 'Hilfe & Spielstart' : 'Erfolge'}</h1><div className="subline">{page === 'home' ? 'Tippe Scottchi an, wirf Spielzeug, wechsle das Zimmer.' : page === 'leaderboard' ? 'Nur deine Ergebnisse auf diesem Gerät.' : 'Ein gemütlicher Ort für Scottchi und dich.'}</div></div>
@@ -1250,7 +1296,7 @@ function Game({ initial }: { initial: PetData }) {
         </>}
 
         {page === 'world' && <World data={data} level={level} serverClockOffsetMs={serverClockOffsetMs} onChange={changeWorld} onNotice={notify} onStore={(tab) => { setShopTab(tab); setPage('shop'); }} onClaimDailyChest={onlineUserId && cloudLink?.userId === onlineUserId ? claimDailyWorldChest : undefined}/>}
-        {page === 'collections' && <CollectionsPage data={data} playerLevel={level} economySecured={!!onlineUserId && cloudLink?.userId === onlineUserId} onClaim={claimWorldReward} onUpgradeArtifact={upgradeCollectedArtifact} onToggleArtifact={toggleArtifactEquipment} onBuyChestKey={purchaseChestKeyAction} onOpenChest={openChestFromCollection}/>}
+        {page === 'collections' && <CollectionsPage data={data} playerLevel={level} economySecured={!!onlineUserId && cloudLink?.userId === onlineUserId} onClaim={claimWorldReward} onUpgradeArtifact={upgradeCollectedArtifact} onToggleArtifact={toggleArtifactEquipment} onOpenChest={openChestFromCollection}/>}
         {page === 'inventory' && <InventoryPage data={data} onUse={useInventoryItem} onEquip={equip} onPlace={equip} onOpenChest={openChest}/>}
         {page === 'crafting' && <CraftingPage data={data} onCraft={craft}/>}
         {page === 'journal' && <JournalPage data={data}/>}
@@ -1269,9 +1315,9 @@ function Game({ initial }: { initial: PetData }) {
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}><button className="button orange" onClick={() => setActiveGame(g.id)} data-testid={`button-start-${g.id}`}><Play size={14}/> Spielen</button></div>
           </article>)}</section>)}
 
-        {page === 'shop' && <section className="panel"><div className="panel-head"><h2 className="panel-title">Ein paar gute Dinge</h2><span className="stat-pill"><Coins size={14}/>{data.coins}</span></div><div className="room-controls" style={{ position: 'static', margin: '0 0 14px', flexWrap: 'wrap' }}>{(['food', 'toy', 'accessory', 'room', 'background', 'keys'] as const).map((tab) => <button className={`room-chip ${shopTab === tab ? 'selected' : ''}`} key={tab} onClick={() => setShopTab(tab)} data-testid={`shop-tab-${tab}`}>{tab === 'food' ? 'Futter & Pflege' : tab === 'toy' ? 'Spielzeug' : tab === 'accessory' ? 'Kleidung & Hüte' : tab === 'room' ? 'Zimmer' : tab === 'background' ? 'Hintergründe' : 'Kistenschlüssel'}</button>)}</div>
+        {page === 'shop' && <section className="panel"><div className="panel-head"><h2 className="panel-title">Ein paar gute Dinge</h2><span className="stat-pill"><Coins size={14}/>{data.coins}</span></div><div className="room-controls" style={{ position: 'static', margin: '0 0 14px', flexWrap: 'wrap' }}>{(['food', 'toy', 'accessory', 'room', 'background', 'keys'] as const).map((tab) => <button className={`room-chip ${shopTab === tab ? 'selected' : ''}`} key={tab} onClick={() => setShopTab(tab)} data-testid={`shop-tab-${tab}`}>{tab === 'food' ? 'Futter & Pflege' : tab === 'toy' ? 'Spielzeug' : tab === 'accessory' ? 'Kleidung & Hüte' : tab === 'room' ? 'Zimmer' : tab === 'background' ? 'Hintergründe' : 'Schlüssel'}</button>)}</div>
           {shopTab === 'keys' ? <div className="page-grid">{CHEST_TIERS.map((tier) => <div className="shop-item" key={tier} data-testid={`shop-key-${tier}`}><span className={`item-icon chest-key-icon rarity-${tier}`}><KeyRound size={24}/></span><div className="item-info"><div className="item-title">{CHEST_DEFINITIONS[tier].label}-Schlüssel</div><div className="item-meta">{data.world.keys[tier] || 0} vorhanden · ab Level {CHEST_UNLOCK_LEVEL[tier]}</div></div><button className="button small" onClick={() => void purchaseChestKeyAction(tier)} disabled={pendingKeyPurchase !== null || level < CHEST_UNLOCK_LEVEL[tier] || data.coins < CHEST_KEY_PRICES[tier]} data-testid={`button-buy-key-shop-${tier}`}><Coins size={13}/>{pendingKeyPurchase === tier ? 'Kaufe …' : CHEST_KEY_PRICES[tier]}</button></div>)}</div>
-            : <div className="page-grid">{ITEMS.filter((item) => item.type === shopTab && !item.craftOnly).map((item) => <div className="shop-item" key={item.id} data-testid={`shop-item-${item.id}`}><ItemIcon item={item}/><div className="item-info"><div className="item-title">{item.name}</div><div className="item-meta">{item.unlockLevel && level < item.unlockLevel ? `Ab Level ${item.unlockLevel} freigeschaltet` : item.type === 'food' ? `${item.amount || 0}% ${NEEDS.find((n) => n.id === item.effect)?.name.toLowerCase() || 'Wirkung'} · Vorrat: ${data.inventory[item.id] || 0}` : item.type === 'room' ? 'Dekoration für dein Zuhause' : item.type === 'background' ? 'Ersetzt das Zimmerbild durch ein Motiv' : item.type === 'toy' ? item.desc : SLOT_OF[item.id] === 'hat' ? 'Kopfbedeckung' : SLOT_OF[item.id] === 'outfit' ? 'Kleidung' : 'Accessoire'}</div></div><button className="button small" onClick={() => buy(item)} disabled={(item.type !== 'food' && item.id !== 'shampoo' && data.owned.includes(item.id)) || (!!item.unlockLevel && level < item.unlockLevel)} data-testid={`button-buy-${item.id}`}><Coins size={13}/>{item.type !== 'food' && item.id !== 'shampoo' && data.owned.includes(item.id) ? 'Gekauft' : item.unlockLevel && level < item.unlockLevel ? `Level ${item.unlockLevel}` : item.price}</button></div>)}</div>}
+             : <div className="page-grid">{ITEMS.filter((item) => item.type === shopTab && !item.craftOnly && !item.milestoneOnly).map((item) => <div className="shop-item" key={item.id} data-testid={`shop-item-${item.id}`}><ItemIcon item={item}/><div className="item-info"><div className="item-title">{item.name}</div><div className="item-meta">{item.unlockLevel && level < item.unlockLevel ? `Ab Level ${item.unlockLevel} freigeschaltet` : item.type === 'food' ? `${item.amount || 0}% ${NEEDS.find((n) => n.id === item.effect)?.name.toLowerCase() || 'Wirkung'} · Vorrat: ${data.inventory[item.id] || 0}` : item.type === 'room' ? 'Dekoration für dein Zuhause' : item.type === 'background' ? 'Ersetzt das Zimmerbild durch ein Motiv' : item.type === 'toy' ? item.desc : SLOT_OF[item.id] === 'hat' ? 'Kopfbedeckung' : SLOT_OF[item.id] === 'outfit' ? 'Kleidung' : 'Accessoire'}</div></div><button className="button small" onClick={() => buy(item)} disabled={(item.type !== 'food' && item.id !== 'shampoo' && data.owned.includes(item.id)) || (!!item.unlockLevel && level < item.unlockLevel)} data-testid={`button-buy-${item.id}`}><Coins size={13}/>{item.type !== 'food' && item.id !== 'shampoo' && data.owned.includes(item.id) ? 'Gekauft' : item.unlockLevel && level < item.unlockLevel ? `Level ${item.unlockLevel}` : item.price}</button></div>)}</div>}
         </section>}
 
         {page === 'closet' && <div className="closet-grid">
@@ -1302,7 +1348,7 @@ function Game({ initial }: { initial: PetData }) {
             <div className="collection-thumbs">{c.items.slice(0, 4).map((i) => { const it = itemById(i)!; return <span key={i} className={data.owned.includes(i) ? 'have' : ''}>{it.img ? <img src={it.img} alt=""/> : it.icon}</span>; })}</div>
             <div className="item-info"><div className="item-title">{c.name}</div><div className="progress-track"><span style={{ width: `${c.have / c.items.length * 100}%` }}/></div><div className="item-meta">{c.have} / {c.items.length} · {c.rewardCoins} Münzen · {c.rewardXp} XP</div><div className="item-meta">{c.items.filter((i) => !data.owned.includes(i)).map((i) => itemById(i)?.name).join(', ') || 'Alles gesammelt'}</div></div>
             {c.have >= c.items.length ? data.claimedAchievements.includes(c.id) ? <span className="reward">Abgeholt</span> : <button className="button small" onClick={() => claimCollection(c.id)} data-testid={`button-claim-${c.id}`}>Abholen</button> : null}</div>)}</div></section>
-          <section className="panel" style={{ marginTop: 16 }}><div className="panel-head"><h2 className="panel-title">Kleine große Momente</h2><Award size={18}/></div><div className="page-grid">{achievements.map((item) => <div className={`achievement ${item.progress < item.goal ? 'locked' : ''}`} key={item.id} data-testid={`achievement-${item.id}`}><div className="item-icon">{item.progress >= item.goal ? item.icon : '·'}</div><div className="item-info"><div className="item-title">{item.title}</div><div className="item-meta">{item.detail}</div><div className="progress-track"><span style={{ width: `${Math.min(100, item.progress / item.goal * 100)}%` }}/></div><div className="item-meta">{Math.min(item.progress, item.goal)} / {item.goal} · Belohnung {item.rewardCoins} Münzen</div></div>{item.progress >= item.goal ? data.claimedAchievements.includes(item.id) ? <span className="reward">Abgeholt</span> : <button className="button small" onClick={() => claimAchievement(item.id)} data-testid={`button-claim-${item.id}`}>Abholen</button> : null}</div>)}</div></section>
+          <section className="panel" style={{ marginTop: 16 }}><div className="panel-head"><h2 className="panel-title">Kleine große Momente</h2><Award size={18}/></div><div className="page-grid">{achievements.map((item) => <div className={`achievement ${item.progress < item.goal ? 'locked' : ''}`} key={item.id} data-testid={`achievement-${item.id}`}><div className="item-icon">{item.progress >= item.goal ? item.icon : '·'}</div><div className="item-info"><div className="item-title">{item.title}</div><div className="item-meta">{item.detail}</div><div className="progress-track"><span style={{ width: `${Math.min(100, item.progress / item.goal * 100)}%` }}/></div><div className="item-meta">{Math.min(item.progress, item.goal)} / {item.goal} · Belohnung {item.rewardSummary}</div></div>{item.progress >= item.goal ? data.claimedAchievements.includes(item.id) ? <span className="reward">Abgeholt</span> : <button className="button small" onClick={() => claimAchievement(item.id)} data-testid={`button-claim-${item.id}`}>Abholen</button> : null}</div>)}</div></section>
         </>}
       </main>
     </div>

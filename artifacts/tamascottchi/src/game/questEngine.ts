@@ -1,7 +1,8 @@
 import { WORLD_QUESTS, itemById, type FullPetData } from './data';
 import { recordJournal } from './journal';
-import { applicableArtifactBonus, applyArtifactBonus, grantMilestoneChest, unlockArtifact } from './artifactSystem';
+import { applicableArtifactBonus, applyArtifactBonus, grantMilestoneChest } from './artifactSystem';
 import { applyWeeklyMetric, recordRegionActivity } from './worldEngine';
+import { queueWorldDiscovery, releasePendingWorldDiscoveries } from './worldDiscoveries';
 
 export type QuestId = (typeof WORLD_QUESTS)[number]['id'];
 export type QuestOutcome = 'started' | 'found' | 'already-found' | 'wrong-order' | 'awaiting-action' | 'completed' | 'already-completed' | 'invalid';
@@ -33,12 +34,11 @@ function completeQuest(data: FullPetData, id: string): FullPetData {
       completedQuests: [...new Set([...data.world.completedQuests, id])],
       claimedRewards: [...new Set([...data.world.claimedRewards, `quest:${id}`])],
       questStages: { ...(data.world.questStages || {}), [id]: 'completed' },
-      discoveries: [...new Set([...data.world.discoveries, ...quest.discoveries])],
     },
-    collectionIds: [...new Set([...data.collectionIds, ...quest.discoveries])],
   };
-  for (const id of quest.discoveries) next = unlockArtifact(next, id);
+  for (const artifactId of quest.discoveries) next = queueWorldDiscovery(next, artifactId, quest.place, id);
   next = recordRegionActivity(next, quest.place, 0, 1, 0);
+  next = releasePendingWorldDiscoveries(next);
   next = applyWeeklyMetric(next, 'activities', 1);
   if (WORLD_QUESTS.every((entry) => next.world.completedQuests.includes(entry.id))) {
     next = grantMilestoneChest(next, 'all-world-quests', 'legendary', Date.now());

@@ -7,6 +7,7 @@ import { completeQuestAction, pickQuestPoint, startQuest } from './questEngine';
 import { MaterialArt } from './MaterialArt';
 import { catchFish, claimNpcRequest, claimRegionDailyChest, claimWorldEvent, collectResource, DAILY_WORLD_GOALS, ensureWorldDay, getWorldEvent, masteryLevel, masteryProgress, placeQuestCounts, REGION_DAILY_TASKS, RESOURCE_NODES, visitWorldLocation, WEEKLY_WORLD_GOALS, WORLD_NPCS } from './worldEngine';
 import { formatRemaining, hoursRemaining } from './worldClock';
+import { worldLevelDropChances, worldStageLevel } from '@workspace/game-economy';
 
 const MAP = assetUrl('world/scottchi-world-map.webp');
 const pickupPoints = [
@@ -50,6 +51,7 @@ export function World({ data, level, serverClockOffsetMs, onChange, onNotice, on
   const regionTask = REGION_DAILY_TASKS[location];
   const regionProgress = w.regionDailyProgress[location] || { materials: 0, activities: 0, rare: 0 };
   const regionTaskComplete = !!regionTask && regionProgress.materials >= regionTask.materials && regionProgress.activities >= regionTask.activities && regionProgress.rare >= regionTask.rare;
+  const regionTaskLocked = !!regionTask?.rare && level < 40;
   const regionChestClaimed = w.dailyChestLocations.includes(location);
   const regionTaskRewardClaimed = w.dailyClaimed.includes(`region-daily:${location}`);
 
@@ -89,8 +91,11 @@ export function World({ data, level, serverClockOffsetMs, onChange, onNotice, on
     const result = collectResource(data, nodeId, now, level, authoritativeClock);
     if (result.outcome === 'locked') {
       const node = RESOURCE_NODES.find((entry) => entry.id === nodeId);
-      if (node?.minMastery) onNotice(`Gebietsmeisterschaft Stufe ${node.minMastery} erforderlich.`);
-      else onNotice('Dieser Ort ist noch nicht freigeschaltet.');
+      const requirements = [
+        node?.minPlayerLevel && level < node.minPlayerLevel ? `Spielerlevel ${node.minPlayerLevel}` : '',
+        node?.minMastery && masteryLevel(w.areaMastery[node.locationId] || 0) < node.minMastery ? `Gebietsmeisterschaft Stufe ${node.minMastery}` : '',
+      ].filter(Boolean);
+      onNotice(requirements.length ? `${requirements.join(' und ')} erforderlich.` : 'Dieser Ort ist noch nicht freigeschaltet.');
       return;
     }
     if (result.outcome !== 'collected') { if (result.outcome === 'cooldown') onNotice('Diese Fundstelle braucht noch etwas Ruhe.'); return; }
@@ -102,7 +107,9 @@ export function World({ data, level, serverClockOffsetMs, onChange, onNotice, on
   }
 
   function startFishing() {
-    setFishId(Math.random() < .14 ? 'fish-rare' : 'fish-common');
+    const beachLevel = LOCATIONS.find((entry) => entry.id === 'beach')?.level || 8;
+    const rareChance = Math.min(.14, worldLevelDropChances(worldStageLevel(beachLevel, w.areaMastery.beach || 0), level).Rare / 100);
+    setFishId(Math.random() < rareChance ? 'fish-rare' : 'fish-common');
     setFishing('waiting');
   }
 
@@ -112,9 +119,11 @@ export function World({ data, level, serverClockOffsetMs, onChange, onNotice, on
     setFishing('idle');
     setNow(Date.now() + (serverClockOffsetMs || 0));
     onChange(result.data);
-    onNotice(result.outcome === 'practice'
-      ? 'Der Fisch ist entkommen – deine drei Tagesfänge sind schon sicher. Du kannst weiter üben.'
-      : `Guter Fang: ${itemById(fishId)?.name}. ${result.data.world.fishingRewardsToday}/3 belohnte Fänge heute.`);
+    onNotice(result.outcome === 'locked'
+      ? 'Seltene Fische findest du erst mit ausreichendem Spielerlevel und Fortschritt am Strand.'
+      : result.outcome === 'practice'
+        ? 'Der Fisch ist entkommen – deine drei Tagesfänge sind schon sicher. Du kannst weiter üben.'
+        : `Guter Fang: ${itemById(fishId)?.name}. ${result.data.world.fishingRewardsToday}/3 belohnte Fänge heute.`);
   }
 
   function startExcavation(nodeId: string) {
@@ -274,12 +283,13 @@ export function World({ data, level, serverClockOffsetMs, onChange, onNotice, on
           </div>
           <small className={`region-task-status ${regionChestClaimed ? 'done' : regionTaskComplete ? 'ready' : ''}`}>
             {regionChestClaimed ? 'Heute abgeholt'
-              : regionTaskComplete ? 'Kiste bereit · Qualität steigt mit deinem Weltlevel'
-                : regionTaskRewardClaimed ? 'Auftrag erledigt · Deine Belohnung bleibt erhalten'
-                  : 'Aufgaben noch offen'}
+               : regionTaskLocked ? 'Besondere Funde ab Spielerlevel 40'
+                 : regionTaskComplete ? 'Kiste bereit · Welt- und Spielerlevel bestimmen die Qualität'
+                   : regionTaskRewardClaimed ? 'Auftrag erledigt · Deine Belohnung bleibt erhalten'
+                     : 'Aufgaben noch offen'}
           </small>
           <button className="button orange small" onClick={claimRegionChest}
-            disabled={!regionTaskComplete || regionChestClaimed}
+             disabled={!regionTaskComplete || regionTaskLocked || regionChestClaimed}
             data-testid={`button-region-chest-${location}`}>
             {regionChestClaimed ? 'Heute abgeholt' : 'Weltkiste abholen'}
           </button>
@@ -314,7 +324,7 @@ export function World({ data, level, serverClockOffsetMs, onChange, onNotice, on
             </div>;
           })}
           <div className={`weekly-chest-status ${w.weeklyChestClaimed ? 'earned' : ''}`} data-testid="weekly-chest-status">
-            <b>Rare-Wochenkiste</b><span>{w.weeklyChestClaimed ? 'Verdient · unabhängig vom Tageslimit' : 'Wird nach allen vier Wochenzielen vergeben'}</span>
+            <b>Wochenkiste</b><span>{w.weeklyChestClaimed ? 'Verdient · Qualität nach Spielerlevel' : 'Wird nach allen vier Wochenzielen vergeben'}</span>
           </div>
           <small className="world-daily-foot">Keine Strafe für verpasste Tage · Belohnungen pro Woche nur einmal.</small>
         </section>
@@ -324,12 +334,13 @@ export function World({ data, level, serverClockOffsetMs, onChange, onNotice, on
             const remaining = hoursRemaining(w.resourceCollectedAt[node.id], node.respawnHours, now);
             const ready = remaining <= 0;
             const masteryLocked = !!node.minMastery && masteryLevel(w.areaMastery[location] || 0) < node.minMastery;
+             const playerLevelLocked = !!node.minPlayerLevel && level < node.minPlayerLevel;
             const item = itemById(node.resourceId)!;
             return <article className={`world-resource ${ready ? 'ready' : 'exhausted'} rarity-${node.rarity.toLowerCase()}`} key={node.id} data-testid={`resource-node-${node.id}`}>
               <span className="world-resource-art"><MaterialArt item={item} size={36}/></span>
-              <span className="world-resource-copy"><b>{node.activity ? `Ausgrabung · ${item.name}` : item.name}</b><small>{node.rarity} · +{node.quantity} · {node.respawnHours} Std. Erneuerung{node.minMastery ? ` · Meisterschaft ${node.minMastery}` : ''}</small></span>
-              <button className="button small" onClick={() => node.activity ? startExcavation(node.id) : gather(node.id)} disabled={!ready || masteryLocked || (!!node.activity && !!dig)} data-testid={`button-resource-${node.id}`}>
-                {masteryLocked ? <><LockKeyhole size={12}/> Stufe {node.minMastery}</> : ready ? node.activity ? <><Pickaxe size={13}/> Graben</> : 'Sammeln' : <><Clock3 size={12}/>{formatRemaining(remaining)}</>}
+               <span className="world-resource-copy"><b>{node.activity ? `Ausgrabung · ${item.name}` : item.name}</b><small>{node.rarity} · +{node.quantity} · {node.respawnHours} Std. Erneuerung{node.minMastery ? ` · Meisterschaft ${node.minMastery}` : ''}{node.minPlayerLevel ? ` · Spielerlevel ${node.minPlayerLevel}` : ''}</small></span>
+               <button className="button small" onClick={() => node.activity ? startExcavation(node.id) : gather(node.id)} disabled={!ready || masteryLocked || playerLevelLocked || (!!node.activity && !!dig)} data-testid={`button-resource-${node.id}`}>
+                 {playerLevelLocked ? <><LockKeyhole size={12}/> Level {node.minPlayerLevel}</> : masteryLocked ? <><LockKeyhole size={12}/> Stufe {node.minMastery}</> : ready ? node.activity ? <><Pickaxe size={13}/> Graben</> : 'Sammeln' : <><Clock3 size={12}/>{formatRemaining(remaining)}</>}
               </button>
             </article>;
           })}</div>

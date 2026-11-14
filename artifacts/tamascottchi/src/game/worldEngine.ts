@@ -2,8 +2,9 @@ import { LOCATIONS, WORLD_QUESTS, itemById, type FullPetData, type RewardChestTi
 import { recordJournal } from './journal';
 import { hoursRemaining } from './worldClock';
 import { worldDayKey, worldWeekKey } from './worldClock';
-import { applicableArtifactBonus, applyArtifactBonus, applyArtifactQuantityBonus, grantChest, grantMilestoneChest, grantRegularChest, tierForMastery } from './artifactSystem';
-import { dailyWorldChestTier } from '@workspace/game-economy';
+import { applicableArtifactBonus, applyArtifactBonus, applyArtifactQuantityBonus, grantChest, grantMilestoneChest, grantRegularChest } from './artifactSystem';
+import { dailyWorldChestTier, worldLevelDropChances, worldStageLevel } from '@workspace/game-economy';
+import { releasePendingWorldDiscoveries } from './worldDiscoveries';
 
 export type ResourceNode = {
   id: string;
@@ -13,30 +14,31 @@ export type ResourceNode = {
   respawnHours: 24 | 48 | 72;
   rarity: 'Gewöhnlich' | 'Ungewöhnlich' | 'Selten';
   minMastery?: number;
+  minPlayerLevel?: number;
   activity?: 'excavate';
 };
 
 export const RESOURCE_NODES: ResourceNode[] = [
   { id: 'park-bones', locationId: 'park', resourceId: 'bone-scrap', quantity: 2, respawnHours: 24, rarity: 'Gewöhnlich' },
-  { id: 'park-lost-coins', locationId: 'park', resourceId: 'old-coin', quantity: 1, respawnHours: 48, rarity: 'Ungewöhnlich', minMastery: 2 },
-  { id: 'park-flowers', locationId: 'park', resourceId: 'wildflower', quantity: 1, respawnHours: 48, rarity: 'Ungewöhnlich' },
+  { id: 'park-lost-coins', locationId: 'park', resourceId: 'old-coin', quantity: 1, respawnHours: 48, rarity: 'Ungewöhnlich', minMastery: 2, minPlayerLevel: 15 },
+  { id: 'park-flowers', locationId: 'park', resourceId: 'wildflower', quantity: 1, respawnHours: 48, rarity: 'Ungewöhnlich', minPlayerLevel: 15 },
   { id: 'city-cloth', locationId: 'city', resourceId: 'cloth', quantity: 2, respawnHours: 24, rarity: 'Gewöhnlich' },
-  { id: 'city-coin-pouch', locationId: 'city', resourceId: 'old-coin', quantity: 2, respawnHours: 48, rarity: 'Ungewöhnlich' },
+  { id: 'city-coin-pouch', locationId: 'city', resourceId: 'old-coin', quantity: 2, respawnHours: 48, rarity: 'Ungewöhnlich', minPlayerLevel: 15 },
   { id: 'forest-wood', locationId: 'forest', resourceId: 'wood', quantity: 2, respawnHours: 24, rarity: 'Gewöhnlich' },
   { id: 'forest-leaves', locationId: 'forest', resourceId: 'leaf', quantity: 2, respawnHours: 24, rarity: 'Gewöhnlich' },
   { id: 'forest-mushrooms', locationId: 'forest', resourceId: 'mushroom', quantity: 1, respawnHours: 24, rarity: 'Gewöhnlich' },
   { id: 'forest-berries', locationId: 'forest', resourceId: 'berry', quantity: 2, respawnHours: 24, rarity: 'Gewöhnlich' },
-  { id: 'forest-rare-flower', locationId: 'forest', resourceId: 'wildflower', quantity: 1, respawnHours: 48, rarity: 'Selten', minMastery: 2 },
+  { id: 'forest-rare-flower', locationId: 'forest', resourceId: 'wildflower', quantity: 1, respawnHours: 48, rarity: 'Selten', minMastery: 2, minPlayerLevel: 40 },
   { id: 'beach-shells', locationId: 'beach', resourceId: 'shell', quantity: 2, respawnHours: 24, rarity: 'Gewöhnlich' },
-  { id: 'beach-driftwood', locationId: 'beach', resourceId: 'driftwood', quantity: 1, respawnHours: 48, rarity: 'Ungewöhnlich' },
-  { id: 'beach-pearls', locationId: 'beach', resourceId: 'pearl', quantity: 1, respawnHours: 72, rarity: 'Selten', minMastery: 2 },
-  { id: 'beach-excavation', locationId: 'beach', resourceId: 'fossil', quantity: 1, respawnHours: 72, rarity: 'Selten', activity: 'excavate' },
-  { id: 'cave-crystals', locationId: 'cave', resourceId: 'crystal-shard', quantity: 1, respawnHours: 48, rarity: 'Ungewöhnlich' },
-  { id: 'cave-rare-mineral', locationId: 'cave', resourceId: 'gold-fragment', quantity: 1, respawnHours: 72, rarity: 'Selten', minMastery: 2 },
-  { id: 'mountain-ore', locationId: 'mountain', resourceId: 'ore', quantity: 1, respawnHours: 48, rarity: 'Ungewöhnlich' },
-  { id: 'mountain-flowers', locationId: 'mountain', resourceId: 'wildflower', quantity: 1, respawnHours: 48, rarity: 'Ungewöhnlich' },
-  { id: 'mountain-excavation', locationId: 'mountain', resourceId: 'fossil', quantity: 1, respawnHours: 72, rarity: 'Selten', activity: 'excavate' },
-  { id: 'mountain-crystal', locationId: 'mountain', resourceId: 'crystal-shard', quantity: 1, respawnHours: 72, rarity: 'Selten', minMastery: 2 },
+  { id: 'beach-driftwood', locationId: 'beach', resourceId: 'driftwood', quantity: 1, respawnHours: 48, rarity: 'Ungewöhnlich', minPlayerLevel: 15 },
+  { id: 'beach-pearls', locationId: 'beach', resourceId: 'pearl', quantity: 1, respawnHours: 72, rarity: 'Selten', minMastery: 2, minPlayerLevel: 40 },
+  { id: 'beach-excavation', locationId: 'beach', resourceId: 'fossil', quantity: 1, respawnHours: 72, rarity: 'Selten', activity: 'excavate', minPlayerLevel: 40 },
+  { id: 'cave-crystals', locationId: 'cave', resourceId: 'crystal-shard', quantity: 1, respawnHours: 48, rarity: 'Ungewöhnlich', minPlayerLevel: 15 },
+  { id: 'cave-rare-mineral', locationId: 'cave', resourceId: 'gold-fragment', quantity: 1, respawnHours: 72, rarity: 'Selten', minMastery: 2, minPlayerLevel: 40 },
+  { id: 'mountain-ore', locationId: 'mountain', resourceId: 'ore', quantity: 1, respawnHours: 48, rarity: 'Ungewöhnlich', minPlayerLevel: 15 },
+  { id: 'mountain-flowers', locationId: 'mountain', resourceId: 'wildflower', quantity: 1, respawnHours: 48, rarity: 'Ungewöhnlich', minPlayerLevel: 15 },
+  { id: 'mountain-excavation', locationId: 'mountain', resourceId: 'fossil', quantity: 1, respawnHours: 72, rarity: 'Selten', activity: 'excavate', minPlayerLevel: 40 },
+  { id: 'mountain-crystal', locationId: 'mountain', resourceId: 'crystal-shard', quantity: 1, respawnHours: 72, rarity: 'Selten', minMastery: 2, minPlayerLevel: 40 },
 ];
 
 export type WorldEventDefinition = WorldEventState & { title: string; description: string; rarity: ResourceNode['rarity'] };
@@ -65,7 +67,7 @@ export const DAILY_WORLD_GOALS: DailyWorldGoal[] = [
   { id: 'visit-two', metric: 'visit', title: 'Kleine Weltreise', description: 'Besuche zwei verschiedene Orte.', target: 2, minLevel: 3, coins: 14, xp: 12 },
   { id: 'one-fish', metric: 'fish', title: 'Frischer Fang', description: 'Fange einen Fisch am Strand.', target: 1, minLevel: 8, coins: 16, xp: 14 },
   { id: 'one-dig', metric: 'excavate', title: 'Spurensucher', description: 'Lege einen Fund bei einer Ausgrabung frei.', target: 1, minLevel: 8, coins: 16, xp: 14 },
-  { id: 'rare-find', metric: 'rare', title: 'Seltenes Glück', description: 'Finde ein seltenes Material.', target: 1, minLevel: 5, coins: 18, xp: 16 },
+  { id: 'rare-find', metric: 'rare', title: 'Seltenes Glück', description: 'Finde ein seltenes Material.', target: 1, minLevel: 40, coins: 18, xp: 16 },
 ];
 
 export type WeeklyGoalMetric = 'materials' | 'activities' | 'craft' | 'daily';
@@ -213,7 +215,7 @@ function addMastery(data: FullPetData, locationId: string, amount: number, now: 
   if (LOCATIONS.every((location) => masteryLevel(next.world.areaMastery[location.id] || 0) >= 20)) {
     next = grantMilestoneChest(next, 'all-regions-mastered', 'legendary', now);
   }
-  return next;
+  return releasePendingWorldDiscoveries(next);
 }
 
 export function applyWeeklyMetric(data: FullPetData, metric: WeeklyGoalMetric, amount = 1, now = Date.now(), level = 1, authoritativeClock = false): FullPetData {
@@ -238,7 +240,9 @@ export function applyWeeklyMetric(data: FullPetData, metric: WeeklyGoalMetric, a
   if (allWeeklyGoalsComplete && !next.world.weeklyChestClaimed) {
     next = grantChest(next, 'rare', `weekly:${next.world.weeklyKey}`, now);
     next = { ...next, world: { ...next.world, weeklyChestClaimed: true } };
-    next = recordJournal(next, `world-weekly-chest-${next.world.weeklyKey}`, '🎁', 'Wochenkiste verdient', 'Eine seltene Kiste wurde in den Tresor gelegt.');
+    const actualTier = next.world.chestInstances.find((chest) => chest.source === `weekly:${next.world.weeklyKey}`)?.tier || 'common';
+    const tierName: Record<RewardChestTier, string> = { common: 'gewöhnliche', uncommon: 'ungewöhnliche', rare: 'seltene', epic: 'epische', legendary: 'legendäre' };
+    next = recordJournal(next, `world-weekly-chest-${next.world.weeklyKey}`, '🎁', 'Wochenkiste verdient', `Eine ${tierName[actualTier]} Kiste wurde in den Tresor gelegt.`);
   }
   return next;
 }
@@ -307,7 +311,7 @@ export function claimRegionDailyChest(
   if (!location || location.level > level) return { data: current, outcome: 'invalid' };
   if (current.world.dailyChestLocations.includes(locationId)) return { data: current, outcome: 'already-claimed' };
   if (!regionTaskComplete(current, locationId)) return { data: current, outcome: 'not-ready' };
-  const tier = dailyWorldChestTier(level, random);
+  const tier = dailyWorldChestTier(worldStageLevel(location.level, current.world.areaMastery[locationId] || 0), level, random);
   const next = grantRegularChest(current, tier, `world:${current.world.worldDay}:${locationId}`, now, locationId);
   return next === current ? { data: current, outcome: 'daily-limit' } : { data: next, outcome: 'claimed', tier };
 }
@@ -341,6 +345,7 @@ export function collectResource(data: FullPetData, nodeId: string, now = Date.no
   if (!node || !itemById(node.resourceId)) return { data: current, outcome: 'invalid' };
   const place = LOCATIONS.find((entry) => entry.id === node.locationId);
   if (!place || level < place.level) return { data: current, outcome: 'locked' };
+  if (node.minPlayerLevel && level < node.minPlayerLevel) return { data: current, outcome: 'locked' };
   if (node.minMastery && masteryLevel(current.world.areaMastery[node.locationId] || 0) < node.minMastery) return { data: current, outcome: 'locked' };
   const collectedAt = current.world.resourceCollectedAt?.[node.id];
   if (hoursRemaining(collectedAt, node.respawnHours, effectiveNow(current, now, authoritativeClock)) > 0) return { data: current, outcome: 'cooldown' };
@@ -366,9 +371,12 @@ export function collectResource(data: FullPetData, nodeId: string, now = Date.no
   return { data: current, outcome: 'collected', quantity };
 }
 
-export function catchFish(data: FullPetData, fishId: 'fish-common' | 'fish-rare', now = Date.now(), level = 8, authoritativeClock = false): { data: FullPetData; outcome: 'caught' | 'practice' } {
+export function catchFish(data: FullPetData, fishId: 'fish-common' | 'fish-rare', now = Date.now(), level = 8, authoritativeClock = false): { data: FullPetData; outcome: 'caught' | 'practice' | 'locked' } {
   let current = ensureWorldDay(data, now, level, authoritativeClock);
   if ((current.world.fishingRewardsToday || 0) >= MAX_REWARDED_FISH_PER_DAY) return { data: current, outcome: 'practice' };
+  if (fishId === 'fish-rare' && worldLevelDropChances(worldStageLevel(8, current.world.areaMastery.beach || 0), level).Rare <= 0) {
+    return { data: current, outcome: 'locked' };
+  }
   const quantity = applyArtifactQuantityBonus(1, applicableArtifactBonus(current, 'materials', 'beach'));
   current = {
     ...current,
@@ -391,6 +399,11 @@ export function claimWorldEvent(data: FullPetData, now = Date.now(), level = 1, 
   if (current.world.worldEventClaimedDay === event.day) return { data: current, outcome: 'already-claimed' };
   const place = LOCATIONS.find((entry) => entry.id === event.locationId);
   if (!place || level < place.level) return { data: current, outcome: 'unavailable' };
+  const eventRarity = EVENT_ROTATION.find((entry) => entry.id === event.id)?.rarity || 'Gewöhnlich';
+  const lootRarity = eventRarity === 'Selten' ? 'Rare' : eventRarity === 'Ungewöhnlich' ? 'Uncommon' : 'Common';
+  if (worldLevelDropChances(worldStageLevel(place.level, current.world.areaMastery[event.locationId] || 0), level)[lootRarity] <= 0) {
+    return { data: current, outcome: 'unavailable' };
+  }
   const quantity = applyArtifactQuantityBonus(event.quantity, applicableArtifactBonus(current, 'materials', event.locationId));
   current = {
     ...current,

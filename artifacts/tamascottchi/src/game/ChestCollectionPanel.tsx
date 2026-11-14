@@ -1,35 +1,23 @@
 import { useState } from 'react';
-import { Coins, KeyRound, LockKeyhole, Sparkles, X } from 'lucide-react';
+import { KeyRound, LockKeyhole, Sparkles, X } from 'lucide-react';
 import type { FullPetData, RewardChestTier } from './data';
 import { assetUrl } from './assets';
 import { ARTIFACTS } from './artifactSystem';
 import { CHEST_DEFINITIONS, CHEST_TIERS, type ChestOpenReward } from './rewardChests';
 import { RewardChestArt } from './RewardChestArt';
-import { CHEST_KEY_PRICES, CHEST_UNLOCK_LEVEL, chestDropChances, chestTierUnlocked, RARITIES } from '@workspace/game-economy';
+import { CHEST_UNLOCK_LEVEL, chestDropChances, chestTierUnlocked, RARITIES } from '@workspace/game-economy';
 import { RARITY_LABEL } from './collectionWorld';
 
 type Props = {
   data: FullPetData;
   playerLevel: number;
   economySecured: boolean;
-  onBuyKey: (tier: RewardChestTier) => boolean | Promise<boolean>;
   onOpenChest: (tier: RewardChestTier) => ChestOpenReward | null | Promise<ChestOpenReward | null>;
 };
 
-export function ChestCollectionPanel({ data, playerLevel, economySecured, onBuyKey, onOpenChest }: Props) {
+export function ChestCollectionPanel({ data, playerLevel, economySecured, onOpenChest }: Props) {
   const [reveal, setReveal] = useState<ChestOpenReward | null>(null);
   const [opening, setOpening] = useState<RewardChestTier | null>(null);
-  const [buying, setBuying] = useState<RewardChestTier | null>(null);
-
-  async function buyKey(tier: RewardChestTier) {
-    if (buying) return;
-    setBuying(tier);
-    try {
-      await onBuyKey(tier);
-    } finally {
-      setBuying(null);
-    }
-  }
 
   async function open(tier: RewardChestTier) {
     if (opening) return;
@@ -49,7 +37,7 @@ export function ChestCollectionPanel({ data, playerLevel, economySecured, onBuyK
         <div><div className="eyebrow">SAMMELN · SPÄTER ÖFFNEN</div><h3 className="panel-title">Deine Kisten</h3></div>
         <span className="stat-pill"><KeyRound size={14}/>{CHEST_TIERS.reduce((sum, tier) => sum + (data.world.keys[tier] || 0), 0)} Schlüssel</span>
       </div>
-      <p className="subline">Kisten bleiben im Tresor, bis du einen passenden Schlüssel hast. Schlüssel kosten Münzen und werden beim Öffnen verbraucht.</p>
+       <p className="subline">Kisten bleiben im Tresor, bis du einen passenden Schlüssel aus dem Shop hast. Schlüssel werden beim Öffnen verbraucht.</p>
       <p className={`chest-security-note ${economySecured ? 'secure' : ''}`} data-testid="chest-security-status">
         {economySecured ? 'Servergeprüft: Schlüsselkäufe, Schlüsselverbrauch, Ziehungen und das Tageslimit für Weltkisten laufen über den Server.' : 'Lokaler Spielstand: Online-Schutz gilt erst, wenn du diesen Spielstand mit der Cloud verbindest.'}
       </p>
@@ -59,13 +47,13 @@ export function ChestCollectionPanel({ data, playerLevel, economySecured, onBuyK
           const locked = !chestTierUnlocked(tier, playerLevel);
           const count = data.world.rewardChests[tier] || 0;
           const keys = data.world.keys[tier] || 0;
-          const chances = chestDropChances(tier, playerLevel);
+          const chances = chestDropChances(tier);
           const examples = ARTIFACTS.filter((artifact) => chances[artifact.rarity] > 0).slice(0, 2);
           return <article className={`chest-collection-card rarity-${tier} ${locked ? 'locked' : ''}`} key={tier} data-testid={`chest-card-${tier}`}>
             <div className="chest-collection-card-top">
               <RewardChestArt tier={tier} className={opening === tier ? 'chest-opening' : ''}/>
               <div><div className="eyebrow">{locked ? `AB LEVEL ${CHEST_UNLOCK_LEVEL[tier]}` : count === 1 ? '1 KISTE' : `${count} KISTEN`}</div><h4>{definition.label}</h4>
-                <span className="chest-key-count"><KeyRound size={13}/>{keys} Schlüssel · {CHEST_KEY_PRICES[tier]} Münzen</span>
+                <span className="chest-key-count"><KeyRound size={13}/>{keys} Schlüssel</span>
               </div>
             </div>
             <div className="chest-drop-preview" aria-label={`Dropchancen ${definition.label}`}>
@@ -77,17 +65,15 @@ export function ChestCollectionPanel({ data, playerLevel, economySecured, onBuyK
               {examples.map((artifact) => <span key={artifact.id} title={`${artifact.name} · ${RARITY_LABEL[artifact.rarity]}`}>
                 <img src={assetUrl(`collections/items/${artifact.id}.png`)} alt="" loading="lazy"/>
               </span>)}
-              <small>mögliche Artefakte nach deinem Weltlevel</small>
+              <small>mögliche Artefakte aus dieser Kiste</small>
             </div>
             <div className="chest-collection-actions">
-              <button className="button small" onClick={() => void buyKey(tier)} disabled={locked || buying !== null || data.coins < CHEST_KEY_PRICES[tier]} data-testid={`button-buy-key-${tier}`}>
-                <Coins size={13}/>{buying === tier ? 'Kaufe …' : locked ? `Ab Level ${CHEST_UNLOCK_LEVEL[tier]}` : 'Schlüssel kaufen'}
-              </button>
-              <button className="button orange small" onClick={() => open(tier)} disabled={locked || count < 1 || keys < 1 || opening !== null} data-testid={`button-open-chest-${tier}`}>
-                {opening === tier ? <><Sparkles size={13}/> Öffnet …</> : <><LockKeyhole size={13}/> Öffnen</>}
-              </button>
+              {locked ? <small className="chest-needs-key"><LockKeyhole size={13}/> Freigeschaltet ab Spielerlevel {CHEST_UNLOCK_LEVEL[tier]}</small>
+                : count > 0 && keys < 1 ? <small className="chest-needs-key">Du benötigst einen passenden Schlüssel. Erhältlich im Shop.</small>
+                  : count > 0 ? <button className="button orange small" onClick={() => open(tier)} disabled={opening !== null} data-testid={`button-open-chest-${tier}`}>
+                    {opening === tier ? <><Sparkles size={13}/> Öffnet …</> : <><LockKeyhole size={13}/> Öffnen</>}
+                  </button> : null}
             </div>
-            {!locked && count > 0 && keys < 1 && <small className="chest-needs-key">Für diese Kiste fehlt noch ein passender Schlüssel.</small>}
           </article>;
         })}
       </div>
