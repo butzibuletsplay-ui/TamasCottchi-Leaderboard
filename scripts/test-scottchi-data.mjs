@@ -23,6 +23,7 @@ const dataModule = await import(`data:text/javascript;base64,${Buffer.from(world
 const BACKUP_KEY_30 = dataModule.BACKUP_KEY_30;
 const BACKUP_KEY_40 = dataModule.BACKUP_KEY_40;
 const BACKUP_KEY_66 = dataModule.BACKUP_KEY_66;
+const BACKUP_KEY_67 = dataModule.BACKUP_KEY_67;
 const questBuild = await build({
   entryPoints: ['artifacts/tamascottchi/src/game/questEngine.ts'],
   bundle: true, write: false, format: 'esm', platform: 'node',
@@ -40,6 +41,11 @@ const toyBuild = await build({
   bundle: true, write: false, format: 'esm', platform: 'node',
 });
 const toyModule = await import(`data:text/javascript;base64,${Buffer.from(toyBuild.outputFiles[0].text).toString('base64')}`);
+const evolutionBuild = await build({
+  entryPoints: ['artifacts/tamascottchi/src/game/evolution.ts'],
+  bundle: true, write: false, format: 'esm', platform: 'node',
+});
+const evolutionModule = await import(`data:text/javascript;base64,${Buffer.from(evolutionBuild.outputFiles[0].text).toString('base64')}`);
 const worldEngineBuild = await build({
   entryPoints: ['artifacts/tamascottchi/src/game/worldEngine.ts'],
   bundle: true, write: false, format: 'esm', platform: 'node',
@@ -303,6 +309,59 @@ test('schema 11 saves get an untouched 6.6 backup before toy and world migration
   assert.equal(next.inventory.ball, 3);
   assert.ok(next.world.legacyUnlockedLocations.includes('beach'));
   assert.equal(next.world.legacyUnlockedLocations.includes('mountain'), false);
+});
+test('schema 12 saves keep an untouched 6.7 backup and never auto-evolve from level alone', () => {
+  storage.clear();
+  const old = { ...initialData(), saveSchema: 12, coins: 810, xp: economy.playerLevelXpThreshold(1000) };
+  delete old.evolutionStage;
+  const raw = JSON.stringify(old);
+  storage.set(STORE_KEY, raw);
+  const next = loadData();
+  assert.equal(storage.get(BACKUP_KEY_67), raw);
+  assert.equal(next.saveSchema, SAVE_SCHEMA);
+  assert.equal(next.evolutionStage, 1);
+  assert.equal(next.xp, old.xp);
+  assert.equal(next.coins, old.coins);
+
+  const alreadyEvolved = normalize({ ...old, evolutionStage: 7 });
+  assert.equal(alreadyEvolved.evolutionStage, 7, 'a saved form remains unlocked');
+});
+test('manual evolution checks level and coins, charges once, and unlocks cosmetic rewards', () => {
+  const { EVOLUTION_STAGES, purchaseNextEvolution } = evolutionModule;
+  assert.deepEqual(EVOLUTION_STAGES.map(({ stage, name, playerLevel, coinCost }) => [stage, name, playerLevel, coinCost]), [
+    [1, 'Ei', 1, 0], [2, 'Schlüpfling', 10, 500], [3, 'Jungtier', 25, 2000], [4, 'Entdecker', 50, 6000],
+    [5, 'Abenteurer', 100, 15000], [6, 'Naturgeist', 175, 35000], [7, 'Zauberwesen', 275, 75000],
+    [8, 'Sternenwesen', 400, 150000], [9, 'Königliches Wesen', 600, 300000], [10, 'Ultimative Form', 850, 600000],
+  ]);
+  assert.equal(EVOLUTION_STAGES.slice(1).reduce((sum, stage) => sum + stage.coinCost, 0), 1_183_500);
+
+  let data = normalize({ ...initialData(), coins: 2_000_000, xp: economy.playerLevelXpThreshold(1000) });
+  assert.equal(data.evolutionStage, 1, 'even a level-1000 save starts at its explicitly saved form');
+  assert.equal(purchaseNextEvolution(data, 9).reason, 'level');
+  assert.equal(purchaseNextEvolution({ ...data, coins: 499 }, 10).reason, 'coins');
+  let result = purchaseNextEvolution(data, 10);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.data.coins, data.coins - 500);
+  assert.equal(result.data.xp, data.xp, 'evolution does not grant XP multipliers or bonus XP');
+  assert.equal(result.data.evolutionStage, 2);
+  assert.equal(purchaseNextEvolution(result.data, 10).reason, 'level', 'the paid stage cannot be purchased again');
+  data = result.data;
+
+  for (const stage of EVOLUTION_STAGES.slice(2)) {
+    const before = data;
+    result = purchaseNextEvolution(before, stage.playerLevel);
+    assert.equal(result.ok, true, `${stage.name} unlocks at its specified level`);
+    if (!result.ok) return;
+    assert.equal(result.stage.stage, stage.stage);
+    assert.equal(result.data.evolutionStage, stage.stage);
+    assert.equal(result.data.coins, before.coins - stage.coinCost);
+    if (stage.unlockItem) assert.ok(result.data.owned.includes(stage.unlockItem), `${stage.name} grants its cosmetic item`);
+    data = result.data;
+  }
+  assert.equal(data.evolutionStage, 10);
+  assert.equal(data.xp, economy.playerLevelXpThreshold(1000), 'the final form does not reduce the level-1000 endgame');
+  assert.equal(purchaseNextEvolution(data, 1000).reason, 'complete');
 });
 test('keyed chests open once and consume one matching key', () => {
   const chestTiers = ['common', 'uncommon', 'rare', 'epic', 'legendary'];

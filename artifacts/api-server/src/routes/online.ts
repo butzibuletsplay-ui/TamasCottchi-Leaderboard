@@ -54,6 +54,7 @@ import {
 } from "@workspace/game-economy";
 
 const router: IRouter = Router();
+const CURRENT_SAVE_SCHEMA = 13;
 const friendCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const allowedRooms = new Set([
   "Wohnzimmer",
@@ -236,7 +237,8 @@ function normalizeEconomySave(input: JsonRecord, now: number): JsonRecord {
     ...save,
     coins: integer(save.coins),
     xp,
-    saveSchema: 11,
+    saveSchema: CURRENT_SAVE_SCHEMA,
+    evolutionStage: Math.max(1, Math.min(10, integer(save.evolutionStage, 1))),
     minigameDaily,
     collectionIds: stringArray(save.collectionIds),
     artifactLevels: { ...asRecord(save.artifactLevels) },
@@ -530,7 +532,7 @@ async function runEconomyAction(
     const savedState: JsonRecord = {
       ...mutation.saveData,
       xp: Math.max(0, Math.min(MAX_PLAYER_XP, integer(mutation.saveData.xp))),
-      saveSchema: 11,
+      saveSchema: CURRENT_SAVE_SCHEMA,
       economyVersion: 1,
     };
     const response = PurchaseOnlineChestKeyResponse.parse({
@@ -1062,7 +1064,8 @@ router.put(
     const saveData: JsonRecord = {
       ...rawSaveData,
       xp: integer(rawSaveData.saveSchema) < 10 ? migrateLegacyPlayerXp(rawXp) : Math.min(MAX_PLAYER_XP, rawXp),
-      saveSchema: 11,
+      saveSchema: CURRENT_SAVE_SCHEMA,
+      evolutionStage: Math.max(1, Math.min(10, integer(rawSaveData.evolutionStage, 1))),
     };
     const userId = playerId(res);
     const result = await db.transaction(async (tx) => {
@@ -1157,7 +1160,8 @@ router.post(
     const saveData: JsonRecord = {
       ...rawSaveData,
       xp: integer(rawSaveData.saveSchema) < 10 ? migrateLegacyPlayerXp(rawXp) : Math.min(MAX_PLAYER_XP, rawXp),
-      saveSchema: 11,
+      saveSchema: CURRENT_SAVE_SCHEMA,
+      evolutionStage: Math.max(1, Math.min(10, integer(rawSaveData.evolutionStage, 1))),
     };
     if (parsed.data.expectedRevision !== 0) {
       res.status(409).json({ error: "Ein bestehender Cloud-Spielstand wird nicht überschrieben." });

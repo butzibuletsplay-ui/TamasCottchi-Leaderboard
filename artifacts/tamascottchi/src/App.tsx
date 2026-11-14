@@ -13,6 +13,8 @@ import { SLOT_OF, Scottchi } from './game/Scottchi';
 import { OutfitLab } from './game/OutfitLab';
 import { World } from './game/World';
 import { CollectionsPage } from './game/CollectionsPage';
+import { EvolutionPage } from './game/EvolutionPage';
+import { purchaseNextEvolution } from './game/evolution';
 import { AimLayer, FlyingToy, type Point, type Throw } from './game/ToyPlay';
 import {
   FAVORITE_TOY, FOOD_LINES, IDLE_CLASS, IDLE_LINES, PHASE_INFO, SURPRISES, TOY_LINES, TRAITS, absenceDecay, dayPhase, dominant, hasCharacter, nudge,
@@ -172,6 +174,7 @@ function Game({ initial }: { initial: PetData }) {
   const chestActionBusy = useRef(new Set<string>());
   const chestRequestIds = useRef(new Map<string, string>());
   const [page, setPage] = useState('home');
+  const [closetTab, setClosetTab] = useState<'wardrobe' | 'evolution'>('wardrobe');
   const [shopTab, setShopTab] = useState<Item['type'] | 'keys'>('food');
   const [pendingKeyPurchase, setPendingKeyPurchase] = useState<RewardChestTier | null>(null);
   const [pendingMinigameClaim, setPendingMinigameClaim] = useState<GameId | null>(null);
@@ -1006,7 +1009,7 @@ function Game({ initial }: { initial: PetData }) {
     if (id === 'bone-toy') { setChewing(true); later('chew', () => setChewing(false), 2600); }
     else if (id !== 'teddy') { setToyFx({ id, fx: use.fx, key: Date.now() }); later('toy', () => setToyFx(null), 1300); }
     sound(use.freq, { dur: id === 'duck' ? 0.18 : 0.2, slide: use.slide, type: id === 'duck' ? 'square' : 'triangle' });
-    showPetAction(use.action, use.line, id === 'bone-toy' ? 2600 : 1800);
+    showPetAction(dataRef.current.evolutionStage >= 3 && id !== 'shampoo' ? 'spin' : use.action, use.line, id === 'bone-toy' ? 2600 : 1800);
   }
   function rewardToy(id: string): boolean {
     const use = TOY_USE[id];
@@ -1069,6 +1072,7 @@ function Game({ initial }: { initial: PetData }) {
           notify(f.id === 'ball' ? 'Der gefundene Ball ist zurück! Die Aufgabe ist geschafft.' : 'Das Strand-Frisbee wurde geworfen! Die Aufgabe ist geschafft.');
         }
         setPetSpeech(f.kind === 'ball' ? 'Hab ihn! Nochmal?' : 'Gefangen! Noch mal werfen?');
+        if (dataRef.current.evolutionStage >= 3) showPetAction('spin', 'Ein Freudesprung für uns beide!', 1900);
         later('unflip', () => setRun({ dx: 0, flip: false }), 750);
         cheer(2200);
       }
@@ -1182,6 +1186,23 @@ function Game({ initial }: { initial: PetData }) {
     setNow(Date.now() + 1);
     showPetAction('sleeping', 'Zzz…');
     notify(`${data.name} schläft jetzt eine Runde${data.owned.includes('teddy') ? ' mit dem Teddy' : ''}.`); sound(420);
+  }
+
+  function purchaseEvolution() {
+    const current = dataRef.current;
+    const result = purchaseNextEvolution(current, levelFor(current.xp));
+    if (!result.ok) return result;
+    const updated = recordJournal(
+      result.data,
+      `evolution-stage-${result.stage.stage}`,
+      '✦',
+      `Entwicklung: ${result.stage.name}`,
+      `${result.stage.coinCost.toLocaleString('de-DE')} Münzen · ${result.stage.reward}`,
+    );
+    dataRef.current = updated;
+    setData(updated);
+    notify(`Scottchi ist jetzt ${result.stage.name}!`);
+    return result;
   }
   function exportSave() {
     const blob = new Blob([JSON.stringify({ ...data, lastUpdated: Date.now() }, null, 2)], { type: 'application/json' });
@@ -1353,7 +1374,7 @@ function Game({ initial }: { initial: PetData }) {
     <div className="pet-anchor">
       <div className={`pet-runner ${run.flip ? 'flip' : ''}`} style={{ transform: `translateX(${run.dx}px)` }}>
         <div className="pet-facing">
-          <Scottchi mood={mood} equipped={data.equipped} action={petAction} sleeping={sleeping} onTap={pet} idle={idleStyle}/>
+          <Scottchi mood={mood} equipped={data.equipped} action={petAction} sleeping={sleeping} onTap={pet} idle={idleStyle} evolutionStage={data.evolutionStage}/>
           {chewing && <img src={itemById('bone-toy')!.img} alt="" className="chew-bone" data-testid="img-chew-bone"/>}
         </div>
         {petAction === 'washing' && <div className="bubbles" aria-hidden><i/><i/><i/><i/><i/></div>}
@@ -1410,6 +1431,7 @@ function Game({ initial }: { initial: PetData }) {
               <div className="traits" data-testid="panel-personality">
                 <div className="traits-head"><strong>Charakter</strong><span>{showsTrait ? `meist ${TRAITS.find((t) => t.id === trait)!.name.toLowerCase()}` : 'formt sich noch'}</span></div>
                 {TRAITS.map((t) => <div key={t.id} className={`trait-row ${showsTrait && t.id === trait ? 'lead' : ''}`} title={t.hint} data-testid={`trait-${t.id}`}><span>{t.name}</span><div className="trait-bar"><i style={{ transform: `scaleX(${data.personality[t.id] / 100})` }}/></div></div>)}
+                <button className="text-link evolution-home-link" onClick={() => { setPage('closet'); setClosetTab('evolution'); }} data-testid="link-evolution">Entwicklung ansehen · Stufe {data.evolutionStage}/10</button>
               </div>
             </section>
           </div>
@@ -1473,9 +1495,16 @@ function Game({ initial }: { initial: PetData }) {
              : <div className="page-grid">{ITEMS.filter((item) => item.type === shopTab && !item.craftOnly && !item.milestoneOnly).map((item) => <div className="shop-item" key={item.id} data-testid={`shop-item-${item.id}`}><ItemIcon item={item}/><div className="item-info"><div className="item-title">{item.name}</div><div className="item-meta">{item.unlockLevel && level < item.unlockLevel ? `Ab Level ${item.unlockLevel} freigeschaltet` : item.type === 'food' ? `${item.amount || 0}% ${NEEDS.find((n) => n.id === item.effect)?.name.toLowerCase() || 'Wirkung'} · Vorrat: ${data.inventory[item.id] || 0}` : item.type === 'room' ? 'Dekoration für dein Zuhause' : item.type === 'background' ? 'Ersetzt das Zimmerbild durch ein Motiv' : item.type === 'toy' ? item.desc : SLOT_OF[item.id] === 'hat' ? 'Kopfbedeckung' : SLOT_OF[item.id] === 'outfit' ? 'Kleidung' : 'Accessoire'}</div></div><button className="button small" onClick={() => buy(item)} disabled={(item.type !== 'food' && item.id !== 'shampoo' && data.owned.includes(item.id)) || (!!item.unlockLevel && level < item.unlockLevel)} data-testid={`button-buy-${item.id}`}><Coins size={13}/>{item.type !== 'food' && item.id !== 'shampoo' && data.owned.includes(item.id) ? 'Gekauft' : item.unlockLevel && level < item.unlockLevel ? `Level ${item.unlockLevel}` : item.price}</button></div>)}</div>}
         </section>}
 
-        {page === 'closet' && <div className="closet-grid">
+        {page === 'closet' && <>
+          <div className="character-tabs" role="tablist" aria-label="Charakterbereich">
+            <button className={`character-tab ${closetTab === 'wardrobe' ? 'active' : ''}`} role="tab" aria-selected={closetTab === 'wardrobe'} onClick={() => setClosetTab('wardrobe')} data-testid="tab-wardrobe"><ShirtIcon/>Kleiderschrank</button>
+            <button className={`character-tab ${closetTab === 'evolution' ? 'active' : ''}`} role="tab" aria-selected={closetTab === 'evolution'} onClick={() => setClosetTab('evolution')} data-testid="tab-evolution"><Sparkles/>Entwicklung</button>
+          </div>
+          {closetTab === 'evolution'
+            ? <EvolutionPage data={data as FullPetData} level={level} onPurchase={purchaseEvolution}/>
+            : <div className="closet-grid">
           <section className="panel closet-preview"><div className="panel-head"><h2 className="panel-title">Anprobe</h2></div>
-            <div className="preview-stage"><Scottchi mood={mood} equipped={data.equipped} idle={idleStyle}/></div>
+            <div className="preview-stage"><Scottchi mood={mood} equipped={data.equipped} idle={idleStyle} evolutionStage={data.evolutionStage}/></div>
             <div className="style-sets"><div className="nav-label" style={{ padding: '12px 0 6px' }}>Outfit-Stile</div>
               {STYLE_SETS.map((s) => { const have = s.items.filter((i) => data.owned.includes(i)).length; const full = have === s.items.length; return <div key={s.id} className={`style-row ${full ? 'full' : ''}`} data-testid={`style-${s.id}`}>
                 <ShirtIcon size={14}/><div className="item-info"><div className="mission-title">{s.name}{data.stylesWorn.includes(s.id) ? ' · getragen' : ''}</div><div className="mission-progress">{s.items.map((i) => itemById(i)?.name).join(' + ')} · {have}/{s.items.length}</div></div>
@@ -1489,6 +1518,7 @@ function Game({ initial }: { initial: PetData }) {
             <section className="panel"><div className="panel-head"><h2 className="panel-title">Hintergründe</h2><House size={18}/></div>{ownedOf('background').length ? ownedOf('background').map((id) => { const item = itemById(id)!; return <div className="shop-item" key={id}><ItemIcon item={item}/><div className="item-info"><div className="item-title">{item.name}</div><div className="item-meta">{data.activeBackground === id ? 'Aktiv · ersetzt die Zimmerbilder' : 'Zimmermotiv'}</div></div><button className="button small" onClick={() => equip(id)} data-testid={`button-background-${id}`}>{data.activeBackground === id ? 'Zimmerbild zeigen' : 'Anwenden'}</button></div>; }) : <div className="empty-state">Freischaltbare Zimmermotive findest du im Laden.</div>}</section>
           </div>
         </div>}
+        </>}
 
         {page === 'leaderboard' && <div className="page-grid">
           <section className="panel"><div className="panel-head"><h2 className="panel-title">Persönliche Bestwerte</h2><Medal size={18}/></div>{GAMES.map((g) => <div className="leaderboard-row" key={g.id} data-testid={`highscore-${g.id}`}><span className="rank"><Trophy size={14}/></span><strong>{g.name}</strong><strong>{data.highscores[g.id] || 0} Pkt.</strong><button className="button small" onClick={() => openGame(g.id)} data-testid={`button-beat-${g.id}`}>Schlagen</button></div>)}</section>

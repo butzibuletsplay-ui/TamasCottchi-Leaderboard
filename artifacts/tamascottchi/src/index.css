@@ -474,3 +474,79 @@
  .chest-reveal-body{padding:14px 13px 8px}.chest-reveal-art{height:112px}.chest-reveal-actions{padding-right:12px;padding-left:12px}
 }
 @media(prefers-reduced-motion:reduce){.artifact-detail-art.rarity-legendary,.artifact-detail-art.milestone-15,.chest-reveal.rarity-legendary:before{animation:none}.chest-reward-preview img{animation:none}}
+
+/* Character wardrobe and manual evolution */
+.character-tabs{display:flex;gap:8px;margin-bottom:14px;padding:5px;border:1.5px solid #d8cdb5;border-radius:12px;background:#f1e5cf}
+.character-tab{display:flex;align-items:center;justify-content:center;gap:7px;flex:1;min-height:42px;border:0;border-radius:8px;background:transparent;color:var(--ink);font-weight:900}
+.character-tab.active{background:var(--card);box-shadow:2px 2px 0 var(--ink)}
+.character-tab svg{width:16px;height:16px}
+.evolution-page{display:grid;gap:14px}
+.evolution-overview,.evolution-path{min-width:0}
+.evolution-intro{max-width:760px;line-height:1.55}
+.evolution-forms{display:grid;grid-template-columns:minmax(0,1fr) 34px minmax(0,1fr);gap:12px;align-items:center;margin-top:16px}
+.evolution-form-card{min-width:0;text-align:center;padding:14px 12px;border:1.5px solid #ddcfb5;border-radius:14px;background:#fffaf0}
+.evolution-form-card.next{background:#f2f5e8}
+.evolution-form-card.is-complete{background:radial-gradient(circle at 50% 22%,#fff3c7,#f9efda)}
+.evolution-form-label{display:block;font:500 9px 'DM Mono';letter-spacing:1.2px;color:var(--muted)}
+.evolution-art{position:relative;isolation:isolate;display:grid;place-items:end center;width:min(100%,195px);height:194px;margin:10px auto 4px;overflow:hidden;border:1.5px solid #e2d3b9;border-radius:50% 50% 43% 43%;background:radial-gradient(ellipse at 50% 76%,#f0d8ae,#fff8e9 69%)}
+.evolution-art .scottchi{width:74%;height:auto;align-self:end}
+.evolution-art.stage-6{background:radial-gradient(ellipse at 50% 76%,#d8ebd0,#f7f4df 69%)}
+.evolution-art.stage-8{background:radial-gradient(ellipse at 50% 76%,#dceafa,#f9f3fb 69%)}
+.evolution-art.stage-9,.evolution-art.stage-10{background:radial-gradient(ellipse at 50% 76%,#fae4a9,#fff9e6 69%)}
+.evolution-form-card h3{margin:7px 0 4px;font:600 21px 'Fredoka'}
+.evolution-form-card p{min-height:34px;margin:7px 0 0;font-size:11px;line-height:1.45;color:var(--muted)}
+.evolution-stage-tag{display:inline-block;padding:5px 9px;border-radius:999px;background:#ede2cc;font:500 9px 'DM Mono';color:#5b4c3b}
+.evolution-arrow{display:grid;place-items:center;width:32px;height:32px;border:1.5px solid var(--ink);border-radius:50%;background:#f1d49a}
+.evolution-arrow svg{width:16px;height:16px}
+.evolution-max-mark{display:grid;place-items:center;width:100%;height:194px;color:#b68424}
+.evolution-requirements{margin-top:15px;padding:14px;border:1.5px dashed #cdbb98;border-radius:12px;background:#fffdf8}
+.evolution-requirement-head,.evolution-costs{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.evolution-requirement-head strong{font:600 16px 'Fredoka'}
+.evolution-requirement-head span,.evolution-costs span{font-size:11px;color:var(--muted)}
+.evolution-progress{height:9px;margin:9px 0 11px}
+.evolution-progress span{transition:width .35s}
+.evolution-costs{flex-wrap:wrap}
+.evolution-costs span{display:flex;align-items:center;gap:5px;color:var(--ink)}
+.evolution-costs svg{color:#b57b25}
+.evolution-costs .missing-coins{color:#a64e34;font-weight:800}
+.evolution-warning{margin:9px 0 0;color:#a64e34;font-size:11px;font-weight:800}
+.evolution-buy{display:flex;justify-content:center;align-items:center;gap:7px;width:100%;min-height:44px;margin-top:12px}
+.evolution-buy:disabled{opacity:.62;cursor:not-allowed;transform:none;box-shadow:2px 3px 0 var(--ink)}
+.evolution-stage-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+.evolution-stage-row{display:flex;align-items:center;gap:9px;min-width:0;padding:9px;border:1px solid #e5dccb;border-radius:10px;background:#fffdf8}
+.evolution-stage-row.reached{background:#f0f5e9;border-color:#b7c7a3}
+.evolution-stage-row.up-next{border:1.5px solid #d3a44c;box-shadow:0 0 0 2px #f4e7c5}
+.evolution-stage-number{display:grid;place-items:center;flex:none;width:25px;height:25px;border:1px solid #8d785c;border-radius:50%;background:#f5e9d3;color:#614c35}
+.evolution-stage-row.reached .evolution-stage-number{background:#dce9c9}
+.evolution-stage-copy{display:grid;gap:3px;min-width:0}
+.evolution-stage-copy b{font:600 12px 'Fredoka'}
+.evolution-stage-copy small{font-size:9px;color:var(--muted)}
+.evolution-stage-status{margin-left:auto;font:500 8px 'DM Mono';color:var(--muted);text-align:right}
+.evolution-art-note{margin:0;padding:10px 12px;border-left:3px solid #d1a650;border-radius:0 8px 8px 0;background:#f6eddb;color:#675847;font-size:10px;line-height:1.5}
+.evolution-confirm{text-align:center}
+.evolution-confirm-mark{display:grid;place-items:center;width:48px;height:48px;margin:0 auto 12px;border:1.5px solid #ad843b;border-radius:50%;background:#f4dfab;color:#79561c}
+.evolution-confirm .dialog-actions{justify-content:center}
+.evolution-confirm .button{min-height:42px}
+.evolution-aura{position:absolute;inset:5% 7% 4%;z-index:1;pointer-events:none;border-radius:48%;opacity:var(--evolution-opacity);transform:scale(var(--evolution-scale));background:radial-gradient(ellipse at 50% 52%,transparent 38%,color-mix(in srgb,var(--evolution-color) 25%,transparent) 56%,transparent 72%);box-shadow:inset 0 0 18px color-mix(in srgb,var(--evolution-color) 22%,transparent)}
+.scottchi-motion{z-index:2}
+.scottchi.has-evolved-idle.act-idle .scottchi-motion{animation:evolution-idle 4.2s ease-in-out infinite}
+.scottchi.has-stellar-evolution .evolution-aura{box-shadow:inset 0 0 22px color-mix(in srgb,var(--evolution-color) 35%,transparent),0 0 12px color-mix(in srgb,var(--evolution-color) 24%,transparent)}
+.scottchi.is-evolving .evolution-aura{opacity:.95;animation:evolution-pulse 1.05s ease-in-out infinite alternate}
+.evolution-burst{position:absolute;inset:6%;z-index:4;display:grid;place-items:center;border:3px solid #fff7d3;border-radius:50%;color:#8e6625;background:radial-gradient(circle,transparent 40%,#fff5cc66 61%,transparent 72%);animation:evolution-burst 1.1s cubic-bezier(.2,.8,.25,1) infinite alternate;pointer-events:none}
+.evolution-burst svg{width:36px;height:36px;filter:drop-shadow(0 0 8px #fff)}
+.evolution-burst.power-mid{inset:2%;border-color:#dff4d5;color:#54856a;box-shadow:0 0 18px #87c99c88}
+.evolution-burst.power-high{inset:-3%;border-color:#fff0ac;color:#a97619;box-shadow:0 0 28px #f3c95fbb}
+@keyframes evolution-idle{0%,100%{transform:translateY(0) rotate(-1deg)}50%{transform:translateY(-7px) rotate(1.5deg)}}
+@keyframes evolution-pulse{from{transform:scale(.92);filter:brightness(1)}to{transform:scale(1.12);filter:brightness(1.3)}}
+@keyframes evolution-burst{from{transform:scale(.88) rotate(-7deg);opacity:.56}to{transform:scale(1.05) rotate(7deg);opacity:1}}
+@media(max-width:680px){
+ .evolution-forms{grid-template-columns:minmax(0,1fr) 28px minmax(0,1fr);gap:5px}
+ .evolution-form-card{padding:11px 6px}
+ .evolution-art,.evolution-max-mark{height:142px}
+ .evolution-form-card h3{font-size:17px}
+ .evolution-form-card p{font-size:10px}
+ .evolution-stage-list{grid-template-columns:1fr}
+ .evolution-stage-status{font-size:8px}
+ .evolution-costs{align-items:flex-start;flex-direction:column}
+}
+@media(prefers-reduced-motion:reduce){.scottchi.has-evolved-idle.act-idle .scottchi-motion,.scottchi.is-evolving .evolution-aura,.evolution-burst{animation:none}}
