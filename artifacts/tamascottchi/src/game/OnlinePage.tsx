@@ -306,10 +306,10 @@ export function OnlinePage({ localSave, onRestoreCloud, onCloudLinked, syncStatu
                 <div className="on-conflict__heading"><span className="on-icon on-icon--sage"><RefreshCw size={19} /></span><div><strong>Welche Version soll bleiben?</strong><small>Die Auswahl ändert nicht automatisch deinen laufenden Spielstand.</small></div></div>
                 <div className="on-choice-grid">
                   <button type="button" className="on-choice" onClick={backupThenReplaceCloud} disabled={busy} data-testid="button-choose-local-save">
-                    <span className="on-choice__icon"><Upload size={18} /></span><strong>Lokalen Spielstand in die Cloud</strong><small>Level {localLevel} · {localSave.name}</small>
-                  {!backedUp.includes('local') && <em>Vorher lokale Datei herunterladen</em>}
-                  {backedUp.includes('local') && !backedUp.includes('cloud') && hasCloud && <em>Vorher Cloud-Datei herunterladen</em>}
-                  {backedUp.includes('local') && (!hasCloud || backedUp.includes('cloud')) && <em className="is-done"><CheckCircle2 size={13} /> Sicherung bereit</em>}
+                    <span className="on-choice__icon"><Upload size={18} /></span><strong>{!backedUp.includes('local') ? 'Lokalen Spielstand in die Cloud' : backedUp.includes('cloud') || !hasCloud ? 'Jetzt in die Cloud sichern' : 'Cloud-Sicherung zuerst herunterladen'}</strong><small>Level {localLevel} · {localSave.name}</small>
+                  {!backedUp.includes('local') && <em>Schritt 1: Zuerst die lokale Sicherungsdatei herunterladen.</em>}
+                  {backedUp.includes('local') && !backedUp.includes('cloud') && hasCloud && <em>Lokale Datei gesichert. Klicke hier, um auch die Cloud-Datei herunterzuladen.</em>}
+                  {backedUp.includes('local') && (!hasCloud || backedUp.includes('cloud')) && <em className="is-done"><CheckCircle2 size={13} /> Sicherungsdatei heruntergeladen. Klicke hier, um den Upload zu starten.</em>}
                   </button>
                   {hasCloud && <button type="button" className="on-choice" onClick={restoreCloud} disabled={busy} data-testid="button-choose-cloud-save">
                     <span className="on-choice__icon"><CloudDownload size={18} /></span><strong>Cloud-Spielstand auf dieses Gerät</strong><small>Level {getSaveLevel(cloudData)} · {getSaveName(cloudData)}</small>
