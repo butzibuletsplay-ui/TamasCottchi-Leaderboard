@@ -11,6 +11,6 @@ export function HelpPage() {
       <article><ShieldCheck/><h3>Spielstand & Datenschutz</h3><p>Der Spielstand liegt lokal und kann nach Anmeldung zusätzlich in der Cloud gesichert werden. Exportiere ihn regelmäßig als Sicherung. Freunde und gemeinsamer Multiplayer sind noch nicht aktiv.</p></article>
     </div>
     <div className="side-note help-online"><strong>Cloud-Sicherung ja · Multiplayer noch nicht</strong>Wenn du angemeldet bist, verwendet die Welt die Serverzeit. Sammelbelohnungen werden weiterhin lokal im Spielstand verwaltet; gemeinsame Fundstellen oder Freundebesuche gibt es noch nicht.</div>
-    <p className="help-version">tamascottchi · Spielversion 6.0</p>
+    <p className="help-version">tamascottchi · Spielversion 6.1</p>
   </section>;
 }

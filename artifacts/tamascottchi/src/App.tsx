@@ -20,7 +20,7 @@ import {
 } from './game/personality';
 import {
   CHALLENGES, COLLECTIONS, GAMES, ITEMS, ROOM_BG, ROOM_LIST, STORE_KEY, STYLE_SETS, SaveLoadError, assertSave, clamp, initialData, itemById, levelFor, loadData,
-  moodFor, normalize, rewardFor, today, type DailyProgress, type FullPetData, type GameRecord, type Item, type NeedKey, type Room,
+  moodFor, normalize, rewardFor, today, type DailyProgress, type FullPetData, type GameRecord, type Item, type NeedKey, type RewardChestTier, type Room,
 } from './game/data';
 import { craftItem } from './game/crafting';
 import { CraftingPage } from './game/CraftingPage';
@@ -32,6 +32,7 @@ import { completeQuestAction } from './game/questEngine';
 import { hasMaterialArt, MaterialArt } from './game/MaterialArt';
 import { getGetOnlineProfileQueryKey, getGetOnlineSaveQueryKey, useGetOnlineProfile, useGetOnlineSave, useUpdateOnlineSave } from '@workspace/api-client-react';
 import { OnlinePage } from './game/OnlinePage';
+import { CHEST_DEFINITIONS, openRewardChest } from './game/rewardChests';
 type PetData = FullPetData;
 
 type PetAction = 'idle' | 'happy' | 'eating' | 'washing' | 'petting' | 'sleeping' | 'spin' | 'wiggle' | 'run' | 'chew' | 'wake' | 'yawn' | 'cuddle';
@@ -504,19 +505,25 @@ function Game({ initial }: { initial: PetData }) {
     const newChallenges = CHALLENGES.filter((c) => c.game === game && !cur.challenges[c.id] && c.test(result.score, result.metrics));
     const summary: RewardSummary = {
       coins: coins + newChallenges.reduce((a, c) => a + c.coins, 0), xp: xp + newChallenges.reduce((a, c) => a + c.xp, 0),
-      newBest: result.score > prevBest && result.score > 0, best: Math.max(prevBest, result.score), challenges: newChallenges.map((c) => c.title), reduced,
+      newBest: result.score > prevBest && result.score > 0, best: Math.max(prevBest, result.score), challenges: newChallenges.map((c) => c.title),
+      challengeChests: newChallenges.map((c) => ({ id: c.id, title: c.title, tier: c.chestTier })), reduced,
     };
-    if (rewardedSessions.current.has(sessionId)) return { ...summary, coins: 0, xp: 0, challenges: [] };
+    if (rewardedSessions.current.has(sessionId)) return { ...summary, coins: 0, xp: 0, challenges: [], challengeChests: [] };
     rewardedSessions.current.add(sessionId);
     const record: GameRecord = { id: sessionId, game, score: result.score, date: Date.now() };
     setData((old) => {
       if (old.records.some((r) => r.id === sessionId)) return old;
       const challenges = { ...old.challenges };
+      const rewardChests = { ...old.world.rewardChests };
       let bonusCoins = 0, bonusXp = 0;
-      for (const c of newChallenges) if (!challenges[c.id]) { challenges[c.id] = Date.now(); bonusCoins += c.coins; bonusXp += c.xp; }
+      for (const c of newChallenges) if (!challenges[c.id]) {
+        challenges[c.id] = Date.now(); bonusCoins += c.coins; bonusXp += c.xp;
+        rewardChests[c.chestTier] = (rewardChests[c.chestTier] || 0) + 1;
+      }
       let next: PetData = {
         ...old, records: [record, ...old.records].slice(0, 100), coins: old.coins + coins + bonusCoins, xp: old.xp + xp + bonusXp,
         highscores: { ...old.highscores, [game]: Math.max(old.highscores[game] || 0, result.score) }, challenges,
+        world: { ...old.world, rewardChests },
         needs: applyNeeds(old.needs, { glueck: 6 }),
         stats: { ...old.stats, games: old.stats.games + 1, catches: old.stats.catches + (result.metrics.caught || 0), taps: old.stats.taps + (result.metrics.hits || 0) },
       };
@@ -530,6 +537,15 @@ function Game({ initial }: { initial: PetData }) {
     if (result.score > 0 || newChallenges.length) cheer(5000);
     return summary;
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sound]);
+  const openChest = useCallback((tier: RewardChestTier) => {
+    const opened = openRewardChest(dataRef.current, tier);
+    if (!opened) return null;
+    const next = advanceDaily(opened.data, 'coins', opened.reward.coins);
+    dataRef.current = next;
+    setData(next);
+    sound(900, { dur: 0.18, slide: 1320 });
+    return opened.reward;
   }, [sound]);
   function openGame(id: GameId) { setPage('games'); setActiveGame(id); }
 
@@ -865,7 +881,7 @@ function Game({ initial }: { initial: PetData }) {
 
   return <div className={`app-shell ${activeGame ? 'in-game' : ''}`}>
     <header className="topbar">
-      <div className="brand"><span className="brand-mark">t</span>tamascottchi <span className="version-pill">6.0</span></div>
+      <div className="brand"><span className="brand-mark">t</span>tamascottchi <span className="version-pill">6.1</span></div>
       <div className="topstats">
         <div className="stat-pill" data-testid="status-coins"><Coins size={16}/>{data.coins}</div>
         <div className="stat-pill" data-testid="status-level"><Star size={15}/><span>Lv. {level}</span></div>
@@ -878,7 +894,7 @@ function Game({ initial }: { initial: PetData }) {
         <div className="side-note"><strong>Level {level} · Scottchi-Fan</strong><div className="progress-track"><span style={{ width: `${xpProgress}%` }}/></div><div style={{ marginTop: 7 }}>{xpProgress} / 100 XP bis zum nächsten Level</div></div>
       </aside>
       <main className="main">
-        {!activeGame && page !== 'online' && <div className="main-head"><div><div className="eyebrow">{page === 'home' ? 'DEIN ZUHAUSE' : 'TAMASCOTTCHI 6.0'}</div><h1>{page === 'home' ? `Hallo, ${data.name}.` : page === 'shop' ? 'Der kleine Laden' : page === 'world' ? 'Scottchi World' : page === 'collections' ? 'Scottchi Collections' : page === 'games' ? 'Spielzeit!' : page === 'closet' ? 'Kleiderschrank' : page === 'leaderboard' ? 'Bestenliste' : page === 'inventory' ? 'Inventar' : page === 'crafting' ? 'Werkstatt' : page === 'journal' ? 'Scottchis Tagebuch' : page === 'help' ? 'Hilfe & Spielstart' : 'Erfolge'}</h1><div className="subline">{page === 'home' ? 'Tippe Scottchi an, wirf Spielzeug, wechsle das Zimmer.' : page === 'leaderboard' ? 'Nur deine Ergebnisse auf diesem Gerät.' : 'Ein gemütlicher Ort für Scottchi und dich.'}</div></div>
+        {!activeGame && page !== 'online' && <div className="main-head"><div><div className="eyebrow">{page === 'home' ? 'DEIN ZUHAUSE' : 'TAMASCOTTCHI 6.1'}</div><h1>{page === 'home' ? `Hallo, ${data.name}.` : page === 'shop' ? 'Der kleine Laden' : page === 'world' ? 'Scottchi World' : page === 'collections' ? 'Scottchi Collections' : page === 'games' ? 'Spielzeit!' : page === 'closet' ? 'Kleiderschrank' : page === 'leaderboard' ? 'Bestenliste' : page === 'inventory' ? 'Inventar' : page === 'crafting' ? 'Werkstatt' : page === 'journal' ? 'Scottchis Tagebuch' : page === 'help' ? 'Hilfe & Spielstart' : 'Erfolge'}</h1><div className="subline">{page === 'home' ? 'Tippe Scottchi an, wirf Spielzeug, wechsle das Zimmer.' : page === 'leaderboard' ? 'Nur deine Ergebnisse auf diesem Gerät.' : 'Ein gemütlicher Ort für Scottchi und dich.'}</div></div>
           {page === 'home' && <button className="button small" onClick={() => { setNameDraft(data.name); setModal('name'); }} data-testid="button-rename">Name ändern</button>}
         </div>}
 
@@ -917,7 +933,7 @@ function Game({ initial }: { initial: PetData }) {
 
         {page === 'world' && <World data={data} level={level} serverClockOffsetMs={serverClockOffsetMs} onChange={changeWorld} onNotice={notify} onStore={(tab) => { setShopTab(tab); setPage('shop'); }}/>}
         {page === 'collections' && <CollectionsPage data={data} onClaim={claimWorldReward}/>}
-        {page === 'inventory' && <InventoryPage data={data} onUse={useInventoryItem} onEquip={equip} onPlace={equip}/>}
+        {page === 'inventory' && <InventoryPage data={data} onUse={useInventoryItem} onEquip={equip} onPlace={equip} onOpenChest={openChest}/>}
         {page === 'crafting' && <CraftingPage data={data} onCraft={craft}/>}
         {page === 'journal' && <JournalPage data={data}/>}
         {page === 'help' && <HelpPage/>}
@@ -925,7 +941,7 @@ function Game({ initial }: { initial: PetData }) {
         {page === 'games' && (activeGame && currentGame
           ? <GameStage key={`${activeGame}-${memoryPairs}-${cupLevel}`} id={activeGame} name={currentGame.name} rules={currentGame.rules} best={data.highscores[activeGame] || 0}
               difficulty={activeGame === 'memory' ? memoryPairs : activeGame === 'bone' ? cupLevel : undefined} extras={data.owned}
-              sound={sound} onRequestStart={requestStart} onComplete={completeGame} onExit={() => setActiveGame(null)}/>
+              sound={sound} onRequestStart={requestStart} onComplete={completeGame} onOpenChest={openChest} onExit={() => setActiveGame(null)}/>
           : <section className="page-grid">{GAMES.map((g) => <article className="panel game-card2" key={g.id} data-testid={`game-card-${g.id}`}>
             <div className="panel-head"><h2 className="panel-title">{g.name}</h2><span className="best-badge"><Trophy size={13}/> {data.highscores[g.id] || 0}</span></div>
             <p className="subline" style={{ minHeight: 32 }}>{g.desc}</p>
@@ -962,7 +978,7 @@ function Game({ initial }: { initial: PetData }) {
         </div>}
 
         {page === 'achievements' && <>
-          <section className="panel"><div className="panel-head"><h2 className="panel-title">Herausforderungen</h2><Target size={18}/></div><p className="subline" style={{ marginTop: 0 }}>Werden automatisch beim Erreichen belohnt, jede genau einmal.</p><div className="page-grid">{CHALLENGES.map((c) => <div className={`achievement ${data.challenges[c.id] ? '' : 'locked'}`} key={c.id} data-testid={`challenge-${c.id}`}><div className="item-icon">{data.challenges[c.id] ? <Check size={18}/> : <Target size={18}/>}</div><div className="item-info"><div className="item-title">{c.title}</div><div className="item-meta">{GAMES.find((g) => g.id === c.game)?.name} · {c.coins} Münzen · {c.xp} XP</div></div>{data.challenges[c.id] ? <span className="reward">Geschafft</span> : <button className="button small" onClick={() => openGame(c.game)} data-testid={`button-try-${c.id}`}>Versuchen</button>}</div>)}</div></section>
+          <section className="panel"><div className="panel-head"><h2 className="panel-title">Herausforderungen</h2><Target size={18}/></div><p className="subline" style={{ marginTop: 0 }}>Werden automatisch beim Erreichen belohnt, jede genau einmal.</p><div className="page-grid">{CHALLENGES.map((c) => <div className={`achievement ${data.challenges[c.id] ? '' : 'locked'}`} key={c.id} data-testid={`challenge-${c.id}`}><div className="item-icon">{data.challenges[c.id] ? <Check size={18}/> : <Target size={18}/>}</div><div className="item-info"><div className="item-title">{c.title}</div><div className="item-meta">{GAMES.find((g) => g.id === c.game)?.name} · {c.coins} Münzen · {c.xp} XP · {CHEST_DEFINITIONS[c.chestTier].label}</div></div>{data.challenges[c.id] ? <span className="reward">Geschafft</span> : <button className="button small" onClick={() => openGame(c.game)} data-testid={`button-try-${c.id}`}>Versuchen</button>}</div>)}</div></section>
           <section className="panel" style={{ marginTop: 16 }} data-testid="panel-collections"><div className="panel-head"><h2 className="panel-title">Sammlungen</h2><Library size={18}/></div><p className="subline" style={{ marginTop: 0 }}>{uniqueOwned} verschiedene Gegenstände im Besitz. Komplette Sammlungen bringen eine einmalige Belohnung.</p><div className="page-grid">{collections.map((c) => <div className={`achievement ${c.have < c.items.length ? 'locked' : ''}`} key={c.id} data-testid={`collection-${c.id}`}>
             <div className="collection-thumbs">{c.items.slice(0, 4).map((i) => { const it = itemById(i)!; return <span key={i} className={data.owned.includes(i) ? 'have' : ''}>{it.img ? <img src={it.img} alt=""/> : it.icon}</span>; })}</div>
             <div className="item-info"><div className="item-title">{c.name}</div><div className="progress-track"><span style={{ width: `${c.have / c.items.length * 100}%` }}/></div><div className="item-meta">{c.have} / {c.items.length} · {c.rewardCoins} Münzen · {c.rewardXp} XP</div><div className="item-meta">{c.items.filter((i) => !data.owned.includes(i)).map((i) => itemById(i)?.name).join(', ') || 'Alles gesammelt'}</div></div>

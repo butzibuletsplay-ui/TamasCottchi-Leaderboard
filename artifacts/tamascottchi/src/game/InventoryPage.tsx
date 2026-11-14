@@ -1,14 +1,18 @@
 import { useMemo, useState } from 'react';
 import { Box, Check, Info, Sparkles, X } from 'lucide-react';
-import type { FullPetData, Item } from './data';
-import { ITEMS } from './data';
+import type { FullPetData, Item, RewardChestTier } from './data';
+import { ITEMS, itemById } from './data';
 import { hasMaterialArt, MaterialArt } from './MaterialArt';
+import { CHEST_DEFINITIONS, CHEST_TIERS, type ChestOpenReward } from './rewardChests';
+import { RewardChestArt } from './RewardChestArt';
+import { assetUrl } from './assets';
 
 type Props = {
   data: FullPetData;
   onUse: (id: string) => void;
   onEquip: (id: string) => void;
   onPlace: (id: string) => void;
+  onOpenChest: (tier: RewardChestTier) => ChestOpenReward | null;
 };
 
 function quantity(data: FullPetData, item: Item) {
@@ -37,9 +41,10 @@ function origin(item: Item) {
   return item.origin || (item.type === 'material' ? 'Welt-Erkundung' : item.craftOnly ? 'Werkstatt · Crafting' : 'Shop');
 }
 
-export function InventoryPage({ data, onUse, onEquip, onPlace }: Props) {
+export function InventoryPage({ data, onUse, onEquip, onPlace, onOpenChest }: Props) {
   const [filter, setFilter] = useState('Alle');
   const [selected, setSelected] = useState<string | null>(null);
+  const [chestReveal, setChestReveal] = useState<ChestOpenReward | null>(null);
   const categories = ['Alle', 'Benutzbar', 'Pflege', 'Spielzeug', 'Ausrüstung', 'Dekoration', 'Zimmermotiv', 'Material'];
   const items = useMemo(() => ITEMS
     .filter((item) => quantity(data, item) > 0)
@@ -47,6 +52,12 @@ export function InventoryPage({ data, onUse, onEquip, onPlace }: Props) {
     .sort((a, b) => a.name.localeCompare(b.name, 'de')), [data, filter]);
   const item = ITEMS.find((entry) => entry.id === selected);
   const count = item ? quantity(data, item) : 0;
+  const pendingChests = CHEST_TIERS.filter((tier) => (data.world.rewardChests[tier] || 0) > 0);
+
+  function openChest(tier: RewardChestTier) {
+    const opened = onOpenChest(tier);
+    if (opened) setChestReveal(opened);
+  }
 
   function actionFor(selectedItem: Item) {
     if (selectedItem.type === 'food') return <button className="button orange" onClick={() => { onUse(selectedItem.id); setSelected(null); }}>Benutzen · 1</button>;
@@ -60,6 +71,17 @@ export function InventoryPage({ data, onUse, onEquip, onPlace }: Props) {
   return <section className="panel inventory-page" data-testid="inventory-page">
     <div className="panel-head"><div><div className="eyebrow">DEINE GESAMTEN FUNDSTÜCKE</div><h2 className="panel-title">Inventar</h2></div><span className="stat-pill"><Box size={15}/>{ITEMS.filter((it) => quantity(data, it) > 0).length} Gegenstände</span></div>
     <p className="subline">Tippe einen Gegenstand an, um Herkunft, Seltenheit, Menge und verfügbare Aktionen zu sehen.</p>
+    {pendingChests.length > 0 && <section className="chest-vault" aria-label="Belohnungskisten" data-testid="reward-chest-vault">
+      <div className="chest-vault-head"><div><div className="eyebrow">HERAUSFORDERUNGSBELOHNUNGEN</div><h3>Belohnungskisten</h3></div><Sparkles size={18}/></div>
+      <div className="chest-vault-grid">{pendingChests.map((tier) => {
+        const count = data.world.rewardChests[tier] || 0;
+        return <article className={`chest-vault-item rarity-${tier}`} key={tier} data-testid={`reward-chest-${tier}`}>
+          <RewardChestArt tier={tier}/>
+          <div className="chest-vault-info"><strong>{CHEST_DEFINITIONS[tier].label}</strong><small>{count} {count === 1 ? 'Kiste' : 'Kisten'} · garantiert ein neuer Fund oder Material</small></div>
+          <button className="button orange small" onClick={() => openChest(tier)} data-testid={`button-open-chest-${tier}`}>Öffnen</button>
+        </article>;
+      })}</div>
+    </section>}
     <div className="inventory-filters">{categories.map((name) => <button key={name} className={`room-chip ${filter === name ? 'selected' : ''}`} onClick={() => setFilter(name)}>{name}</button>)}</div>
     {items.length ? <div className="inventory-grid">{items.map((it) => <button key={it.id} className="inventory-card" onClick={() => setSelected(it.id)} data-testid={`inventory-item-${it.id}`}>
       <span className={`item-icon ${it.img || hasMaterialArt(it) ? 'has-img' : ''}`}>{hasMaterialArt(it) ? <MaterialArt item={it} size={38}/> : it.img ? <img src={it.img} alt="" loading="lazy"/> : it.icon}</span>
@@ -74,6 +96,21 @@ export function InventoryPage({ data, onUse, onEquip, onPlace }: Props) {
       <dl className="inventory-facts"><div><dt>Herkunft</dt><dd>{origin(item)}</dd></div><div><dt>Verwendung</dt><dd>{purpose(item)}</dd></div><div><dt>Im Inventar</dt><dd>×{count}</dd></div></dl>
       <div className="dialog-actions">{actionFor(item)}<button className="button ghost" onClick={() => setSelected(null)}><Check size={15}/> Fertig</button></div>
       {item.type === 'material' && <div className="inventory-readonly"><Sparkles size={15}/> Kein direkter Einsatz. Dieses Material wird in Rezepten verbraucht.</div>}
+    </section></div>}
+    {chestReveal && <div className="quest-backdrop" role="presentation" onClick={() => setChestReveal(null)}><section className={`chest-reveal panel rarity-${chestReveal.tier}`} role="dialog" aria-modal="true" aria-labelledby="chest-reveal-title" onClick={(event) => event.stopPropagation()} data-testid="chest-reveal">
+      <button className="button small collection-close" onClick={() => setChestReveal(null)} aria-label="Schließen"><X size={16}/></button>
+      <RewardChestArt tier={chestReveal.tier} open className="chest-reveal-art"/>
+      <div className="eyebrow">KISTE GEÖFFNET</div><h3 id="chest-reveal-title">{chestReveal.chestName}</h3>
+      <div className="chest-reward-preview">
+        {chestReveal.isCollectionFind
+          ? <img src={assetUrl(`collections/items/${chestReveal.itemId}.png`)} alt="" />
+          : itemById(chestReveal.itemId) && hasMaterialArt(itemById(chestReveal.itemId)!)
+            ? <MaterialArt item={itemById(chestReveal.itemId)!} size={64}/>
+            : <Sparkles size={40}/>}
+        <div><strong>{chestReveal.itemName}{chestReveal.quantity > 1 ? ` ×${chestReveal.quantity}` : ''}</strong><small>{chestReveal.isCollectionFind ? 'Neuer Fund im Sammelalbum' : 'Material dem Inventar hinzugefügt'}</small></div>
+      </div>
+      <p className="chest-reveal-bonus">+{chestReveal.coins} Münzen · +{chestReveal.xp} XP</p>
+      <div className="dialog-actions"><button className="button orange" onClick={() => setChestReveal(null)}>Weiter</button></div>
     </section></div>}
   </section>;
 }

@@ -1,14 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronLeft, Coins, Play, RotateCcw, Star, Trophy } from 'lucide-react';
-import { CHARACTER, GAME_SPRITES, preloadAll } from './assets';
+import { ChevronLeft, Coins, Play, RotateCcw, Sparkles, Star, Trophy } from 'lucide-react';
+import { assetUrl, CHARACTER, GAME_SPRITES, preloadAll } from './assets';
+import { itemById, type RewardChestTier } from './data';
 import type { GameId, GameResult, SoundFn } from './engine';
 import { CatchGame } from './games/CatchGame';
 import { CupsGame } from './games/CupsGame';
 import { MemoryGame } from './games/MemoryGame';
 import { RunGame } from './games/RunGame';
 import { TurboGame } from './games/TurboGame';
+import { RewardChestArt } from './RewardChestArt';
+import { CHEST_DEFINITIONS, type ChestOpenReward } from './rewardChests';
+import { hasMaterialArt, MaterialArt } from './MaterialArt';
 
-export type RewardSummary = { coins: number; xp: number; newBest: boolean; best: number; challenges: string[]; reduced: boolean };
+export type ChallengeChestReward = { id: string; title: string; tier: RewardChestTier };
+export type RewardSummary = { coins: number; xp: number; newBest: boolean; best: number; challenges: string[]; challengeChests: ChallengeChestReward[]; reduced: boolean };
 type Props = {
   id: GameId; name: string; rules: string; best: number; difficulty?: number; extras?: string[];
   sound: SoundFn;
@@ -16,13 +21,15 @@ type Props = {
   onRequestStart: () => boolean;
   /** Must grant rewards exactly once per session id. */
   onComplete: (sessionId: string, result: GameResult) => RewardSummary;
+  onOpenChest: (tier: RewardChestTier) => ChestOpenReward | null;
   onExit: () => void;
 };
 
-export function GameStage({ id, name, rules, best, difficulty, extras, sound, onRequestStart, onComplete, onExit }: Props) {
+export function GameStage({ id, name, rules, best, difficulty, extras, sound, onRequestStart, onComplete, onOpenChest, onExit }: Props) {
   const [phase, setPhase] = useState<'loading' | 'intro' | 'playing' | 'done'>('loading');
   const [session, setSession] = useState('');
   const [result, setResult] = useState<{ r: GameResult; reward: RewardSummary } | null>(null);
+  const [openedChests, setOpenedChests] = useState<Record<string, ChestOpenReward>>({});
   const finished = useRef<Set<string>>(new Set());
   const sessionRef = useRef(session); sessionRef.current = session;
   const completeRef = useRef(onComplete); completeRef.current = onComplete;
@@ -45,6 +52,7 @@ export function GameStage({ id, name, rules, best, difficulty, extras, sound, on
   const start = () => {
     if (!onRequestStart()) return;
     setResult(null);
+    setOpenedChests({});
     setSession(`${id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
     setPhase('playing'); sound(430);
   };
@@ -55,6 +63,12 @@ export function GameStage({ id, name, rules, best, difficulty, extras, sound, on
     const reward = completeRef.current(sid, r);
     setResult({ r, reward }); setPhase('done');
   }, []);
+  const pendingChest = result?.reward.challengeChests.find((chest) => !openedChests[chest.id]);
+  const openNextChest = () => {
+    if (!pendingChest) return;
+    const reward = onOpenChest(pendingChest.tier);
+    if (reward) setOpenedChests((current) => ({ ...current, [pendingChest.id]: reward }));
+  };
 
   const common = { onEnd: handleEnd, sound, difficulty, extras };
   return <section className={`game-screen stage-${id}`} data-testid="game-board">
@@ -70,15 +84,30 @@ export function GameStage({ id, name, rules, best, difficulty, extras, sound, on
         {id === 'memory' && <MemoryGame {...common}/>}
       </div>}
       {phase === 'done' && result && <div className="overlay-result" data-testid="game-result"><div className="result-card">
-        <img src={result.reward.newBest ? CHARACTER.excited : CHARACTER.happy} alt="" className="result-pet"/>
-        <div className="eyebrow">{result.reward.newBest ? 'NEUER BESTWERT' : 'RUNDENENDE'}</div>
-        <div className="score-big" data-testid="text-final-score">{result.r.score}</div>
-        <div className="result-rewards"><span><Coins size={14}/> +{result.reward.coins}</span><span><Star size={14}/> +{result.reward.xp} XP</span></div>
-        {result.reward.reduced && <p className="subline">Viele Runden heute: Belohnung halbiert.</p>}
-        {result.reward.challenges.map((c) => <p key={c} className="challenge-pop">Herausforderung geschafft: {c}</p>)}
-        <div className="dialog-actions" style={{ justifyContent: 'center' }}>
-          <button className="button orange" onClick={start} data-testid="button-replay"><RotateCcw size={15}/> Nochmal</button>
+        <div className="result-scroll">
+          <img src={result.reward.newBest ? CHARACTER.excited : CHARACTER.happy} alt="" className="result-pet"/>
+          <div className="eyebrow">{result.reward.newBest ? 'NEUER BESTWERT' : 'RUNDENENDE'}</div>
+          <div className="score-big" data-testid="text-final-score">{result.r.score}</div>
+          <div className="result-rewards"><span><Coins size={14}/> +{result.reward.coins}</span><span><Star size={14}/> +{result.reward.xp} XP</span></div>
+          {result.reward.reduced && <p className="subline">Viele Runden heute: Belohnung halbiert.</p>}
+          {result.reward.challengeChests.map((chest) => {
+            const opened = openedChests[chest.id];
+            return <div key={chest.id} className={`challenge-pop ${opened ? 'opened' : ''}`}>
+              <span>Herausforderung geschafft: {chest.title}</span>
+              <div className="challenge-chest-reward">
+                <RewardChestArt tier={chest.tier} open={Boolean(opened)}/>
+                {opened?.isCollectionFind && <img className="challenge-loot-art" src={assetUrl(`collections/items/${opened.itemId}.png`)} alt="" />}
+                {opened && !opened.isCollectionFind && itemById(opened.itemId) && hasMaterialArt(itemById(opened.itemId)!) && <MaterialArt item={itemById(opened.itemId)!} size={30}/>}
+                <span>{opened ? `${opened.itemName}${opened.quantity > 1 ? ` ×${opened.quantity}` : ''} · +${opened.coins} Münzen` : `Belohnung: ${CHEST_DEFINITIONS[chest.tier].label}`}</span>
+              </div>
+            </div>;
+          })}
+          {result.reward.challenges.filter((title) => !result.reward.challengeChests.some((chest) => chest.title === title)).map((title) => <p key={title} className="challenge-pop">Herausforderung geschafft: {title}</p>)}
+        </div>
+        <div className="dialog-actions result-actions">
+          {pendingChest && <button className="button orange" onClick={openNextChest} data-testid="button-open-earned-chest"><Sparkles size={15}/> Kiste öffnen</button>}
           <button className="button" onClick={onExit} data-testid="button-games-done">Spielauswahl</button>
+          <button className="button ghost" onClick={start} data-testid="button-replay"><RotateCcw size={15}/> Nochmal</button>
         </div>
       </div></div>}
     </div>

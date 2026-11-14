@@ -1,6 +1,14 @@
 export type CollectionCategory = 'Hüte' | 'Outfits' | 'Accessoires' | 'Spielzeug' | 'Kristalle' | 'Magische Eier' | 'Trophäen' | 'Besondere Dekorationen';
 export type Rarity = 'Common' | 'Uncommon' | 'Rare' | 'Epic' | 'Legendary';
 export type CollectionItem = { id: string; name: string; category: CollectionCategory; rarity: Rarity; where: string; condition: string };
+export const COLLECTION_ITEM_LINKS: Record<string, string> = {
+  'cap-red': 'baseballcap', 'beanie-dark': 'beanie', 'cowboy-star': 'cowboy-hat', 'crown-ruby': 'crown',
+  'wizard-purple': 'wizard-hat', 'sleep-cap-blue': 'sleep-cap', 'hoodie-dark': 'hoodie', 'raincoat-gold': 'raincoat',
+  tuxedo: 'tuxedo', 'hero-cape-blue': 'cape', 'royal-cape': 'cape', 'royal-armor': 'tuxedo',
+  'scarf-red': 'scarf', 'collar-bone': 'collar', 'glasses-dark': 'sunglasses',
+  'bone-cream': 'bone-toy', 'tennisball-green': 'ball', duck: 'duck', 'frisbee-red': 'frisbee',
+  'rope-red': 'rope', teddy: 'teddy', bowl: 'bowl', 'bottle-pink': 'shampoo', 'flower-pot': 'plant',
+};
 
 const rows: [CollectionCategory, string, Rarity, string, string[]][] = [
   ['Hüte','Kopfbedeckungen','Common','Shop und Erkundungsquests',['cap-red','beanie-dark','cowboy-star','chef-hat','party-cone','sleep-cap-blue','ranger-cap']],

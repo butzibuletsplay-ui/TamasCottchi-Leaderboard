@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronLeft, Clock3, Compass, Fish, LockKeyhole, MapPin, Minus, Pickaxe, Plus, Search, Sparkles, Trees } from 'lucide-react';
 import { LOCATIONS, WORLD_QUESTS, itemById, type FullPetData } from './data';
-import { COLLECTION_ITEMS } from './world';
+import { COLLECTION_ITEMS } from './collectionWorld';
 import { assetUrl, CHARACTER } from './assets';
 import { completeQuestAction, pickQuestPoint, startQuest } from './questEngine';
 import { MaterialArt } from './MaterialArt';

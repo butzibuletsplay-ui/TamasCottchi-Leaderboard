@@ -14,11 +14,11 @@ const compiled = await build({
 const { initialData, normalize, loadData, moodFor, rewardFor, STORE_KEY, BACKUP_KEY, BACKUP_KEY_21, SAVE_SCHEMA } =
   await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
 const worldBuild = await build({
-  entryPoints: ['artifacts/tamascottchi/src/game/world.ts', 'artifacts/tamascottchi/src/game/data.ts'],
+  entryPoints: ['artifacts/tamascottchi/src/game/collectionWorld.ts', 'artifacts/tamascottchi/src/game/data.ts'],
   bundle: true, write: false, format: 'esm', platform: 'node', outdir: 'test-build',
   define: { 'import.meta.env.BASE_URL': '"/"' },
 });
-const worldModule = await import(`data:text/javascript;base64,${Buffer.from(worldBuild.outputFiles.find((file) => file.path.includes('world.js')).text).toString('base64')}`);
+const worldModule = await import(`data:text/javascript;base64,${Buffer.from(worldBuild.outputFiles.find((file) => file.path.includes('collectionWorld.js')).text).toString('base64')}`);
 const dataModule = await import(`data:text/javascript;base64,${Buffer.from(worldBuild.outputFiles.find((file) => file.path.includes('data.js')).text).toString('base64')}`);
 const BACKUP_KEY_30 = dataModule.BACKUP_KEY_30;
 const BACKUP_KEY_40 = dataModule.BACKUP_KEY_40;
@@ -40,6 +40,12 @@ const worldEngineBuild = await build({
   define: { 'import.meta.env.BASE_URL': '"/"' },
 });
 const worldEngine = await import(`data:text/javascript;base64,${Buffer.from(worldEngineBuild.outputFiles[0].text).toString('base64')}`);
+const chestBuild = await build({
+  entryPoints: ['artifacts/tamascottchi/src/game/rewardChests.ts'],
+  bundle: true, write: false, format: 'esm', platform: 'node',
+  define: { 'import.meta.env.BASE_URL': '"/"' },
+});
+const chestModule = await import(`data:text/javascript;base64,${Buffer.from(chestBuild.outputFiles[0].text).toString('base64')}`);
 const timeBuild = await build({
   entryPoints: ['artifacts/tamascottchi/src/game/worldClock.ts'],
   bundle: true, write: false, format: 'esm', platform: 'node',
@@ -179,6 +185,41 @@ test('schema 5 saves get a 6.0 backup while retaining purchases and world progre
   assert.deepEqual(next.world.discoveries, ['bone-cream']);
   assert.deepEqual(next.world.completedQuests, ['park-bones']);
 });
+test('schema 6 saves keep a raw 6.1 backup and migrate unopened chest counts', () => {
+  storage.clear();
+  const old = { ...initialData(), saveSchema: 6, coins: 275, owned: ['ball'], world: { ...initialData().world, rewardChests: { rare: 2 } } };
+  const raw = JSON.stringify(old);
+  storage.set(STORE_KEY, raw);
+  const next = loadData();
+  assert.equal(storage.get(dataModule.BACKUP_KEY_61), raw);
+  assert.equal(next.saveSchema, SAVE_SCHEMA);
+  assert.deepEqual(next.world.rewardChests, { common: 0, uncommon: 0, rare: 2, epic: 0, legendary: 0 });
+  assert.equal(next.coins, 275);
+  assert.deepEqual(next.owned, ['ball']);
+});
+test('challenge chests consume once, award collection finds and convert duplicates to materials', () => {
+  const chestTiers = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
+  assert.deepEqual([...new Set(dataModule.CHALLENGES.map((challenge) => challenge.chestTier))].sort(), [...chestTiers].sort());
+  let data = normalize({ ...initialData(), world: { ...initialData().world, rewardChests: Object.fromEntries(chestTiers.map((tier) => [tier, 1])) } });
+  for (const tier of chestTiers) {
+    const opened = chestModule.openRewardChest(data, tier, () => 0);
+    assert.ok(opened, `${tier} chest should open`);
+    assert.equal(opened.data.world.rewardChests[tier], 0);
+    assert.equal(opened.data.coins, data.coins + chestModule.CHEST_DEFINITIONS[tier].coins);
+    assert.equal(opened.data.xp, data.xp + chestModule.CHEST_DEFINITIONS[tier].xp);
+    assert.ok(opened.reward.itemName);
+    data = opened.data;
+  }
+  const commonFinds = worldModule.COLLECTION_ITEMS.filter((item) => item.rarity === 'Common').map((item) => item.id);
+  const fullAlbum = normalize({
+    ...initialData(), collectionIds: commonFinds, world: { ...initialData().world, discoveries: commonFinds, rewardChests: { common: 1 } },
+  });
+  const duplicate = chestModule.openRewardChest(fullAlbum, 'common', () => 0);
+  assert.equal(duplicate.reward.isCollectionFind, false);
+  assert.equal(duplicate.reward.itemId, 'wood');
+  assert.equal(duplicate.data.inventory.wood, (fullAlbum.inventory.wood || 0) + 2);
+  assert.equal(chestModule.openRewardChest(duplicate.data, 'common'), null);
+});
 test('malformed quantities are clamped without dropping valid possessions', () => {
   const next = normalize({ ...initialData(), inventory: { wood: -5, cloth: 1.8, kibble: 'bad' }, owned: ['ball'] });
   assert.equal(next.inventory.wood, 0);
@@ -275,6 +316,11 @@ test('world and collection assets have unique IDs and complete starter quests', 
   assert.equal(COLLECTION_CATEGORIES.length, 8);
   assert.ok(COLLECTION_ITEMS.every((item) => existsSync(`artifacts/tamascottchi/public/assets/collections/items/${item.id}.png`)));
   assert.ok(COLLECTION_REWARDS.every((reward) => reward.items.every((id) => COLLECTION_ITEMS.some((item) => item.id === id))));
+  for (const tier of ['common', 'uncommon', 'rare', 'epic', 'legendary']) {
+    assert.ok(existsSync(`artifacts/tamascottchi/public/assets/rewards/frames/${tier}.png`), `missing ${tier} rarity frame`);
+    assert.ok(existsSync(`artifacts/tamascottchi/public/assets/rewards/chests/${tier}-closed.png`), `missing closed ${tier} chest`);
+    assert.ok(existsSync(`artifacts/tamascottchi/public/assets/rewards/chests/${tier}-open.png`), `missing open ${tier} chest`);
+  }
 });
 test('all wearable layers have an anchor fit for every mood and valid image assets', () => {
   const { WEARABLES, BASE_CONFIG, resolveFit, layerSrc } = outfitModule;

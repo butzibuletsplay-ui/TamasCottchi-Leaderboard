@@ -8,6 +8,7 @@ export type Room = 'Wohnzimmer' | 'Küche' | 'Bad' | 'Schlafzimmer' | 'Spielzimm
 export type NeedKey = 'hunger' | 'glueck' | 'energie' | 'sauberkeit';
 export type GameRecord = { id: string; game: GameId; score: number; date: number };
 export type ItemType = 'food' | 'toy' | 'accessory' | 'room' | 'background' | 'material';
+export type RewardChestTier = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
 export type Item = {
   id: string; name: string; icon: string; price: number; type: ItemType; effect?: NeedKey; amount?: number;
   effects?: Partial<Record<NeedKey, number>>; unlockLevel?: number; img?: string; desc?: string;
@@ -59,6 +60,7 @@ export type PetData = {
     worldEventClaimedDay?: string;
     fishingRewardsToday?: number;
     lastKnownWorldTime?: number;
+    rewardChests?: Partial<Record<RewardChestTier, number>>;
     petPosition: { x: number; y: number };
   };
   collectionIds?: string[];
@@ -67,15 +69,16 @@ export type FullPetData = PetData
   & Required<Pick<PetData, 'personality' | 'visitedRooms' | 'routine' | 'stylesWorn' | 'world' | 'collectionIds' | 'journal' | 'roomPlacements' | 'tutorialSeen'>>
   & { world: Required<NonNullable<PetData['world']>> & Required<Pick<NonNullable<PetData['world']>,
     'resourceCollectedAt' | 'worldDay' | 'dailyGoals' | 'dailyMetrics' | 'dailyClaimed' | 'dailyVisitedLocations' |
-    'dailyMasteryGained' | 'weeklyKey' | 'weeklyMetrics' | 'weeklyClaimed' | 'areaMastery' | 'worldEvent' | 'worldEventClaimedDay' | 'fishingRewardsToday' | 'lastKnownWorldTime'>> };
+    'dailyMasteryGained' | 'weeklyKey' | 'weeklyMetrics' | 'weeklyClaimed' | 'areaMastery' | 'worldEvent' | 'worldEventClaimedDay' | 'fishingRewardsToday' | 'lastKnownWorldTime' | 'rewardChests'>> };
 
 export const STORE_KEY = 'tamascottchi-save-v1';
 export const BACKUP_KEY = 'tamascottchi-save-v1-backup-before-2.0';
 export const BACKUP_KEY_21 = 'tamascottchi-save-v1-backup-before-2.1';
 export const BACKUP_KEY_30 = 'tamascottchi-save-v1-backup-before-3.0';
-export const SAVE_SCHEMA = 6;
 export const BACKUP_KEY_40 = 'tamascottchi-save-v1-backup-before-4.0';
 export const BACKUP_KEY_60 = 'tamascottchi-save-v1-backup-before-6.0';
+export const BACKUP_KEY_61 = 'tamascottchi-save-v1-backup-before-6.1';
+export const SAVE_SCHEMA = 7;
 export const LOCATIONS = [
   { id: 'park', name: 'Scottchi Park', level: 1, point: { x: 25, y: 29 }, desc: 'Der erste Spaziergang: Wege, Wiesen und verlorene Knochen.' },
   { id: 'city', name: 'Scottchi City', level: 3, point: { x: 45, y: 53 }, desc: 'Ein lebendiger Platz für kleine Besorgungen.' },
@@ -202,13 +205,13 @@ export const ITEMS: Item[] = [
 ];
 export const itemById = (id: string) => ITEMS.find((i) => i.id === id);
 
-export const CHALLENGES: { id: string; game: GameId; title: string; test: (score: number, m: Record<string, number>) => boolean; coins: number; xp: number }[] = [
-  { id: 'catch-30', game: 'catch', title: 'Fange 30 Snacks ohne Fehler', test: (_s, m) => (m.maxClean || 0) >= 30, coins: 30, xp: 25 },
-  { id: 'catch-600', game: 'catch', title: 'Knacke 600 Punkte in Snack Catch', test: (s) => s >= 600, coins: 25, xp: 20 },
-  { id: 'turbo-15', game: 'turbo', title: 'Erreiche 15 Treffer hintereinander', test: (_s, m) => (m.maxCombo || 0) >= 15, coins: 30, xp: 25 },
-  { id: 'memory-12', game: 'memory', title: 'Gewinne Memory mit weniger als 12 Versuchen', test: (_s, m) => m.won === 1 && m.attempts < 12, coins: 30, xp: 25 },
-  { id: 'run-60', game: 'run', title: 'Überlebe 60 Sekunden in Scottchi Run', test: (_s, m) => (m.seconds || 0) >= 60, coins: 35, xp: 30 },
-  { id: 'bone-5', game: 'bone', title: 'Finde den Knochen 5-mal in Folge', test: (_s, m) => (m.maxStreak || 0) >= 5, coins: 30, xp: 25 },
+export const CHALLENGES: { id: string; game: GameId; title: string; test: (score: number, m: Record<string, number>) => boolean; coins: number; xp: number; chestTier: RewardChestTier }[] = [
+  { id: 'catch-30', game: 'catch', title: 'Fange 30 Snacks ohne Fehler', test: (_s, m) => (m.maxClean || 0) >= 30, coins: 30, xp: 25, chestTier: 'rare' },
+  { id: 'catch-600', game: 'catch', title: 'Knacke 600 Punkte in Snack Catch', test: (s) => s >= 600, coins: 25, xp: 20, chestTier: 'common' },
+  { id: 'turbo-15', game: 'turbo', title: 'Erreiche 15 Treffer hintereinander', test: (_s, m) => (m.maxCombo || 0) >= 15, coins: 30, xp: 25, chestTier: 'epic' },
+  { id: 'memory-12', game: 'memory', title: 'Gewinne Memory mit weniger als 12 Versuchen', test: (_s, m) => m.won === 1 && m.attempts < 12, coins: 30, xp: 25, chestTier: 'epic' },
+  { id: 'run-60', game: 'run', title: 'Überlebe 60 Sekunden in Scottchi Run', test: (_s, m) => (m.seconds || 0) >= 60, coins: 35, xp: 30, chestTier: 'legendary' },
+  { id: 'bone-5', game: 'bone', title: 'Finde den Knochen 5-mal in Folge', test: (_s, m) => (m.maxStreak || 0) >= 5, coins: 30, xp: 25, chestTier: 'uncommon' },
 ];
 
 /** Bounded rewards per round: coins and XP grow with score but are capped; after 15 rounds a day they are halved. */
@@ -243,7 +246,7 @@ export const initialData = (): FullPetData => ({
     worldDay: worldDayKey(Date.now()), dailyGoals: [], dailyMetrics: {}, dailyClaimed: [], dailyVisitedLocations: [],
      dailyMasteryGained: 0, weeklyKey: worldWeekKey(Date.now()), weeklyMetrics: {}, weeklyClaimed: [],
      areaMastery: {}, worldEvent: null, worldEventClaimedDay: '',
-    fishingRewardsToday: 0, lastKnownWorldTime: Date.now(), petPosition: { x: 32, y: 38 },
+    fishingRewardsToday: 0, lastKnownWorldTime: Date.now(), rewardChests: {}, petPosition: { x: 32, y: 38 },
    },
   journal: [], roomPlacements: {}, tutorialSeen: false, collectionIds: [],
 });
@@ -322,6 +325,7 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
       worldEventClaimedDay: typeof parsed.world?.worldEventClaimedDay === 'string' ? parsed.world.worldEventClaimedDay : '',
       fishingRewardsToday: Math.max(0, Math.floor(num(parsed.world?.fishingRewardsToday, 0))),
       lastKnownWorldTime: Math.max(num(parsed.world?.lastKnownWorldTime, now), num(parsed.lastUpdated, now)),
+      rewardChests: Object.fromEntries((['common', 'uncommon', 'rare', 'epic', 'legendary'] as const).map((tier) => [tier, Math.max(0, Math.floor(num(parsed.world?.rewardChests?.[tier], 0)))])),
       petPosition: {
         x: Math.max(3, Math.min(97, num(parsed.world?.petPosition?.x, d.world.petPosition.x))),
         y: Math.max(3, Math.min(97, num(parsed.world?.petPosition?.y, d.world.petPosition.y))),
@@ -361,6 +365,7 @@ export function loadData(): FullPetData {
     if ((parsed.saveSchema || 0) < 4 && !localStorage.getItem(BACKUP_KEY_30)) localStorage.setItem(BACKUP_KEY_30, raw);
     if ((parsed.saveSchema || 0) < 5 && !localStorage.getItem(BACKUP_KEY_40)) localStorage.setItem(BACKUP_KEY_40, raw);
     if ((parsed.saveSchema || 0) < 6 && !localStorage.getItem(BACKUP_KEY_60)) localStorage.setItem(BACKUP_KEY_60, raw);
+    if ((parsed.saveSchema || 0) < 7 && !localStorage.getItem(BACKUP_KEY_61)) localStorage.setItem(BACKUP_KEY_61, raw);
     return normalize(parsed);
   } catch (cause) {
     // Never replace an unreadable save with a new game through the autosave effect.
