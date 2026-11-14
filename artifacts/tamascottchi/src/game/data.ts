@@ -4,6 +4,7 @@ import type { GameId } from './engine';
 import { absenceDecay, initialPersonality, type Personality } from './personality';
 import { worldDayKey, worldWeekKey } from './worldClock';
 import { COLLECTION_ITEMS, COLLECTION_ITEM_LINKS } from './collectionWorld';
+import { CONSUMABLE_TOY_IDS } from './toyRules';
 import {
   CHEST_TIERS, MAX_PLAYER_XP, MINIGAME_REWARD_DIVISORS, createMinigameDailyState, migrateLegacyPlayerXp,
   normalizeMinigameDailyState, playerLevelForXp, rewardForMinigame, type MinigameDailyState, type RewardChestTier,
@@ -46,6 +47,7 @@ export type PetData = {
   stylesWorn?: string[];
   world?: {
     discoveredLocations: string[];
+    legacyUnlockedLocations?: string[];
     completedQuests: string[];
     discoveries: string[];
     questProgress: Record<string, number>;
@@ -92,7 +94,7 @@ export type FullPetData = PetData
     'resourceCollectedAt' | 'worldDay' | 'dailyGoals' | 'dailyMetrics' | 'dailyClaimed' | 'dailyVisitedLocations' |
     'dailyMasteryGained' | 'weeklyKey' | 'weeklyMetrics' | 'weeklyClaimed' | 'areaMastery' | 'worldEvent' | 'worldEventClaimedDay' |
     'fishingRewardsToday' | 'lastKnownWorldTime' | 'rewardChests' | 'keys' | 'chestInstances' | 'openedChestIds' | 'dailyChestCount' | 'dailyChestLocations' |
-    'regionDailyProgress' | 'weeklyChestClaimed' | 'milestoneChestsClaimed' | 'pendingDiscoveries'>> };
+     'regionDailyProgress' | 'weeklyChestClaimed' | 'milestoneChestsClaimed' | 'pendingDiscoveries' | 'legacyUnlockedLocations'>> };
 
 export const STORE_KEY = 'tamascottchi-save-v1';
 export const BACKUP_KEY = 'tamascottchi-save-v1-backup-before-2.0';
@@ -105,15 +107,28 @@ export const BACKUP_KEY_62 = 'tamascottchi-save-v1-backup-before-6.2';
 export const BACKUP_KEY_63 = 'tamascottchi-save-v1-backup-before-6.3';
 export const BACKUP_KEY_64 = 'tamascottchi-save-v1-backup-before-6.4';
 export const BACKUP_KEY_65 = 'tamascottchi-save-v1-backup-before-6.5';
-export const SAVE_SCHEMA = 11;
+export const BACKUP_KEY_66 = 'tamascottchi-save-v1-backup-before-6.6';
+export const SAVE_SCHEMA = 12;
 export const LOCATIONS = [
-  { id: 'park', name: 'Scottchi Park', level: 1, point: { x: 25, y: 29 }, desc: 'Der erste Spaziergang: Wege, Wiesen und verlorene Knochen.' },
-  { id: 'city', name: 'Scottchi City', level: 3, point: { x: 45, y: 53 }, desc: 'Ein lebendiger Platz für kleine Besorgungen.' },
-  { id: 'forest', name: 'Scottchi Forest', level: 5, point: { x: 78, y: 20 }, desc: 'Lichter zwischen den Bäumen und versteckte Schätze.' },
-  { id: 'beach', name: 'Scottchi Beach', level: 8, point: { x: 79, y: 78 }, desc: 'Muscheln, warme Sonne und frische Seeluft.' },
-  { id: 'cave', name: 'Crystal Cave', level: 12, point: { x: 14, y: 81 }, desc: 'Eine geheimnisvolle Höhle mit seltenen Kristallen.' },
-  { id: 'mountain', name: 'Mystery Mountain', level: 20, point: { x: 50, y: 8 }, desc: 'Der höchste Weg wartet auf erfahrene Entdecker.' },
+  { id: 'park', name: 'Scottchi Park', level: 1, stageLevel: 1, point: { x: 25, y: 29 }, desc: 'Der erste Spaziergang: Wege, Wiesen und verlorene Knochen.' },
+  { id: 'city', name: 'Scottchi City', level: 35, stageLevel: 5, point: { x: 45, y: 53 }, desc: 'Ein lebendiger Platz für kleine Besorgungen.' },
+  { id: 'forest', name: 'Scottchi Forest', level: 100, stageLevel: 9, point: { x: 78, y: 20 }, desc: 'Lichter zwischen den Bäumen und versteckte Schätze.' },
+  { id: 'beach', name: 'Scottchi Beach', level: 220, stageLevel: 13, point: { x: 79, y: 78 }, desc: 'Muscheln, warme Sonne und frische Seeluft.' },
+  { id: 'cave', name: 'Crystal Cave', level: 350, stageLevel: 17, point: { x: 14, y: 81 }, desc: 'Eine geheimnisvolle Höhle mit seltenen Kristallen.' },
+  { id: 'mountain', name: 'Mystery Mountain', level: 500, stageLevel: 20, point: { x: 50, y: 8 }, desc: 'Der höchste Weg wartet auf erfahrene Entdecker.' },
 ] as const;
+const LEGACY_LOCATION_LEVELS: Record<string, number> = { park: 1, city: 3, forest: 5, beach: 8, cave: 12, mountain: 20 };
+export function isWorldLocationUnlocked(data: Pick<FullPetData, 'world'>, locationId: string, playerLevel: number): boolean {
+  const place = LOCATIONS.find((entry) => entry.id === locationId);
+  if (!place) return false;
+  const world = data.world;
+  const questIds = WORLD_QUESTS.filter((quest) => quest.place === locationId).map((quest) => quest.id);
+  return playerLevel >= place.level
+    || world.discoveredLocations.includes(locationId)
+    || (world.legacyUnlockedLocations || []).includes(locationId)
+    || (world.areaMastery[locationId] || 0) > 0
+    || questIds.some((id) => world.completedQuests.includes(id) || (world.questProgress[id] || 0) > 0);
+}
 export type WorldQuestDefinition = {
   id: string; place: string; name: string; desc: string; target: number; coins: number; xp: number;
   discoveries: string[]; loot: string; sequence?: number[]; requiresAction?: string; itemReward?: string;
@@ -150,14 +165,14 @@ export const ITEMS: Item[] = [
   { id: 'special', name: 'Spezialmenü', icon: '✦', img: itemAsset('special'), price: 50, type: 'food', effect: 'hunger', amount: 60 },
   { id: 'soap', name: 'Schaumbad', icon: '◌', img: itemAsset('soap'), price: 9, type: 'food', effect: 'sauberkeit', amount: 35 },
   // toys (existing ids kept)
-  { id: 'ball', name: 'Tennisball', icon: '●', price: 22, type: 'toy', img: toyUrl('tennisball'), desc: 'Werfen und Scottchi rennt hinterher' },
-  { id: 'bone-toy', name: 'Kauknochen', icon: '⌁', price: 35, type: 'toy', img: toyUrl('bone'), desc: 'Knabbern macht richtig Laune' },
-  { id: 'duck', name: 'Quietscheente', icon: '◉', price: 18, type: 'toy', img: toyUrl('duck'), desc: 'Quietscht beim Antippen' },
-  { id: 'rope', name: 'Zerrseil', icon: '≈', price: 26, type: 'toy', img: toyUrl('rope'), desc: 'Tauziehen: viel Spaß, kostet Energie' },
-  { id: 'frisbee', name: 'Frisbee', icon: '◎', price: 40, type: 'toy', img: toyUrl('frisbee'), desc: 'Werfen. Taucht auch in Snack Catch als x2-Bonus auf' },
-  { id: 'teddy', name: 'Teddybär', icon: '●', price: 38, type: 'toy', img: toyUrl('teddy'), desc: 'Kuscheln. Im Schlafzimmer erholt sich Energie schneller' },
+  { id: 'ball', name: 'Tennisball', icon: '●', price: 22, type: 'toy', img: toyUrl('tennisball'), desc: 'Werfen und Scottchi rennt hinterher', stackable: true },
+  { id: 'bone-toy', name: 'Kauknochen', icon: '⌁', price: 35, type: 'toy', img: toyUrl('bone'), desc: 'Knabbern macht richtig Laune', stackable: true },
+  { id: 'duck', name: 'Quietscheente', icon: '◉', price: 18, type: 'toy', img: toyUrl('duck'), desc: 'Quietscht beim Antippen', stackable: true },
+  { id: 'rope', name: 'Zerrseil', icon: '≈', price: 26, type: 'toy', img: toyUrl('rope'), desc: 'Tauziehen: viel Spaß, kostet Energie', stackable: true },
+  { id: 'frisbee', name: 'Frisbee', icon: '◎', price: 40, type: 'toy', img: toyUrl('frisbee'), desc: 'Werfen. Taucht auch in Snack Catch als x2-Bonus auf', stackable: true },
+  { id: 'teddy', name: 'Teddybär', icon: '●', price: 38, type: 'toy', img: toyUrl('teddy'), desc: 'Kuscheln. Im Schlafzimmer erholt sich Energie schneller', stackable: true },
   { id: 'bowl', name: 'Futternapf', icon: '◡', price: 20, type: 'toy', img: toyUrl('bowl'), desc: 'Jede Mahlzeit sättigt 25 % mehr' },
-  { id: 'shampoo', name: 'Shampoo', icon: '◌', price: 30, type: 'toy', img: toyUrl('shampoo'), desc: 'Einmal im Bad benutzen. Die Flasche wird dabei verbraucht.' },
+  { id: 'shampoo', name: 'Shampoo', icon: '◌', price: 30, type: 'toy', img: toyUrl('shampoo'), desc: 'Einmal im Bad benutzen. Die Flasche wird dabei verbraucht.', stackable: true },
   // clothing
   { id: 'baseballcap', name: 'Baseballcap', icon: '△', price: 28, type: 'accessory', img: hatUrl('baseballcap') },
   { id: 'beanie', name: 'Strickmütze', icon: '△', price: 26, type: 'accessory', img: hatUrl('beanie') },
@@ -209,14 +224,14 @@ export const ITEMS: Item[] = [
   { id: 'artifact-dust', name: 'Artefaktstaub', icon: '✧', img: itemAsset('artifact-dust'), price: 0, type: 'material', rarity: 'Selten', origin: 'Doppelte Artefakte und Wochenaufträge', purpose: 'Wird für Artefakt-Upgrades eingesetzt.', stackable: true },
   { id: 'epic-essence', name: 'Epische Essenz', icon: '✦', price: 0, type: 'material', rarity: 'Episch', origin: 'Epische Artefakt-Duplikate und Meilensteine', purpose: 'Wertvolle Zutat für epische Artefakt-Upgrades.', stackable: true },
   { id: 'legendary-essence', name: 'Legendäre Essenz', icon: '✧', price: 0, type: 'material', rarity: 'Legendär', origin: 'Legendäre Artefakt-Duplikate und langfristige Erfolge', purpose: 'Seltene Zutat für legendäre Artefakt-Upgrades.', stackable: true },
-  { id: 'crafted-toy', name: 'Wald-Wurfseil', icon: '🪢', price: 0, type: 'toy', img: toyUrl('rope'), desc: 'Ein handgemachtes Zerrspielzeug aus Holz und Stoff.', rarity: 'Ungewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: false, craftOnly: true },
+  { id: 'crafted-toy', name: 'Wald-Wurfseil', icon: '🪢', price: 0, type: 'toy', img: toyUrl('rope'), desc: 'Ein handgemachtes Zerrspielzeug aus Holz und Stoff.', rarity: 'Ungewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: true, craftOnly: true },
   { id: 'shell-decor', name: 'Muschel-Mobile', icon: '🐚', price: 0, type: 'room', desc: 'Ein selbstgemachtes Mobile aus Strandfunden.', rarity: 'Selten', origin: 'Werkstatt · Crafting', purpose: 'Dekoration für dein Zimmer', stackable: false, craftOnly: true },
   { id: 'magic-treat', name: 'Kristall-Leckerli', icon: '✨', price: 0, type: 'food', amount: 1, effects: { glueck: 18, energie: 8 }, desc: 'Ein glitzernder Snack, der Scottchi aufmuntert.', rarity: 'Episch', origin: 'Werkstatt · Crafting', purpose: 'Einmalig Laune und Energie auffüllen', stackable: true, craftOnly: true },
-  { id: 'crafted-shell-rattle', name: 'Muschel-Rassel', icon: '◉', price: 0, type: 'toy', img: toyUrl('rope'), desc: 'Ein sanft klingendes Zerrspielzeug aus Muscheln.', rarity: 'Ungewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: false, craftOnly: true },
-  { id: 'crafted-gem-ball', name: 'Kristall-Ball', icon: '●', price: 0, type: 'toy', img: toyUrl('tennisball'), desc: 'Ein federnder Ball mit schimmerndem Kern.', rarity: 'Selten', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: false, craftOnly: true },
-  { id: 'crafted-bone-puzzle', name: 'Knochen-Puzzle', icon: '●', price: 0, type: 'toy', img: toyUrl('bone'), desc: 'Ein robustes Suchspiel aus Knochenfunden.', rarity: 'Ungewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: false, craftOnly: true },
-  { id: 'crafted-leaf-frisbee', name: 'Blatt-Frisbee', icon: '◎', price: 0, type: 'toy', img: toyUrl('frisbee'), desc: 'Ein leichtes Wurfspielzeug aus gepressten Blättern.', rarity: 'Gewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: false, craftOnly: true },
-  { id: 'crafted-fossil-chew', name: 'Fossil-Kauknochen', icon: '●', price: 0, type: 'toy', img: toyUrl('bone'), desc: 'Ein seltenes Kauspielzeug mit Fossil-Muster.', rarity: 'Selten', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: false, craftOnly: true },
+  { id: 'crafted-shell-rattle', name: 'Muschel-Rassel', icon: '◉', price: 0, type: 'toy', img: toyUrl('rope'), desc: 'Ein sanft klingendes Zerrspielzeug aus Muscheln.', rarity: 'Ungewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: true, craftOnly: true },
+  { id: 'crafted-gem-ball', name: 'Kristall-Ball', icon: '●', price: 0, type: 'toy', img: toyUrl('tennisball'), desc: 'Ein federnder Ball mit schimmerndem Kern.', rarity: 'Selten', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: true, craftOnly: true },
+  { id: 'crafted-bone-puzzle', name: 'Knochen-Puzzle', icon: '●', price: 0, type: 'toy', img: toyUrl('bone'), desc: 'Ein robustes Suchspiel aus Knochenfunden.', rarity: 'Ungewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: true, craftOnly: true },
+  { id: 'crafted-leaf-frisbee', name: 'Blatt-Frisbee', icon: '◎', price: 0, type: 'toy', img: toyUrl('frisbee'), desc: 'Ein leichtes Wurfspielzeug aus gepressten Blättern.', rarity: 'Gewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: true, craftOnly: true },
+  { id: 'crafted-fossil-chew', name: 'Fossil-Kauknochen', icon: '●', price: 0, type: 'toy', img: toyUrl('bone'), desc: 'Ein seltenes Kauspielzeug mit Fossil-Muster.', rarity: 'Selten', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: true, craftOnly: true },
   { id: 'crafted-berry-bone', name: 'Beeren-Knochen-Keks', icon: '●', price: 0, type: 'food', amount: 18, effect: 'hunger', desc: 'Ein knuspriger Snack mit Waldbeeren.', rarity: 'Gewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Wird verbraucht und füllt Sattheit.', stackable: true, craftOnly: true },
   { id: 'crafted-mushroom-biscuit', name: 'Pilz-Keks', icon: '●', price: 0, type: 'food', amount: 22, effect: 'hunger', desc: 'Ein herzhafter Keks aus Waldpilzen.', rarity: 'Ungewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Wird verbraucht und füllt Sattheit.', stackable: true, craftOnly: true },
   { id: 'crafted-fish-snack', name: 'Fisch-Snack', icon: '●', price: 0, type: 'food', amount: 28, effect: 'hunger', desc: 'Ein kräftigender Snack aus frischem Fang.', rarity: 'Ungewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Wird verbraucht und füllt Sattheit.', stackable: true, craftOnly: true },
@@ -228,7 +243,7 @@ export const ITEMS: Item[] = [
   { id: 'crafted-driftwood-shelf', name: 'Treibholz-Regal', icon: '▰', price: 0, type: 'room', desc: 'Ein kleines Regal aus glatt geschliffenem Treibholz.', rarity: 'Selten', origin: 'Werkstatt · Crafting', purpose: 'Dekoration für dein Zimmer', stackable: false, craftOnly: true },
   { id: 'crafted-pearl-mirror', name: 'Perlen-Spiegel', icon: '◉', price: 0, type: 'room', desc: 'Ein glänzender Spiegel mit Muschelrand.', rarity: 'Episch', origin: 'Werkstatt · Crafting', purpose: 'Dekoration für dein Zimmer', stackable: false, craftOnly: true },
   { id: 'crafted-mushroom-lamp', name: 'Pilz-Licht', icon: '✦', price: 0, type: 'room', desc: 'Ein freundliches Licht aus einer leuchtenden Höhlenkappe.', rarity: 'Ungewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Dekoration für dein Zimmer', stackable: false, craftOnly: true },
-  { id: 'crafted-ore-toy', name: 'Erz-Klapper', icon: '●', price: 0, type: 'toy', img: toyUrl('duck'), desc: 'Ein robustes Klapperspielzeug aus leichtem Berg-Erz.', rarity: 'Selten', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: false, craftOnly: true },
+  { id: 'crafted-ore-toy', name: 'Erz-Klapper', icon: '●', price: 0, type: 'toy', img: toyUrl('duck'), desc: 'Ein robustes Klapperspielzeug aus leichtem Berg-Erz.', rarity: 'Selten', origin: 'Werkstatt · Crafting', purpose: 'Spielen und Laune steigern', stackable: true, craftOnly: true },
   { id: 'crafted-fossil-treat', name: 'Fossil-Keks', icon: '●', price: 0, type: 'food', amount: 26, effect: 'hunger', desc: 'Ein knuspriger Keks in Knochenform.', rarity: 'Selten', origin: 'Werkstatt · Crafting', purpose: 'Wird verbraucht und füllt Sattheit.', stackable: true, craftOnly: true },
   { id: 'crafted-berry-juice', name: 'Beeren-Smoothie', icon: '●', price: 0, type: 'food', amount: 16, effect: 'hunger', effects: { energie: 8 }, desc: 'Ein fruchtiger Energieschub für unterwegs.', rarity: 'Gewöhnlich', origin: 'Werkstatt · Crafting', purpose: 'Wird verbraucht und füllt Sattheit und Energie.', stackable: true, craftOnly: true },
   { id: 'crafted-ocean-decor', name: 'Strand-Mobile', icon: '◉', price: 0, type: 'room', desc: 'Ein Mobile aus Perlen, Muscheln und Treibholz.', rarity: 'Episch', origin: 'Werkstatt · Crafting', purpose: 'Dekoration für dein Zimmer', stackable: false, craftOnly: true },
@@ -291,7 +306,7 @@ export const initialData = (): FullPetData => ({
   personality: initialPersonality(), visitedRooms: ['Wohnzimmer'],
   routine: { greetedDate: '', surpriseDate: today(), surprises: 0, lastSeen: Date.now() }, stylesWorn: [],
    world: {
-    discoveredLocations: [], completedQuests: [], discoveries: [], questProgress: {}, claimedRewards: [],
+     discoveredLocations: [], legacyUnlockedLocations: [], completedQuests: [], discoveries: [], questProgress: {}, claimedRewards: [],
     activeQuests: [], questFinds: {}, questStages: {}, resourceCollectedAt: {},
     worldDay: worldDayKey(Date.now()), dailyGoals: [], dailyMetrics: {}, dailyClaimed: [], dailyVisitedLocations: [],
      dailyMasteryGained: 0, weeklyKey: worldWeekKey(Date.now()), weeklyMetrics: {}, weeklyClaimed: [],
@@ -351,9 +366,11 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
     if (Object.values(highscores).some((score) => (score || 0) >= 1000)) milestoneChestsClaimed.add('score-1000');
     if (Object.values(highscores).some((score) => (score || 0) >= 5000)) milestoneChestsClaimed.add('score-5000');
   }
-  // Older saves stored reusable shampoo as an owned toy. Give it one usable dose
-  // rather than deleting the purchase when migrating to the 4.0 consumable model.
-  if (parsed.owned?.includes('shampoo') && !inventory.shampoo) inventory.shampoo = 1;
+  if ((parsed.saveSchema || 0) < SAVE_SCHEMA) {
+    for (const id of CONSUMABLE_TOY_IDS) {
+      if (parsed.owned?.includes(id) && parsed.inventory?.[id] === undefined) inventory[id] = 1;
+    }
+  }
   const roomPlacements = { ...(parsed.roomPlacements || {}) };
   for (const [index, id] of (parsed.roomItems || []).entries()) {
     if (!roomPlacements[id]) roomPlacements[id] = { x: 16 + (index % 5) * 16, y: 67 + (Math.floor(index / 5) % 2) * 8 };
@@ -362,6 +379,16 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
   const normalizedXp = (parsed.saveSchema || 0) < 10
     ? migrateLegacyPlayerXp(parsedXp)
     : Math.min(MAX_PLAYER_XP, parsedXp);
+  const legacyUnlockedLocations = new Set(
+    (Array.isArray(parsed.world?.legacyUnlockedLocations) ? parsed.world.legacyUnlockedLocations : [])
+      .filter((id) => LOCATIONS.some((place) => place.id === id)),
+  );
+  if ((parsed.saveSchema || 0) < SAVE_SCHEMA) {
+    const oldPlayerLevel = playerLevelForXp(normalizedXp);
+    for (const [id, requiredLevel] of Object.entries(LEGACY_LOCATION_LEVELS)) {
+      if (oldPlayerLevel >= requiredLevel) legacyUnlockedLocations.add(id);
+    }
+  }
   return {
     ...d, ...parsed,
     version: 1, saveSchema: SAVE_SCHEMA,
@@ -391,6 +418,7 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
     stylesWorn: Array.isArray(parsed.stylesWorn) ? parsed.stylesWorn : [],
     world: {
       discoveredLocations: [...new Set(parsed.world?.discoveredLocations || [])],
+      legacyUnlockedLocations: [...legacyUnlockedLocations],
       completedQuests: [...new Set(parsed.world?.completedQuests || [])],
       discoveries: [...new Set(parsed.world?.discoveries || [])],
       questProgress: { ...(parsed.world?.questProgress || {}) },
@@ -482,6 +510,7 @@ export function loadData(): FullPetData {
     if ((parsed.saveSchema || 0) < 9 && !localStorage.getItem(BACKUP_KEY_63)) localStorage.setItem(BACKUP_KEY_63, raw);
     if ((parsed.saveSchema || 0) < 10 && !localStorage.getItem(BACKUP_KEY_64)) localStorage.setItem(BACKUP_KEY_64, raw);
     if ((parsed.saveSchema || 0) < 11 && !localStorage.getItem(BACKUP_KEY_65)) localStorage.setItem(BACKUP_KEY_65, raw);
+    if ((parsed.saveSchema || 0) < 12 && !localStorage.getItem(BACKUP_KEY_66)) localStorage.setItem(BACKUP_KEY_66, raw);
     return normalize(parsed);
   } catch (cause) {
     // Never replace an unreadable save with a new game through the autosave effect.

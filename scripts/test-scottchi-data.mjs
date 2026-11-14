@@ -22,6 +22,7 @@ const worldModule = await import(`data:text/javascript;base64,${Buffer.from(worl
 const dataModule = await import(`data:text/javascript;base64,${Buffer.from(worldBuild.outputFiles.find((file) => file.path.includes('data.js')).text).toString('base64')}`);
 const BACKUP_KEY_30 = dataModule.BACKUP_KEY_30;
 const BACKUP_KEY_40 = dataModule.BACKUP_KEY_40;
+const BACKUP_KEY_66 = dataModule.BACKUP_KEY_66;
 const questBuild = await build({
   entryPoints: ['artifacts/tamascottchi/src/game/questEngine.ts'],
   bundle: true, write: false, format: 'esm', platform: 'node',
@@ -34,6 +35,11 @@ const craftBuild = await build({
   define: { 'import.meta.env.BASE_URL': '"/"' },
 });
 const craftingModule = await import(`data:text/javascript;base64,${Buffer.from(craftBuild.outputFiles[0].text).toString('base64')}`);
+const toyBuild = await build({
+  entryPoints: ['artifacts/tamascottchi/src/game/toyRules.ts'],
+  bundle: true, write: false, format: 'esm', platform: 'node',
+});
+const toyModule = await import(`data:text/javascript;base64,${Buffer.from(toyBuild.outputFiles[0].text).toString('base64')}`);
 const worldEngineBuild = await build({
   entryPoints: ['artifacts/tamascottchi/src/game/worldEngine.ts'],
   bundle: true, write: false, format: 'esm', platform: 'node',
@@ -89,11 +95,44 @@ test('legacy possessions, currency, achievements and records survive normalizati
     records: [{ id: 'legacy', game: 'catch', score: 321, date: Date.now() }],
   };
   const actual = normalize(legacy);
-  for (const key of ['coins', 'xp', 'inventory', 'owned', 'equipped', 'roomItems', 'activeBackground', 'claimedAchievements', 'records']) {
+  for (const key of ['coins', 'xp', 'owned', 'equipped', 'roomItems', 'activeBackground', 'claimedAchievements', 'records']) {
     assert.deepEqual(actual[key], legacy[key], key);
   }
+  assert.deepEqual(actual.inventory, { kibble: 17, soap: 8, ball: 1 });
   assert.equal(actual.highscores.catch, 321);
   assert.equal(actual.saveSchema, SAVE_SCHEMA);
+});
+test('consumable toys decrement one at a time and cannot consume collectible artifacts', () => {
+  const inventory = { ball: 5, teddy: 1, 'artifact-dust': 8 };
+  const afterUse = toyModule.consumeToyStock(inventory, 'ball');
+  assert.equal(afterUse.ball, 4);
+  assert.equal(toyModule.consumeToyStock(afterUse, 'ball').ball, 3);
+  assert.equal(toyModule.consumeToyStock({ ball: 0 }, 'ball'), null);
+  assert.equal(toyModule.consumeToyStock(inventory, 'artifact-dust'), null);
+  assert.equal(toyModule.consumeToyStock(inventory, worldModule.COLLECTION_ITEMS[0].id), null);
+  for (const id of toyModule.CONSUMABLE_TOY_IDS) {
+    assert.equal(dataModule.itemById(id)?.type, 'toy', `${id} is a toy, not a collectible`);
+    assert.equal(dataModule.itemById(id)?.stackable, true, `${id} keeps a visible stack count`);
+  }
+  assert.equal(inventory.ball, 5, 'failed attempts leave the saved stack untouched');
+  assert.equal(inventory['artifact-dust'], 8);
+});
+test('schema 11 migration preserves toy stacks, saved XP, and all previously unlocked worlds', () => {
+  const xp = economy.playerLevelXpThreshold(20);
+  const prior = normalize({
+    ...initialData(), saveSchema: 11, xp, coins: 4321,
+    inventory: { kibble: 9, ball: 4, 'crafted-toy': 5 },
+    owned: ['ball', 'teddy', 'crafted-toy'],
+  });
+  assert.equal(prior.xp, xp);
+  assert.equal(prior.coins, 4321);
+  assert.equal(prior.inventory.ball, 4);
+  assert.equal(prior.inventory['crafted-toy'], 5);
+  assert.equal(prior.inventory.teddy, 1, 'a previously owned single toy becomes one usable piece');
+  assert.deepEqual(prior.world.legacyUnlockedLocations, ['park', 'city', 'forest', 'beach', 'cave', 'mountain']);
+  for (const place of dataModule.LOCATIONS) assert.equal(dataModule.isWorldLocationUnlocked(prior, place.id, 20), true, place.id);
+  const currentZero = normalize({ ...initialData(), saveSchema: SAVE_SCHEMA, owned: ['ball'], inventory: { ball: 0 } });
+  assert.equal(currentZero.inventory.ball, 0, 'normalization must not restore already-consumed stock');
 });
 test('legacy raw backup is exact and is never replaced on later loads', () => {
   storage.clear();
@@ -253,6 +292,17 @@ test('schema 10 saves keep their XP unchanged and receive a 6.5 backup', () => {
   assert.equal(next.xp, old.xp);
   assert.deepEqual(next.owned, old.owned);
   assert.equal(next.minigameDaily.xp, 0);
+});
+test('schema 11 saves get an untouched 6.6 backup before toy and world migration', () => {
+  storage.clear();
+  const old = { ...initialData(), saveSchema: 11, coins: 810, xp: economy.playerLevelXpThreshold(8), owned: ['ball'], inventory: { ball: 3 } };
+  const raw = JSON.stringify(old);
+  storage.set(STORE_KEY, raw);
+  const next = loadData();
+  assert.equal(storage.get(BACKUP_KEY_66), raw);
+  assert.equal(next.inventory.ball, 3);
+  assert.ok(next.world.legacyUnlockedLocations.includes('beach'));
+  assert.equal(next.world.legacyUnlockedLocations.includes('mountain'), false);
 });
 test('keyed chests open once and consume one matching key', () => {
   const chestTiers = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
@@ -520,8 +570,11 @@ test('quest rewards, material pickups and multi-step actions are saved and one-t
   for (let point = 0; point < 3; point++) data = questModule.pickQuestPoint(data, 'park-lost-toy', point).data;
   assert.equal(data.world.questStages['park-lost-toy'], 'awaiting-action');
   assert.ok(data.owned.includes('ball'));
-  const finished = questModule.completeQuestAction(data, 'use:ball');
+  assert.equal(data.inventory.ball, 1, 'quest rewards now grant a consumable piece');
+  const usedBall = toyModule.consumeToyStock(data.inventory, 'ball');
+  const finished = questModule.completeQuestAction({ ...data, inventory: usedBall }, 'use:ball');
   assert.equal(finished.outcome, 'completed');
+  assert.equal(finished.data.inventory.ball, 0);
   assert.ok(finished.data.world.completedQuests.includes('park-lost-toy'));
   assert.equal(questModule.completeQuestAction(finished.data, 'use:ball').outcome, 'invalid');
 });
@@ -575,29 +628,37 @@ test('beach treasure needs an explicit opening action and frisbee quests need a 
   data = questModule.startQuest(normalize(initialData()), 'beach-frisbee');
   data = questModule.pickQuestPoint(data, 'beach-frisbee', 0).data;
   assert.ok(data.owned.includes('frisbee'));
+  assert.equal(data.inventory.frisbee, 1);
   assert.equal(data.world.questStages['beach-frisbee'], 'awaiting-action');
-  const thrown = questModule.completeQuestAction(data, 'use:frisbee');
+  const usedFrisbee = toyModule.consumeToyStock(data.inventory, 'frisbee');
+  const thrown = questModule.completeQuestAction({ ...data, inventory: usedFrisbee }, 'use:frisbee');
   assert.equal(thrown.outcome, 'completed');
+  assert.equal(thrown.data.inventory.frisbee, 0);
   assert.ok(thrown.data.world.completedQuests.includes('beach-frisbee'));
 });
-test('crafting spends exact ingredients, stores output, and blocks a second unique craft', () => {
-  const base = normalize({ ...initialData(), inventory: { wood: 3, cloth: 2, kibble: 2 } });
-  const crafted = craftingModule.craftItem(base, 'forest-toy');
+test('crafting consumes exact ingredients for a stack and allows repeated toy production', () => {
+  const base = normalize({ ...initialData(), inventory: { wood: 15, cloth: 10, kibble: 2 } });
+  const crafted = craftingModule.craftItem(base, 'forest-toy', 5);
   assert.equal(crafted.error, undefined);
   assert.equal(crafted.data.inventory.wood, 0);
   assert.equal(crafted.data.inventory.cloth, 0);
-  assert.ok(crafted.data.owned.includes('crafted-toy'));
-  assert.equal(crafted.data.world.weeklyMetrics.craft, 1);
-  assert.equal(craftingModule.craftItem(crafted.data, 'forest-toy').error, 'Wald-Wurfseil hast du bereits hergestellt.');
+  assert.equal(crafted.data.inventory['crafted-toy'], 5);
+  assert.equal(crafted.data.world.weeklyMetrics.craft, 5);
+  assert.match(craftingModule.craftItem(crafted.data, 'forest-toy').error, /fehlen noch/);
+  const unique = normalize({ ...initialData(), inventory: { shell: 10, 'rope-fiber': 2 } });
+  const decor = craftingModule.craftItem(unique, 'shell-mobile');
+  assert.equal(decor.error, undefined);
+  assert.equal(craftingModule.craftItem(decor.data, 'shell-mobile').error, 'Muschel-Mobile hast du bereits hergestellt.');
   const denied = craftingModule.craftItem(base, 'shell-mobile');
   assert.match(denied.error, /fehlen noch/);
-  assert.equal(denied.data.inventory.wood, 3);
+  assert.equal(denied.data.inventory.wood, 15);
 });
 test('world and collection assets have unique IDs and complete starter quests', () => {
   const { COLLECTION_ITEMS, COLLECTION_CATEGORIES, COLLECTION_REWARDS } = worldModule;
   const { LOCATIONS, WORLD_QUESTS } = dataModule;
   assert.equal(LOCATIONS.length, 6);
-  assert.deepEqual(LOCATIONS.map((place) => place.level), [1,3,5,8,12,20]);
+  assert.deepEqual(LOCATIONS.map((place) => place.level), [1,35,100,220,350,500]);
+  assert.deepEqual(LOCATIONS.map((place) => place.stageLevel), [1,5,9,13,17,20]);
   assert.equal(WORLD_QUESTS.filter((quest) => quest.place === 'park').length, 3);
   assert.equal(WORLD_QUESTS.filter((quest) => quest.place === 'city').length, 2);
   assert.ok(WORLD_QUESTS.some((quest) => quest.place === 'forest'));
@@ -617,6 +678,18 @@ test('world and collection assets have unique IDs and complete starter quests', 
     assert.ok(existsSync(`artifacts/tamascottchi/public/assets/rewards/chests/${tier}-closed.png`), `missing closed ${tier} chest`);
     assert.ok(existsSync(`artifacts/tamascottchi/public/assets/rewards/chests/${tier}-open.png`), `missing open ${tier} chest`);
   }
+});
+test('worlds unlock at their new milestones while the final world stays locked until level 500', () => {
+  const fresh = normalize(initialData());
+  const { isWorldLocationUnlocked } = dataModule;
+  assert.equal(isWorldLocationUnlocked(fresh, 'city', 34), false);
+  assert.equal(isWorldLocationUnlocked(fresh, 'city', 35), true);
+  assert.equal(isWorldLocationUnlocked(fresh, 'forest', 99), false);
+  assert.equal(isWorldLocationUnlocked(fresh, 'beach', 219), false);
+  assert.equal(isWorldLocationUnlocked(fresh, 'cave', 349), false);
+  assert.equal(isWorldLocationUnlocked(fresh, 'mountain', 499), false);
+  assert.equal(isWorldLocationUnlocked(fresh, 'mountain', 500), true);
+  assert.deepEqual(dataModule.LOCATIONS.map((place) => place.level), [1, 35, 100, 220, 350, 500]);
 });
 test('all wearable layers have an anchor fit for every mood and valid image assets', () => {
   const { WEARABLES, BASE_CONFIG, resolveFit, layerSrc } = outfitModule;
@@ -688,13 +761,13 @@ test('regional daily tasks award one chest per unlocked region and reset after B
     },
   };
   for (const region of readyRegions) {
-    const result = worldEngine.claimRegionDailyChest(data, region, start, 8, false, () => 0);
+    const result = worldEngine.claimRegionDailyChest(data, region, start, 500, false, () => 0);
     assert.equal(result.outcome, 'claimed');
     data = result.data;
   }
   assert.equal(data.world.dailyChestCount, 4);
-  assert.equal(worldEngine.claimRegionDailyChest(data, 'beach', start, 8).outcome, 'already-claimed');
-  assert.equal(worldEngine.claimRegionDailyChest(data, 'park', start, 8).outcome, 'already-claimed');
+  assert.equal(worldEngine.claimRegionDailyChest(data, 'beach', start, 500).outcome, 'already-claimed');
+  assert.equal(worldEngine.claimRegionDailyChest(data, 'park', start, 500).outcome, 'already-claimed');
   const nextDay = worldEngine.ensureWorldDay(data, start + 26 * 60 * 60 * 1000, 1);
   assert.equal(nextDay.world.dailyChestCount, 0);
   assert.deepEqual(nextDay.world.dailyChestLocations, []);
@@ -789,6 +862,20 @@ test('daily goals award only once and the daily event cannot be claimed twice', 
   assert.equal(duplicate.data.inventory[eventItem], itemCount);
 });
 
+test('world daily claims leave the minigame XP and coin cap ledger intact', () => {
+  const start = Date.now() + 60_000;
+  const base = worldDataAt(start);
+  const ledger = { ...base.minigameDaily, xp: economy.MINIGAME_DAILY_XP_CAP, coins: economy.minigameDailyCoinCap(1), rounds: 18 };
+  let progress = {
+    ...base,
+    minigameDaily: ledger,
+    world: { ...base.world, dailyGoals: ['gather-three'] },
+  };
+  for (let count = 0; count < 3; count += 1) progress = worldEngine.applyWorldMetric(progress, 'gather', 1, start, 1);
+  assert.deepEqual(progress.minigameDaily, ledger);
+  assert.ok(progress.world.dailyClaimed.includes('gather-three'));
+});
+
 test('area NPC orders consume the requested material and pay only once per world day', () => {
   const start = Date.now() + 60_000;
   const base = worldEngine.ensureWorldDay({
@@ -808,19 +895,21 @@ test('area NPC orders consume the requested material and pay only once per world
 
 test('fishing has a daily reward cap but remains available for practice', () => {
   const start = Date.now() + 60_000;
-  let data = worldEngine.ensureWorldDay(worldDataAt(start), start, 8);
-  assert.equal(worldEngine.catchFish(data, 'fish-rare', start, 8).outcome, 'locked', 'rare fish require the global rarity unlock');
-  for (let count = 0; count < 3; count += 1) {
-    const catchResult = worldEngine.catchFish(data, 'fish-common', start, 8);
+  const beforeBeach = worldEngine.ensureWorldDay(worldDataAt(start), start, 219);
+  assert.equal(worldEngine.catchFish(beforeBeach, 'fish-common', start, 219).outcome, 'locked', 'beach access is level-gated');
+  let data = worldEngine.ensureWorldDay(worldDataAt(start), start, 220);
+  const rare = worldEngine.catchFish(data, 'fish-rare', start, 220);
+  assert.equal(rare.outcome, 'caught', 'rare fish unlock when global rarity and beach access are both met');
+  data = rare.data;
+  for (let count = 0; count < 2; count += 1) {
+    const catchResult = worldEngine.catchFish(data, 'fish-common', start, 220);
     assert.equal(catchResult.outcome, 'caught');
     data = catchResult.data;
   }
-  const practiced = worldEngine.catchFish(data, 'fish-rare', start, 8);
+  const practiced = worldEngine.catchFish(data, 'fish-rare', start, 220);
   assert.equal(practiced.outcome, 'practice');
-  assert.equal(practiced.data.inventory['fish-rare'] || 0, 0);
+  assert.equal(practiced.data.inventory['fish-rare'], 1);
   assert.equal(practiced.data.world.fishingRewardsToday, 3);
-  const unlocked = { ...worldDataAt(start), xp: economy.playerLevelXpThreshold(40) };
-  assert.equal(worldEngine.catchFish(unlocked, 'fish-rare', start, 40).outcome, 'caught');
 });
 
 test('all 24 craft recipes resolve to defined usable game items', () => {

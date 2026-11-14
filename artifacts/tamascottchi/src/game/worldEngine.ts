@@ -1,4 +1,4 @@
-import { LOCATIONS, WORLD_QUESTS, itemById, type FullPetData, type RewardChestTier, type WorldEventState } from './data';
+import { isWorldLocationUnlocked, LOCATIONS, WORLD_QUESTS, itemById, type FullPetData, type RewardChestTier, type WorldEventState } from './data';
 import { recordJournal } from './journal';
 import { hoursRemaining } from './worldClock';
 import { worldDayKey, worldWeekKey } from './worldClock';
@@ -136,18 +136,18 @@ export function selectedDailyGoals(day: string, level: number): DailyWorldGoal[]
   return [0, 1, 2].map((offset) => available[(start + offset) % available.length]);
 }
 
-export function eventForDay(day: string, level: number): WorldEventDefinition {
+export function eventForDay(day: string, level: number, unlockedLocationIds: readonly string[] = []): WorldEventDefinition {
   const available = EVENT_ROTATION.filter((event) => {
     const location = LOCATIONS.find((entry) => entry.id === event.locationId);
-    return location && location.level <= level;
+    return location && (location.level <= level || unlockedLocationIds.includes(location.id));
   });
   const options = available.length ? available : EVENT_ROTATION.slice(0, 1);
   const selected = options[hash(day) % options.length];
   return { ...selected, day };
 }
 
-function eventForSave(day: string, level: number): WorldEventState {
-  const event = eventForDay(day, level);
+function eventForSave(day: string, level: number, unlockedLocationIds: readonly string[] = []): WorldEventState {
+  const event = eventForDay(day, level, unlockedLocationIds);
   return { id: event.id, day, locationId: event.locationId, resourceId: event.resourceId, quantity: event.quantity };
 }
 
@@ -165,7 +165,8 @@ export function ensureWorldDay(data: FullPetData, now = Date.now(), level = 1, a
   const needsWeekSetup = data.world.weeklyKey !== week;
   const needsMigration = !data.world.dailyGoals?.length || !data.world.worldEvent || !data.world.weeklyKey || !data.world.weeklyMetrics || !data.world.weeklyClaimed;
   if (!needsDaySetup && !needsWeekSetup && !needsMigration) return data;
-  const nextEvent = needsDaySetup || !data.world.worldEvent ? eventForSave(day, level) : data.world.worldEvent;
+  const unlockedLocationIds = [...new Set([...(data.world.legacyUnlockedLocations || []), ...data.world.discoveredLocations])];
+  const nextEvent = needsDaySetup || !data.world.worldEvent ? eventForSave(day, level, unlockedLocationIds) : data.world.worldEvent;
   const nextGoals = needsDaySetup || !data.world.dailyGoals?.length
     ? selectedDailyGoals(day, level).map((goal) => goal.id)
     : data.world.dailyGoals;
@@ -308,10 +309,10 @@ export function claimRegionDailyChest(
   const current = ensureWorldDay(data, now, level, authoritativeClock);
   if (!REGION_DAILY_TASKS[locationId]) return { data: current, outcome: 'invalid' };
   const location = LOCATIONS.find((entry) => entry.id === locationId);
-  if (!location || location.level > level) return { data: current, outcome: 'invalid' };
+  if (!location || !isWorldLocationUnlocked(current, locationId, level)) return { data: current, outcome: 'invalid' };
   if (current.world.dailyChestLocations.includes(locationId)) return { data: current, outcome: 'already-claimed' };
   if (!regionTaskComplete(current, locationId)) return { data: current, outcome: 'not-ready' };
-  const tier = dailyWorldChestTier(worldStageLevel(location.level, current.world.areaMastery[locationId] || 0), level, random);
+  const tier = dailyWorldChestTier(worldStageLevel(location.stageLevel, current.world.areaMastery[locationId] || 0), level, random);
   const next = grantRegularChest(current, tier, `world:${current.world.worldDay}:${locationId}`, now, locationId);
   return next === current ? { data: current, outcome: 'daily-limit' } : { data: next, outcome: 'claimed', tier };
 }
@@ -344,7 +345,7 @@ export function collectResource(data: FullPetData, nodeId: string, now = Date.no
   const node = RESOURCE_NODES.find((entry) => entry.id === nodeId);
   if (!node || !itemById(node.resourceId)) return { data: current, outcome: 'invalid' };
   const place = LOCATIONS.find((entry) => entry.id === node.locationId);
-  if (!place || level < place.level) return { data: current, outcome: 'locked' };
+  if (!place || !isWorldLocationUnlocked(current, node.locationId, level)) return { data: current, outcome: 'locked' };
   if (node.minPlayerLevel && level < node.minPlayerLevel) return { data: current, outcome: 'locked' };
   if (node.minMastery && masteryLevel(current.world.areaMastery[node.locationId] || 0) < node.minMastery) return { data: current, outcome: 'locked' };
   const collectedAt = current.world.resourceCollectedAt?.[node.id];
@@ -373,8 +374,9 @@ export function collectResource(data: FullPetData, nodeId: string, now = Date.no
 
 export function catchFish(data: FullPetData, fishId: 'fish-common' | 'fish-rare', now = Date.now(), level = 8, authoritativeClock = false): { data: FullPetData; outcome: 'caught' | 'practice' | 'locked' } {
   let current = ensureWorldDay(data, now, level, authoritativeClock);
+  if (!isWorldLocationUnlocked(current, 'beach', level)) return { data: current, outcome: 'locked' };
   if ((current.world.fishingRewardsToday || 0) >= MAX_REWARDED_FISH_PER_DAY) return { data: current, outcome: 'practice' };
-  if (fishId === 'fish-rare' && worldLevelDropChances(worldStageLevel(8, current.world.areaMastery.beach || 0), level).Rare <= 0) {
+  if (fishId === 'fish-rare' && worldLevelDropChances(worldStageLevel(LOCATIONS.find((entry) => entry.id === 'beach')!.stageLevel, current.world.areaMastery.beach || 0), level).Rare <= 0) {
     return { data: current, outcome: 'locked' };
   }
   const quantity = applyArtifactQuantityBonus(1, applicableArtifactBonus(current, 'materials', 'beach'));
@@ -398,10 +400,10 @@ export function claimWorldEvent(data: FullPetData, now = Date.now(), level = 1, 
   if (!event || event.day !== current.world.worldDay || !itemById(event.resourceId)) return { data: current, outcome: 'unavailable' };
   if (current.world.worldEventClaimedDay === event.day) return { data: current, outcome: 'already-claimed' };
   const place = LOCATIONS.find((entry) => entry.id === event.locationId);
-  if (!place || level < place.level) return { data: current, outcome: 'unavailable' };
+  if (!place || !isWorldLocationUnlocked(current, event.locationId, level)) return { data: current, outcome: 'unavailable' };
   const eventRarity = EVENT_ROTATION.find((entry) => entry.id === event.id)?.rarity || 'Gewöhnlich';
   const lootRarity = eventRarity === 'Selten' ? 'Rare' : eventRarity === 'Ungewöhnlich' ? 'Uncommon' : 'Common';
-  if (worldLevelDropChances(worldStageLevel(place.level, current.world.areaMastery[event.locationId] || 0), level)[lootRarity] <= 0) {
+  if (worldLevelDropChances(worldStageLevel(place.stageLevel, current.world.areaMastery[event.locationId] || 0), level)[lootRarity] <= 0) {
     return { data: current, outcome: 'unavailable' };
   }
   const quantity = applyArtifactQuantityBonus(event.quantity, applicableArtifactBonus(current, 'materials', event.locationId));
@@ -415,7 +417,7 @@ export function claimWorldEvent(data: FullPetData, now = Date.now(), level = 1, 
   current = applyWorldMetric(current, 'event', 1, now, level, authoritativeClock);
   current = applyWeeklyMetric(current, 'materials', quantity, now, level, authoritativeClock);
   current = applyWeeklyMetric(current, 'activities', 1, now, level, authoritativeClock);
-  current = recordJournal(current, `world-event-${event.day}-${event.id}`, '✦', `Ereignis entdeckt: ${eventForDay(event.day, level).title}`, `+${quantity} ${itemById(event.resourceId)?.name || 'Fundstück'}`);
+   current = recordJournal(current, `world-event-${event.day}-${event.id}`, '✦', `Ereignis entdeckt: ${EVENT_ROTATION.find((entry) => entry.id === event.id)?.title || 'Weltfund'}`, `+${quantity} ${itemById(event.resourceId)?.name || 'Fundstück'}`);
   return { data: current, outcome: 'claimed' };
 }
 
@@ -423,7 +425,7 @@ export function claimNpcRequest(data: FullPetData, locationId: string, now = Dat
   const current = ensureWorldDay(data, now, level, authoritativeClock);
   const npc = WORLD_NPCS.find((entry) => entry.locationId === locationId);
   const place = LOCATIONS.find((entry) => entry.id === locationId);
-  if (!npc || !place || level < place.level || !itemById(npc.itemId)) return { data: current, outcome: 'invalid' };
+  if (!npc || !place || !isWorldLocationUnlocked(current, locationId, level) || !itemById(npc.itemId)) return { data: current, outcome: 'invalid' };
   if (current.world.dailyClaimed.includes(npc.id)) return { data: current, outcome: 'already-claimed' };
   if ((current.inventory[npc.itemId] || 0) < 1) return { data: current, outcome: 'missing' };
   let next: FullPetData = {
@@ -450,7 +452,7 @@ export function visitWorldLocation(data: FullPetData, locationId: string, now = 
   let current = ensureWorldDay(data, now, level, authoritativeClock);
   const place = LOCATIONS.find((entry) => entry.id === locationId);
   if (!place) return { data: current, outcome: 'invalid' };
-  if (level < place.level) return { data: current, outcome: 'locked' };
+  if (!isWorldLocationUnlocked(current, locationId, level)) return { data: current, outcome: 'locked' };
   const firstVisit = !current.world.discoveredLocations.includes(locationId);
   const newToday = !current.world.dailyVisitedLocations?.includes(locationId);
   current = {
@@ -483,7 +485,7 @@ export function getWorldEvent(data: FullPetData, level: number): WorldEventDefin
   const event = data.world.worldEvent;
   if (!event || event.day !== data.world.worldDay) return undefined;
   const place = LOCATIONS.find((entry) => entry.id === event.locationId);
-  if (!place || level < place.level) return undefined;
+  if (!place || !isWorldLocationUnlocked(data, event.locationId, level)) return undefined;
   return { ...event, ...EVENT_ROTATION.find((entry) => entry.id === event.id)! };
 }
 

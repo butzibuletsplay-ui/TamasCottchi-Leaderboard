@@ -32,24 +32,28 @@ export const CRAFT_RECIPES: CraftRecipe[] = [
   { id: 'ocean-decor', name: 'Strand-Mobile', description: 'Ein Mobile aus Perlen, Muscheln und Treibholz.', ingredients: [{ id: 'shell', quantity: 3 }, { id: 'pearl', quantity: 1 }, { id: 'driftwood', quantity: 2 }], result: 'crafted-ocean-decor' },
 ];
 
-export function craftItem(data: FullPetData, recipeId: string): { data: FullPetData; error?: string } {
+export function craftItem(data: FullPetData, recipeId: string, requestedQuantity = 1): { data: FullPetData; error?: string } {
   const recipe = CRAFT_RECIPES.find((entry) => entry.id === recipeId);
   if (!recipe) return { data, error: 'Dieses Rezept gibt es nicht.' };
   const result = itemById(recipe.result);
   if (!result) return { data, error: 'Das Rezept-Ergebnis fehlt.' };
   if (!result.stackable && data.owned.includes(result.id)) return { data, error: `${result.name} hast du bereits hergestellt.` };
-  const missing = recipe.ingredients.find(({ id, quantity }) => (data.inventory[id] || 0) < quantity);
-  if (missing) return { data, error: `Es fehlen noch ${missing.quantity - (data.inventory[missing.id] || 0)} ${itemById(missing.id)?.name || missing.id}.` };
+  const quantity = result.stackable ? Math.max(1, Math.min(10, Math.floor(Number.isFinite(requestedQuantity) ? requestedQuantity : 1))) : 1;
+  const missing = recipe.ingredients.find(({ id, quantity: required }) => (data.inventory[id] || 0) < required * quantity);
+  if (missing) {
+    const required = missing.quantity * quantity;
+    return { data, error: `Es fehlen noch ${required - (data.inventory[missing.id] || 0)} ${itemById(missing.id)?.name || missing.id}.` };
+  }
 
   const inventory = { ...data.inventory };
-  for (const ingredient of recipe.ingredients) inventory[ingredient.id] -= ingredient.quantity;
-  if (result.stackable) inventory[result.id] = (inventory[result.id] || 0) + 1;
+  for (const ingredient of recipe.ingredients) inventory[ingredient.id] -= ingredient.quantity * quantity;
+  if (result.stackable) inventory[result.id] = (inventory[result.id] || 0) + quantity;
   let next: FullPetData = {
     ...data,
     inventory,
     owned: result.stackable ? data.owned : [...new Set([...data.owned, result.id])],
   };
-  next = recordJournal(next, `craft-${recipe.id}-${next.inventory[result.id] || next.owned.length}`, '🛠️', `Hergestellt: ${result.name}`, recipe.ingredients.map(({ id, quantity }) => `${quantity}× ${itemById(id)?.name || id}`).join(' · '));
-  next = applyWeeklyMetric(next, 'craft');
+  next = recordJournal(next, `craft-${recipe.id}-${Date.now()}`, '🛠️', `Hergestellt: ${result.name}${quantity > 1 ? ` ×${quantity}` : ''}`, recipe.ingredients.map(({ id, quantity: ingredientQuantity }) => `${ingredientQuantity * quantity}× ${itemById(id)?.name || id}`).join(' · '));
+  next = applyWeeklyMetric(next, 'craft', quantity);
   return { data: next };
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronLeft, Clock3, Compass, Fish, LockKeyhole, MapPin, Minus, Pickaxe, Plus, Search, Sparkles, Trees } from 'lucide-react';
-import { LOCATIONS, WORLD_QUESTS, itemById, type FullPetData } from './data';
+import { isWorldLocationUnlocked, LOCATIONS, WORLD_QUESTS, itemById, type FullPetData } from './data';
 import { COLLECTION_ITEMS } from './collectionWorld';
 import { assetUrl, CHARACTER } from './assets';
 import { completeQuestAction, pickQuestPoint, startQuest } from './questEngine';
@@ -31,6 +31,10 @@ export function World({ data, level, serverClockOffsetMs, onChange, onNotice, on
   const w = data.world;
   const foundItems = useMemo(() => new Set(w.discoveries), [w.discoveries]);
   const place = LOCATIONS.find((entry) => entry.id === location)!;
+  const placeUnlocked = isWorldLocationUnlocked(data, location, level);
+  const locationIndex = LOCATIONS.findIndex((entry) => entry.id === location);
+  const previousUnlockLevel = locationIndex > 0 ? LOCATIONS[locationIndex - 1].level : 0;
+  const unlockProgress = placeUnlocked ? 100 : Math.max(0, Math.min(100, Math.round(((level - previousUnlockLevel) / Math.max(1, place.level - previousUnlockLevel)) * 100)));
   const placeQuests = WORLD_QUESTS.filter((entry) => entry.place === location);
   const currentQuest = WORLD_QUESTS.find((entry) => entry.id === quest);
   const progress = currentQuest ? w.questProgress[currentQuest.id] || 0 : 0;
@@ -80,9 +84,15 @@ export function World({ data, level, serverClockOffsetMs, onChange, onNotice, on
   }, [dig?.showing]);
 
   function enter(id: string) {
+    if (!isWorldLocationUnlocked(data, id, level)) {
+      setLocation(id); setQuest(null); setFishing('idle'); setDig(null);
+      const target = LOCATIONS.find((entry) => entry.id === id);
+      if (target) onNotice(`${target.name} wird ab Level ${target.level} freigeschaltet.`);
+      return;
+    }
     const result = visitWorldLocation(data, id, now, level, authoritativeClock);
     if (result.outcome === 'invalid') return;
-    if (result.outcome === 'locked') { const target = LOCATIONS.find((entry) => entry.id === id); onNotice(`Ab Level ${target?.level || 1} freigeschaltet.`); return; }
+    if (result.outcome === 'locked') return;
     setLocation(id); setQuest(null); setFishing('idle'); setDig(null);
     onChange(result.data);
   }
@@ -107,7 +117,7 @@ export function World({ data, level, serverClockOffsetMs, onChange, onNotice, on
   }
 
   function startFishing() {
-    const beachLevel = LOCATIONS.find((entry) => entry.id === 'beach')?.level || 8;
+    const beachLevel = LOCATIONS.find((entry) => entry.id === 'beach')?.stageLevel || 13;
     const rareChance = Math.min(.14, worldLevelDropChances(worldStageLevel(beachLevel, w.areaMastery.beach || 0), level).Rare / 100);
     setFishId(Math.random() < rareChance ? 'fish-rare' : 'fish-common');
     setFishing('waiting');
@@ -261,14 +271,16 @@ export function World({ data, level, serverClockOffsetMs, onChange, onNotice, on
             <span>Scottchi</span>
           </div>
           {LOCATIONS.map((loc) => {
-            const locked = level < loc.level;
+            const locked = !isWorldLocationUnlocked(data, loc.id, level);
             return <button key={loc.id} className={`world-marker ${location === loc.id ? 'selected' : ''} ${locked ? 'locked' : ''} ${w.discoveredLocations.includes(loc.id) ? 'visited' : ''}`} style={{ left: `${loc.point.x}%`, top: `${loc.point.y}%` }} onClick={() => enter(loc.id)} aria-label={`${loc.name}${locked ? `, ab Level ${loc.level}` : ''}`} data-testid={`world-place-${loc.id}`}><span>{locked ? <LockKeyhole size={15}/> : w.discoveredLocations.includes(loc.id) ? <Check size={15}/> : <MapPin size={15}/>}</span><small>{loc.name}</small></button>;
           })}
         </div>
         <div className="world-zoom"><button onClick={() => setZoom((value) => Math.max(1, value - .2))} aria-label="Karte verkleinern"><Minus size={15}/></button><button onClick={() => setZoom((value) => Math.min(2, value + .2))} aria-label="Karte vergrößern"><Plus size={15}/></button><button onClick={() => { setZoom(1); setOffset({ x: 0, y: 0 }); }} aria-label="Karte zurücksetzen"><Compass size={15}/></button></div>
         <span className="world-map-tip">Tippe auf ein Ziel, damit Scottchi dorthin läuft · Karte ziehen zum Verschieben</span>
       </div>
-      <aside className="world-place panel" data-testid="world-place-details"><div className="eyebrow">ORT · AB LEVEL {place.level}</div><h3>{place.name}</h3><p>{place.desc}</p>
+      <aside className="world-place panel" data-testid="world-place-details">
+       {placeUnlocked ? <>
+        <div className="eyebrow">ORT · AB LEVEL {place.level}</div><h3>{place.name}</h3><p>{place.desc}</p>
         <section className="world-mastery" aria-label={`${place.name} Gebietsmeisterschaft`}>
           <div className="world-mastery-heading"><span>Gebietsmeisterschaft</span><b>Stufe {masteryLevel(locationMastery)} / 20</b></div>
           <div className="world-mastery-bar"><i style={{ width: `${masteryProgress(locationMastery)}%` }}/></div>
@@ -370,7 +382,18 @@ export function World({ data, level, serverClockOffsetMs, onChange, onNotice, on
           </button>;
         }) : <p className="future-place">Dieses Gebiet ist als zukünftiger Inhalt markiert und bietet noch keine spielbare Aktivität.</p>}
        </div>
-       {location === 'city' && <div className="city-vendors"><strong>Händler am Platz</strong><p>Besuche den Stadtladen oder schau bei der Kostümhändlerin vorbei.</p><button className="button small" onClick={() => onStore('food')} data-testid="button-city-store">Stadtladen besuchen</button><button className="button small orange" onClick={() => onStore('accessory')} data-testid="button-city-fashion">Kostümhändlerin</button></div>}
+        {location === 'city' && <div className="city-vendors"><strong>Händler am Platz</strong><p>Besuche den Stadtladen oder schau bei der Kostümhändlerin vorbei.</p><button className="button small" onClick={() => onStore('food')} data-testid="button-city-store">Stadtladen besuchen</button><button className="button small orange" onClick={() => onStore('accessory')} data-testid="button-city-fashion">Kostümhändlerin</button></div>}
+       </> : <section className="world-locked-preview" data-testid={`world-locked-${place.id}`}>
+         <div className="world-locked-art" style={{ backgroundImage: `url("${MAP}")`, backgroundPosition: `${place.point.x}% ${place.point.y}%` }} aria-label={`Kartenvorschau für ${place.name}`}>
+           <span><LockKeyhole size={24}/></span>
+         </div>
+         <div className="eyebrow">WELT GESPERRT</div>
+         <h3>{place.name}</h3>
+         <p>{place.desc}</p>
+         <div className="world-unlock-summary"><b>Freischaltung: Spielerlevel {place.level}</b><span>Dein Level {level} · {Math.max(0, place.level - level)} Level fehlen</span></div>
+         <div className="world-unlock-bar" role="progressbar" aria-label={`Fortschritt bis ${place.name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={unlockProgress}><i style={{ width: `${unlockProgress}%` }}/></div>
+         <small>{unlockProgress}% bis zur nächsten Welt</small>
+       </section>}
      </aside>
     </div>
     {currentQuest && <div className="quest-backdrop" role="presentation"><section className="quest-dialog panel" role="dialog" aria-modal="true" aria-labelledby="quest-title">

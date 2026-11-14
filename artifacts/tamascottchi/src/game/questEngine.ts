@@ -3,6 +3,7 @@ import { recordJournal } from './journal';
 import { applicableArtifactBonus, applyArtifactBonus, grantMilestoneChest } from './artifactSystem';
 import { applyWeeklyMetric, recordRegionActivity } from './worldEngine';
 import { queueWorldDiscovery, releasePendingWorldDiscoveries } from './worldDiscoveries';
+import { TOY_USE } from './toyRules';
 
 export type QuestId = (typeof WORLD_QUESTS)[number]['id'];
 export type QuestOutcome = 'started' | 'found' | 'already-found' | 'wrong-order' | 'awaiting-action' | 'completed' | 'already-completed' | 'invalid';
@@ -87,6 +88,9 @@ export function pickQuestPoint(data: FullPetData, id: string, point: number): { 
   if ('itemReward' in quest && quest.itemReward) {
     next = {
       ...next,
+      inventory: itemById(quest.itemReward)?.type === 'toy' && TOY_USE[quest.itemReward]
+        ? { ...next.inventory, [quest.itemReward]: (next.inventory[quest.itemReward] || 0) + 1 }
+        : next.inventory,
       owned: [...new Set([...next.owned, quest.itemReward])],
     };
   }

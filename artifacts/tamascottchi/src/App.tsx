@@ -26,6 +26,7 @@ import { craftItem } from './game/crafting';
 import { CraftingPage } from './game/CraftingPage';
 import { HelpPage } from './game/HelpPage';
 import { InventoryPage } from './game/InventoryPage';
+import { consumeToyStock, TOY_USE, type PetAction } from './game/toyRules';
 import { JournalPage } from './game/JournalPage';
 import { recordJournal } from './game/journal';
 import { completeQuestAction } from './game/questEngine';
@@ -50,7 +51,6 @@ import {
 } from '@workspace/game-economy';
 type PetData = FullPetData;
 
-type PetAction = 'idle' | 'happy' | 'eating' | 'washing' | 'petting' | 'sleeping' | 'spin' | 'wiggle' | 'run' | 'chew' | 'wake' | 'yawn' | 'cuddle';
 type CloudLink = { userId: string; revision: number; fingerprint: string };
 type CloudSyncStatus = 'offline' | 'checking' | 'unlinked' | 'syncing' | 'synced' | 'conflict' | 'error';
 const NEEDS: { id: NeedKey; name: string; icon: typeof Heart }[] = [
@@ -64,24 +64,6 @@ const DAILY_GOALS: { id: keyof DailyProgress; title: string; detail: string; tar
   { id: 'pets', title: 'Kraul-Meister', detail: 'Streichle Scottchi fünfmal', target: 5, rewardCoins: 10, rewardXp: 12 },
   { id: 'coins', title: 'Münz-Magnet', detail: 'Verdiene 100 Münzen', target: 100, rewardCoins: 12, rewardXp: 12 },
 ];
-type ToyUse = { action: PetAction; line: string; fx: 'throw' | 'arc' | 'bounce' | 'shake'; need: Partial<Record<NeedKey, number>>; energy?: number; freq: number; slide?: number; room?: Room; cooldown: number };
-const TOY_USE: Record<string, ToyUse> = {
-  ball: { action: 'run', line: 'Ball! Ball! BALL!', fx: 'throw', need: { glueck: 12, energie: -5 }, energy: 10, freq: 700, cooldown: 15, room: 'Spielzimmer' },
-  'bone-toy': { action: 'chew', line: 'Knusper. Meins.', fx: 'bounce', need: { glueck: 14, hunger: 3 }, freq: 520, cooldown: 20 },
-  duck: { action: 'happy', line: 'Was war DAS?', fx: 'bounce', need: { glueck: 6 }, freq: 1300, slide: 700, cooldown: 6 },
-  rope: { action: 'wiggle', line: 'Grrr, ich gewinne!', fx: 'shake', need: { glueck: 16, energie: -7 }, energy: 12, freq: 380, cooldown: 25 },
-  frisbee: { action: 'run', line: 'Ich fliege fast mit!', fx: 'arc', need: { glueck: 14, energie: -6 }, energy: 12, freq: 820, slide: 1100, cooldown: 20, room: 'Spielzimmer' },
-  teddy: { action: 'cuddle', line: 'Mein bester Freund.', fx: 'bounce', need: { glueck: 9, energie: 2 }, freq: 460, cooldown: 20 },
-  shampoo: { action: 'washing', line: 'Duftet nach Kokos!', fx: 'shake', need: { sauberkeit: 45, glueck: 3 }, freq: 760, room: 'Bad', cooldown: 90 },
-  'crafted-toy': { action: 'wiggle', line: 'Das ist selbst gemacht! Noch eine Runde!', fx: 'shake', need: { glueck: 18, energie: -7 }, energy: 12, freq: 400, cooldown: 25 },
-  'crafted-shell-rattle': { action: 'wiggle', line: 'Das klingt wie ein kleiner Strand!', fx: 'shake', need: { glueck: 14, energie: -4 }, energy: 8, freq: 610, cooldown: 18 },
-  'crafted-gem-ball': { action: 'run', line: 'Der glitzert sogar beim Rollen!', fx: 'throw', need: { glueck: 16, energie: -5 }, energy: 9, freq: 740, cooldown: 20, room: 'Spielzimmer' },
-  'crafted-bone-puzzle': { action: 'chew', line: 'Ein Knochen mit kniffligem Muster!', fx: 'bounce', need: { glueck: 15, hunger: 2 }, freq: 480, cooldown: 18 },
-  'crafted-leaf-frisbee': { action: 'run', line: 'Einmal durch den Blätterwirbel!', fx: 'arc', need: { glueck: 14, energie: -5 }, energy: 10, freq: 790, cooldown: 20, room: 'Spielzimmer' },
-  'crafted-fossil-chew': { action: 'chew', line: 'Ein Fundstück zum Anknabbern!', fx: 'bounce', need: { glueck: 17, hunger: 2 }, freq: 440, cooldown: 24 },
-  'crafted-ore-toy': { action: 'happy', line: 'Das klappert schön!', fx: 'bounce', need: { glueck: 12 }, freq: 900, slide: 650, cooldown: 15 },
-};
-
 function advanceDaily(data: PetData, id: keyof DailyProgress, amount = 1): PetData {
   let next: PetData = { ...data, daily: { ...data.daily, [id]: data.daily[id] + amount }, missions: { ...data.missions } };
   for (const goal of DAILY_GOALS) {
@@ -217,6 +199,7 @@ function Game({ initial }: { initial: PetData }) {
   const soundContext = useRef<AudioContext | null>(null);
   const timers = useRef<Record<string, number | undefined>>({});
   const toyCooldown = useRef<Record<string, number>>({});
+  const toyUsePending = useRef<Set<string>>(new Set());
   const rewardedSessions = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -1009,65 +992,86 @@ function Game({ initial }: { initial: PetData }) {
   function playToy(id: string) {
     const use = TOY_USE[id];
     const item = itemById(id);
-    if (!use || !item || !data.owned.includes(id)) return;
+    const current = dataRef.current;
+    if (!use || !item) return;
+    if ((current.inventory[id] || 0) < 1) { notify(`${item.name} ist aufgebraucht. Stelle oder kaufe ein neues Exemplar.`); return; }
+    if (toyUsePending.current.has(id)) { notify(`${item.name} wird gerade benutzt.`); return; }
     if (sleeping) { notify('Psst, Scottchi schläft.'); return; }
-    if (use.room && data.room !== use.room) { notify(`${item.name} funktioniert nur im ${use.room}.`); return; }
-    if (id === 'shampoo' && (data.inventory.shampoo || 0) < 1) { notify('Das Shampoo ist aufgebraucht. Im Laden kannst du eine neue Flasche kaufen.'); return; }
-    if (use.energy && data.needs.energie < use.energy) { notify('Zu müde zum Toben. Erst schlafen.'); return; }
+    if (use.room && current.room !== use.room) { notify(`${item.name} funktioniert nur im ${use.room}.`); return; }
+    if (use.energy && current.needs.energie < use.energy) { notify('Zu müde zum Toben. Erst schlafen.'); return; }
+    if ((toyCooldown.current[id] || 0) > Date.now()) { notify('Scottchi braucht nach dem Spielen noch kurz Pause.'); return; }
     if (id === 'ball' || id === 'frisbee') { if (!flight) setAim(id); return; }
+    toyUsePending.current.add(id);
+    if (!rewardToy(id)) return;
     if (id === 'bone-toy') { setChewing(true); later('chew', () => setChewing(false), 2600); }
     else if (id !== 'teddy') { setToyFx({ id, fx: use.fx, key: Date.now() }); later('toy', () => setToyFx(null), 1300); }
     sound(use.freq, { dur: id === 'duck' ? 0.18 : 0.2, slide: use.slide, type: id === 'duck' ? 'square' : 'triangle' });
     showPetAction(use.action, use.line, id === 'bone-toy' ? 2600 : 1800);
-    rewardToy(id);
   }
-  function rewardToy(id: string) {
+  function rewardToy(id: string): boolean {
     const use = TOY_USE[id];
+    const current = dataRef.current;
+    const inventory = consumeToyStock(current.inventory, id);
+    if (!use || !inventory || (toyCooldown.current[id] || 0) > Date.now()) {
+      toyUsePending.current.delete(id);
+      return false;
+    }
     const fav = showsTrait && FAVORITE_TOY[trait] === id;
     if (fav) later('favline', () => setPetSpeech(TOY_LINES[trait]), 1300);
-    const ready = (toyCooldown.current[id] || 0) <= Date.now();
-    if (!ready && id !== 'shampoo') { notify('Lustig! Für Bonuspunkte kurz verschnaufen.'); return; }
-    if (ready) toyCooldown.current[id] = Date.now() + use.cooldown * 1000;
+    toyCooldown.current[id] = Date.now() + use.cooldown * 1000;
     if (use.action !== 'washing') cheer(2200);
-    setData((old) => {
-      const baseNeed = fav ? Object.fromEntries(Object.entries(use.need).map(([k, v]) => [k, k === 'glueck' ? v + 4 : v])) : use.need;
-      const funPercent = applicableArtifactBonus(old, 'fun', 'play');
-      const need = funPercent > 0 && baseNeed.glueck
-        ? { ...baseNeed, glueck: Math.round(baseNeed.glueck * (1 + funPercent / 100)) }
-        : baseNeed;
-      const next: PetData = { ...old, personality: nudge(old.personality, TOY_TRAIT[id] || 'verspielt', 0.9), needs: applyNeeds(old.needs, need), xp: old.xp + 5, stats: { ...old.stats, toys: (old.stats.toys || 0) + 1, care: old.stats.care + 1 } };
-      if (id === 'shampoo') {
-        const remaining = Math.max(0, (old.inventory.shampoo || 0) - 1);
-        return advanceDaily({ ...next, inventory: { ...old.inventory, shampoo: remaining }, owned: remaining ? old.owned : old.owned.filter((ownedId) => ownedId !== 'shampoo') }, 'baths');
-      }
-      return next;
-    });
+    const baseNeed = fav ? Object.fromEntries(Object.entries(use.need).map(([key, value]) => [key, key === 'glueck' ? value + 4 : value])) : use.need;
+    const funPercent = applicableArtifactBonus(current, 'fun', 'play');
+    const need = funPercent > 0 && baseNeed.glueck
+      ? { ...baseNeed, glueck: Math.round(baseNeed.glueck * (1 + funPercent / 100)) }
+      : baseNeed;
+    const remaining = inventory[id];
+    let next: PetData = {
+      ...current,
+      inventory,
+      owned: id === 'shampoo' && remaining === 0 ? current.owned.filter((ownedId) => ownedId !== id) : current.owned,
+      personality: nudge(current.personality, TOY_TRAIT[id] || 'verspielt', 0.9),
+      needs: applyNeeds(current.needs, need), xp: current.xp + 5,
+      stats: { ...current.stats, toys: (current.stats.toys || 0) + 1, care: current.stats.care + 1 },
+    };
+    if (id === 'shampoo') next = advanceDaily(next, 'baths');
+    dataRef.current = next;
+    setData(next);
+    toyUsePending.current.delete(id);
+    return true;
   }
   /** Ball/frisbee: toy flies to the aimed point, Scottchi runs there (flipping to face it), picks it up and trots back. */
   function throwToy(id: 'ball' | 'frisbee', from: Point, to: Point) {
+    const current = dataRef.current;
+    if ((current.inventory[id] || 0) < 1) { setAim(null); notify(`${itemById(id)?.name || 'Spielzeug'} ist aufgebraucht.`); return; }
+    if (toyUsePending.current.has(id) || (toyCooldown.current[id] || 0) > Date.now()) { setAim(null); notify('Scottchi braucht nach dem Spielen noch kurz Pause.'); return; }
     setAim(null);
     const img = itemById(id)?.img; if (!img) return;
+    toyUsePending.current.add(id);
     setFlight({ id, kind: id, img, from, to, key: Date.now() });
     sound(TOY_USE[id].freq, { dur: 0.25, slide: TOY_USE[id].slide });
     setPetSpeech(id === 'ball' ? 'Ball! Ball! BALL!' : to.x < from.x ? 'Links! Es fliegt nach links!' : 'Da rüber! Ich hab es!');
   }
   function toyLanded() {
     const f = flight; const card = roomRef.current;
-    if (!f || !card) { setFlight(null); return; }
-    const questAction = completeQuestAction(dataRef.current, `use:${f.id}`);
-    if (questAction.outcome === 'completed') {
-      changeWorld(questAction.data);
-      notify(f.id === 'ball' ? 'Der gefundene Ball ist zurück! Die Aufgabe ist geschafft.' : 'Das Strand-Frisbee wurde geworfen! Die Aufgabe ist geschafft.');
-    }
+    if (!f || !card) { if (f) toyUsePending.current.delete(f.id); setFlight(null); return; }
     const dx = ((f.to.x - 50) / 100) * card.clientWidth;
     const max = card.clientWidth * 0.3;
     setRun({ dx: Math.max(-max, Math.min(max, dx)), flip: f.to.x > 52 });
     showPetAction('run', TOY_USE[f.id].line, 2400);
     later('fetch', () => {
       setFlight(null); setRun((r) => ({ dx: 0, flip: r.flip }));
-      setPetSpeech(f.kind === 'ball' ? 'Hab ihn! Nochmal?' : 'Gefangen! Noch mal werfen?');
-      later('unflip', () => setRun({ dx: 0, flip: false }), 750);
-      cheer(2200); rewardToy(f.id);
+      const used = rewardToy(f.id);
+      if (used) {
+        const questAction = completeQuestAction(dataRef.current, `use:${f.id}`);
+        if (questAction.outcome === 'completed') {
+          changeWorld(questAction.data);
+          notify(f.id === 'ball' ? 'Der gefundene Ball ist zurück! Die Aufgabe ist geschafft.' : 'Das Strand-Frisbee wurde geworfen! Die Aufgabe ist geschafft.');
+        }
+        setPetSpeech(f.kind === 'ball' ? 'Hab ihn! Nochmal?' : 'Gefangen! Noch mal werfen?');
+        later('unflip', () => setRun({ dx: 0, flip: false }), 750);
+        cheer(2200);
+      }
     }, 900);
   }
   function useInventoryItem(id: string) {
@@ -1104,8 +1108,8 @@ function Game({ initial }: { initial: PetData }) {
     setData((old) => {
       if (old.coins < item.price || (item.type !== 'food' && !stackable && old.owned.includes(item.id))) return old;
       const stats = { ...old.stats, purchases: old.stats.purchases + 1 };
-      let next: PetData = item.type === 'food' || item.id === 'shampoo'
-        ? { ...old, coins: old.coins - item.price, inventory: { ...old.inventory, [item.id]: (old.inventory[item.id] || 0) + 1 }, owned: item.id === 'shampoo' ? [...new Set([...old.owned, item.id])] : old.owned, stats }
+      let next: PetData = item.type === 'food' || (item.type === 'toy' && item.stackable)
+        ? { ...old, coins: old.coins - item.price, inventory: { ...old.inventory, [item.id]: (old.inventory[item.id] || 0) + 1 }, owned: item.type === 'toy' ? [...new Set([...old.owned, item.id])] : old.owned, stats }
         : { ...old, coins: old.coins - item.price, owned: [...old.owned, item.id], stats, personality: nudge(old.personality, 'neugierig', 0.6) };
       const collectibleId = Object.entries(COLLECTION_ITEM_LINKS).find(([, linkedId]) => linkedId === item.id)?.[0];
       if (collectibleId) next = unlockArtifact(next as FullPetData, collectibleId);
@@ -1277,12 +1281,13 @@ function Game({ initial }: { initial: PetData }) {
   function changeWorld(next: FullPetData) {
     setData((old) => advanceDaily(next, 'coins', Math.max(0, next.coins - old.coins)));
   }
-  function craft(recipeId: string) {
-    const result = craftItem(dataRef.current, recipeId);
+  function craft(recipeId: string, quantity: number) {
+    const result = craftItem(dataRef.current, recipeId, quantity);
     if (result.error) { notify(result.error); return; }
+    dataRef.current = result.data;
     setData(result.data);
     const entry = result.data.journal[result.data.journal.length - 1];
-    notify(entry?.title || 'Gegenstand hergestellt.');
+    notify(entry?.title || `${quantity} Gegenstände hergestellt.`);
     sound(860, { dur: .22, slide: 1160 });
   }
   function claimWorldReward(id:string,_name:string,coins:number,xp:number) {
@@ -1313,14 +1318,17 @@ function Game({ initial }: { initial: PetData }) {
     notify(`Erfolg abgeholt: ${a.rewardSummary}.`);
   }
   const roomDecor = data.roomItems.map(itemById).filter(Boolean) as Item[];
-  const ownedToys = data.owned.filter((id) => TOY_USE[id]);
+  const ownedToys = Object.keys(TOY_USE).filter((id) => (data.inventory[id] || 0) > 0);
   const bgKey = data.activeBackground === 'classic' ? ROOM_BG[data.room] : undefined;
   const bg = bgKey ? BACKGROUNDS[bgKey] : null;
   const backgroundArt = data.activeBackground === 'classic' ? undefined : itemById(data.activeBackground)?.img;
   const currentGame = GAMES.find((g) => g.id === activeGame);
   const teddyBeside = data.owned.includes('teddy') && data.room === 'Schlafzimmer';
   const speech = sleeping ? (teddyBeside ? 'Zzz… *kuschelt den Teddy*' : 'Zzz…') : mood === 'hungry' ? 'Bro, ich hab Hunger.' : mood === 'tired' ? 'Ich bin so müde.' : mood === 'dirty' ? 'Ich rieche… interessant.' : mood === 'sad' ? 'Spielst du mit mir?' : petSpeech;
-  const ownedOf = (type: Item['type']) => data.owned.filter((id) => itemById(id)?.type === type);
+  const ownedOf = (type: Item['type']) => data.owned.filter((id) => {
+    const item = itemById(id);
+    return item?.type === type && (type !== 'toy' || !TOY_USE[id] || (data.inventory[id] || 0) > 0);
+  });
 
   const scene = <section
     ref={roomRef}
@@ -1356,7 +1364,7 @@ function Game({ initial }: { initial: PetData }) {
     {toyFx && <img key={toyFx.key} src={itemById(toyFx.id)?.img} alt="" className={`toy-fx fx-${toyFx.fx}`}/>}
     {flight && <FlyingToy key={flight.key} t={flight} duration={flight.kind === 'ball' ? 850 : 1000} onLand={toyLanded}/>}
     {aim && <AimLayer kind={aim} onThrow={(f, t) => throwToy(aim, f, t)} onCancel={() => setAim(null)}/>}
-    {ownedToys.length > 0 && <div className="toy-tray" aria-label="Spielzeug benutzen">{ownedToys.map((id) => { const it = itemById(id)!; const locked = !!TOY_USE[id].room && TOY_USE[id].room !== data.room; return <button key={id} className={`toy-btn ${locked ? 'locked' : ''} ${aim === id ? 'aiming' : ''}`} onClick={() => playToy(id)} title={it.name} data-testid={`button-toy-${id}`}><img src={it.img} alt={it.name}/></button>; })}</div>}
+    {ownedToys.length > 0 && <div className="toy-tray" aria-label="Spielzeug benutzen">{ownedToys.map((id) => { const it = itemById(id)!; const locked = !!TOY_USE[id].room && TOY_USE[id].room !== data.room; const quantity = data.inventory[id] || 0; const fun = TOY_USE[id].need.glueck || 0; return <button key={id} className={`toy-btn ${locked ? 'locked' : ''} ${aim === id ? 'aiming' : ''}`} onClick={() => playToy(id)} title={`${it.name} · Bestand ${quantity} · +${fun} Laune · wird bei Benutzung verbraucht`} aria-label={`${it.name}, Bestand ${quantity}, plus ${fun} Laune, wird bei Benutzung verbraucht`} data-testid={`button-toy-${id}`}><img src={it.img} alt=""/><small className="toy-count">×{quantity}</small></button>; })}</div>}
     <div className="room-controls">{ROOM_LIST.map((room) => <button key={room} className={`room-chip ${data.room === room ? 'selected' : ''}`} onClick={() => changeRoom(room)} data-testid={`room-${room.toLowerCase()}`}>{room}</button>)}</div>
   </section>;
 

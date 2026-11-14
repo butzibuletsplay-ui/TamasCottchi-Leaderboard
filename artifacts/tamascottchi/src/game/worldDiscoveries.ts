@@ -8,7 +8,7 @@ export function canUnlockWorldDiscovery(data: FullPetData, artifactId: string, l
   const item = COLLECTION_ITEMS.find((entry) => entry.id === artifactId);
   const location = LOCATIONS.find((entry) => entry.id === locationId);
   if (!item || !location) return false;
-  const stage = worldStageLevel(location.level, data.world.areaMastery[locationId] || 0);
+  const stage = worldStageLevel(location.stageLevel, data.world.areaMastery[locationId] || 0);
   return worldLevelDropChances(stage, levelFor(data.xp))[item.rarity] > 0;
 }
 

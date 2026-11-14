@@ -8,6 +8,7 @@ import { RewardChestArt } from './RewardChestArt';
 import { assetUrl } from './assets';
 import { ARTIFACTS, artifactBonusPercent } from './artifactSystem';
 import { RARITY_LABEL } from './collectionWorld';
+import { TOY_USE } from './toyRules';
 
 type Props = {
   data: FullPetData;
@@ -19,6 +20,7 @@ type Props = {
 
 function quantity(data: FullPetData, item: Item) {
   const count = data.inventory[item.id] || 0;
+  if (item.type === 'toy' && TOY_USE[item.id]) return count;
   return count > 0 ? count : data.owned.includes(item.id) ? 1 : 0;
 }
 function category(item: Item) {
@@ -34,7 +36,8 @@ function rarity(item: Item) {
 }
 function purpose(item: Item) {
   return item.purpose || item.desc || (item.type === 'food' ? 'Wird verbraucht und füllt ein Bedürfnis.' :
-    item.type === 'toy' ? 'Dauerhaftes Spielzeug für Scottchi.' :
+     item.type === 'toy' && TOY_USE[item.id] ? 'Einmalige Benutzung: Das Spielzeug wird dabei verbraucht.' :
+       item.type === 'toy' ? 'Dauerhaftes Spielzeug für Scottchi.' :
       item.type === 'accessory' ? 'Kosmetisch: kann im Schrank angelegt werden.' :
         item.type === 'room' ? 'Dekoration: kann im Zimmer aufgestellt werden.' :
           item.type === 'background' ? 'Kosmetisches Zimmermotiv.' : 'Wird für Rezepte verwendet.');
@@ -63,7 +66,7 @@ export function InventoryPage({ data, onUse, onEquip, onPlace, onOpenChest }: Pr
 
   function actionFor(selectedItem: Item) {
     if (selectedItem.type === 'food') return <button className="button orange" onClick={() => { onUse(selectedItem.id); setSelected(null); }}>Benutzen · 1</button>;
-    if (selectedItem.type === 'toy' && selectedItem.id !== 'bowl') return <button className="button orange" onClick={() => { onUse(selectedItem.id); setSelected(null); }}>{selectedItem.id === 'shampoo' ? 'Im Bad waschen · 1 Flasche' : selectedItem.id === 'ball' || selectedItem.id === 'frisbee' ? 'Im Spielzimmer werfen' : 'Mit Scottchi spielen'}</button>;
+    if (selectedItem.type === 'toy' && TOY_USE[selectedItem.id]) return <button className="button orange" disabled={quantity(data, selectedItem) < 1} onClick={() => { onUse(selectedItem.id); setSelected(null); }}>{selectedItem.id === 'shampoo' ? 'Im Bad waschen · 1 Flasche' : selectedItem.id === 'ball' || selectedItem.id === 'frisbee' ? 'Im Spielzimmer werfen' : 'Mit Scottchi spielen'}</button>;
     if (selectedItem.id === 'bowl') return <span className="inventory-readonly"><Sparkles size={15}/> Passiver Effekt: Mahlzeiten sättigen stärker. Der Napf bleibt im Zuhause sichtbar.</span>;
     if (selectedItem.type === 'accessory' || selectedItem.type === 'background') return <button className="button orange" onClick={() => { onEquip(selectedItem.id); setSelected(null); }}>{selectedItem.type === 'background' ? data.activeBackground === selectedItem.id ? 'Zimmermotiv entfernen' : 'Zimmermotiv anwenden' : data.equipped.includes(selectedItem.id) ? 'Ablegen' : 'Anziehen'}</button>;
     if (selectedItem.type === 'room') return <button className="button orange" onClick={() => { onPlace(selectedItem.id); setSelected(null); }}>{data.roomItems.includes(selectedItem.id) ? 'Aus dem Zimmer nehmen' : 'Im Zimmer platzieren'}</button>;
@@ -95,7 +98,13 @@ export function InventoryPage({ data, onUse, onEquip, onPlace, onOpenChest }: Pr
       <div className="eyebrow">{category(item)}</div><h3 id="inventory-detail-name">{item.name}</h3>
       <span className="rarity-label">{rarity(item)}</span>
       <p>{item.desc || purpose(item)}</p>
-      <dl className="inventory-facts"><div><dt>Herkunft</dt><dd>{origin(item)}</dd></div><div><dt>Verwendung</dt><dd>{purpose(item)}</dd></div><div><dt>Im Inventar</dt><dd>×{count}</dd></div></dl>
+       <dl className="inventory-facts"><div><dt>Herkunft</dt><dd>{origin(item)}</dd></div><div><dt>Verwendung</dt><dd>{purpose(item)}</dd></div>
+         {item.type === 'toy' && TOY_USE[item.id] && <>
+           <div><dt>Laune-Bonus</dt><dd>+{TOY_USE[item.id].need.glueck || 0} Laune pro Benutzung</dd></div>
+           <div><dt>Verbrauch</dt><dd>1 Exemplar je erfolgreicher Benutzung</dd></div>
+         </>}
+         <div><dt>{item.type === 'toy' && TOY_USE[item.id] ? 'Verfügbarer Bestand' : 'Im Inventar'}</dt><dd>×{count}</dd></div>
+       </dl>
       <div className="dialog-actions">{actionFor(item)}<button className="button ghost" onClick={() => setSelected(null)}><Check size={15}/> Fertig</button></div>
       {item.type === 'material' && <div className="inventory-readonly"><Sparkles size={15}/> Kein direkter Einsatz. Dieses Material wird in Rezepten verbraucht.</div>}
     </section></div>}

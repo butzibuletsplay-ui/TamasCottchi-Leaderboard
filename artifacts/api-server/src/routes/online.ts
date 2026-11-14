@@ -160,7 +160,8 @@ const chestBonus: Record<RewardChestTier, { coins: number; xp: number }> = {
   epic: { coins: 42, xp: 22 },
   legendary: { coins: 70, xp: 36 },
 };
-const locationUnlockLevel: Record<string, number> = { park: 1, city: 3, forest: 5, beach: 8, cave: 12, mountain: 20 };
+const locationUnlockLevel: Record<string, number> = { park: 1, city: 35, forest: 100, beach: 220, cave: 350, mountain: 500 };
+const locationStageLevel: Record<string, number> = { park: 1, city: 5, forest: 9, beach: 13, cave: 17, mountain: 20 };
 const regionTaskRequirements: Record<string, { materials: number; activities: number; rare: number }> = {
   park: { materials: 4, activities: 2, rare: 0 },
   city: { materials: 4, activities: 2, rare: 0 },
@@ -736,8 +737,10 @@ router.post(
     const result = await runEconomyAction(playerId(res), requestId, "daily-world-chest", (save, now) => {
       const level = playerLevelForXp(integer(save.xp));
       const requiredLevel = locationUnlockLevel[locationId];
-      if (!requiredLevel || level < requiredLevel) return { ok: false, status: 409, error: "Dieses Weltgebiet ist noch gesperrt." };
       const world = asRecord(save.world);
+      const grandfathered = stringArray(world.legacyUnlockedLocations).includes(locationId)
+        || stringArray(world.discoveredLocations).includes(locationId);
+      if (!requiredLevel || (level < requiredLevel && !grandfathered)) return { ok: false, status: 409, error: "Dieses Weltgebiet ist noch gesperrt." };
       const day = worldDayKey(now);
       const progressByLocation = asRecord(world.regionDailyProgress);
       const progress = asRecord(progressByLocation[locationId]);
@@ -749,7 +752,7 @@ router.post(
       const claims = sameDay ? stringArray(world.dailyChestLocations) : [];
       if (claims.includes(locationId)) return { ok: false, status: 409, error: "Die Weltkiste für dieses Gebiet wurde heute schon abgeholt." };
       const areaMastery = asRecord(world.areaMastery);
-      const tier = dailyWorldChestTier(worldStageLevel(requiredLevel, integer(areaMastery[locationId])), level, secureRandom);
+      const tier = dailyWorldChestTier(worldStageLevel(locationStageLevel[locationId], integer(areaMastery[locationId])), level, secureRandom);
       const source = `region-daily:${locationId}:${day}`;
       const instance = { id: `chest-${source}`, source, tier, earnedAt: now };
       const instances = Array.isArray(world.chestInstances) ? world.chestInstances.map((entry) => ({ ...asRecord(entry) })) : [];
