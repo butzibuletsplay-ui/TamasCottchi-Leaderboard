@@ -1,8 +1,12 @@
 import type { Item } from './data';
+import { itemAsset } from './assets';
 
 const outline = '#573722';
 
 export function MaterialArt({ item, size = 42 }: { item: Pick<Item, 'id' | 'name' | 'type'>; size?: number }) {
+  const sprite = itemAsset(item.id);
+  if (sprite) return <img className="material-art material-art-sprite" src={sprite} width={size} height={size} alt={item.name} loading="lazy"/>;
+
   const shape = (() => {
     switch (item.id) {
       case 'crafted-crystal-lamp': return <g><path d="M26 13h16l8 23H18Z" fill="#f3cb78"/><path d="M34 8 44 25l-10 11-10-11Z" fill="#81c7d1"/><path d="M20 37h28v5H20Zm7 5h14v8H27Z" fill="#9b6237"/></g>;

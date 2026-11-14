@@ -3,6 +3,37 @@
 const BASE = (import.meta.env.BASE_URL || '/').replace(/\/?$/, '/');
 export const assetUrl = (path: string) => `${BASE}assets/${path}`;
 
+/** Single source of truth for the new item sprites used throughout the game. */
+export const ITEM_ART: Record<string, string> = {
+  'old-coin': assetUrl('items/materials/alte-muenze.png'),
+  'artifact-dust': assetUrl('items/materials/artefaktstaub.png'),
+  wood: assetUrl('items/materials/astholz.png'),
+  'gold-fragment': assetUrl('items/materials/goldstueck.png'),
+  leaf: assetUrl('items/materials/herbstblatt.png'),
+  'bone-scrap': assetUrl('items/materials/knochenfund.png'),
+  'crystal-shard': assetUrl('items/materials/kristallsplitter.png'),
+  cloth: assetUrl('items/materials/stoffstueck.png'),
+  berry: assetUrl('items/materials/waldbeere.png'),
+  wildflower: assetUrl('items/materials/wiesenblume.png'),
+  kibble: assetUrl('items/food/hundekeks.png'),
+  apple: assetUrl('items/food/apfel.png'),
+  chicken: assetUrl('items/food/haehnchenkeule.png'),
+  burger: assetUrl('items/food/burger.png'),
+  special: assetUrl('items/food/spezialmenue.png'),
+  soap: assetUrl('items/food/schaumbad.png'),
+  plant: assetUrl('items/decor/fensterpflanze.png'),
+  lamp: assetUrl('items/decor/sonnenlampe.png'),
+  cushion: assetUrl('items/decor/knautschkissen.png'),
+  rug: assetUrl('items/decor/wolken_teppich.png'),
+  plush: assetUrl('items/decor/kuschel_freund.png'),
+  poster: assetUrl('items/decor/wuschel_poster.png'),
+  forest: assetUrl('items/backgrounds/waldlichtung.png'),
+  beach: assetUrl('items/backgrounds/sonniger_strand.png'),
+  night: assetUrl('items/backgrounds/dunkles_zimmer.png'),
+  fantasy: assetUrl('items/backgrounds/fantasiewelt.png'),
+};
+export const itemAsset = (id: string) => ITEM_ART[id];
+
 export type Mood = 'default' | 'happy' | 'hungry' | 'tired' | 'dirty' | 'sad' | 'excited';
 export const MOODS: Mood[] = ['default', 'happy', 'hungry', 'tired', 'dirty', 'sad', 'excited'];
 export const CHARACTER: Record<Mood, string> = Object.fromEntries(

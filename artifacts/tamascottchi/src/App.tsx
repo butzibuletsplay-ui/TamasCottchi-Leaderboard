@@ -35,7 +35,7 @@ import { OnlinePage } from './game/OnlinePage';
 import { openRewardChest } from './game/rewardChests';
 import {
   applicableArtifactBonus, applyArtifactBonus, equipArtifact, grantRegularChest, unlockArtifact,
-  MINIGAME_SCORE_CHEST_MILESTONES, upgradeArtifact,
+  grantMilestoneChest, MINIGAME_SCORE_CHEST_MILESTONES, upgradeArtifact,
 } from './game/artifactSystem';
 import { COLLECTION_ITEM_LINKS } from './game/collectionWorld';
 type PetData = FullPetData;
@@ -916,6 +916,7 @@ function Game({ initial }: { initial: PetData }) {
   const ownedToys = data.owned.filter((id) => TOY_USE[id]);
   const bgKey = data.activeBackground === 'classic' ? ROOM_BG[data.room] : undefined;
   const bg = bgKey ? BACKGROUNDS[bgKey] : null;
+  const backgroundArt = data.activeBackground === 'classic' ? undefined : itemById(data.activeBackground)?.img;
   const currentGame = GAMES.find((g) => g.id === activeGame);
   const teddyBeside = data.owned.includes('teddy') && data.room === 'Schlafzimmer';
   const speech = sleeping ? (teddyBeside ? 'Zzz… *kuschelt den Teddy*' : 'Zzz…') : mood === 'hungry' ? 'Bro, ich hab Hunger.' : mood === 'tired' ? 'Ich bin so müde.' : mood === 'dirty' ? 'Ich rieche… interessant.' : mood === 'sad' ? 'Spielst du mit mir?' : petSpeech;
@@ -929,7 +930,8 @@ function Game({ initial }: { initial: PetData }) {
     className={`room-card phase-${phase} ${bg ? 'has-photo' : `room-${data.room.toLowerCase()} background-${data.activeBackground}`} ${data.room === 'Schlafzimmer' && !data.settings.lampOn ? 'room-dark' : ''} ${data.room === 'Schlafzimmer' && (phase === 'abend' || phase === 'nacht') ? 'room-cozy' : ''}`}
     style={bg ? { ['--bg-pos' as string]: bg.pos, ['--bg-pos-m' as string]: bg.mobilePos } : undefined} data-testid="room-scene">
     {bg ? <picture key={bgKey} className="room-photo"><source srcSet={bg.src} type="image/webp"/><img src={bg.fallback} alt=""/></picture>
-      : <div key={data.room + data.activeBackground} className="room-css"><div className="room-sky"/><div className="room-floor"/><div className="room-window"/><div className="room-art">W</div><div className="rug"/></div>}
+      : <><div key={data.room + data.activeBackground} className="room-css"><div className="room-sky"/><div className="room-floor"/><div className="room-window"/><div className="room-art">W</div><div className="rug"/></div>
+        {backgroundArt && <div className="room-theme-art" aria-hidden="true"><img src={backgroundArt} alt="" /></div>}</>}
     {roomDecor.map((item, i) => {
       const pos = dragPosition?.id === item.id ? dragPosition : data.roomPlacements[item.id] || { x: 16 + (i % 5) * 16, y: 70 };
       return <button className="room-item" key={item.id} style={{ left: `${pos.x}%`, top: `${pos.y}%` }} title={`${item.name} · zum Verschieben ziehen`} aria-label={`${item.name} verschieben`} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); dragDecor.current = { id: item.id, pointerId: event.pointerId }; }} onPointerUp={finishDecorDrag} onPointerCancel={finishDecorDrag} data-testid={`room-decor-${item.id}`}>{hasMaterialArt(item) ? <MaterialArt item={item} size={42}/> : item.img ? <img src={item.img} alt=""/> : item.icon}</button>;
@@ -987,7 +989,7 @@ function Game({ initial }: { initial: PetData }) {
                 <div className="need-icon"><Icon/></div><div><div className="need-label">{name}</div><div className="meter"><div className={`meter-fill ${data.needs[id] < 30 ? 'low' : data.needs[id] < 55 ? 'mid' : ''}`} style={{ transform: `scaleX(${data.needs[id] / 100})` }}/></div></div><div className="need-value">{data.needs[id]}%</div>
               </div>)}
               {data.room === 'Küche' && <div className="room-controls" style={{ position: 'static', flexWrap: 'wrap', margin: '0 0 3px' }} aria-label="Futter auswählen">
-                {ITEMS.filter((item) => item.type === 'food' && item.effect === 'hunger').map((item) => <button key={item.id} className={`room-chip ${selectedFood === item.id ? 'selected' : ''}`} disabled={!data.inventory[item.id]} onClick={() => setSelectedFood(item.id)} data-testid={`food-choice-${item.id}`}>{item.name} · {data.inventory[item.id] || 0}</button>)}
+                {ITEMS.filter((item) => item.type === 'food' && item.effect === 'hunger').map((item) => <button key={item.id} className={`room-chip food-choice-chip ${selectedFood === item.id ? 'selected' : ''}`} disabled={!data.inventory[item.id]} onClick={() => setSelectedFood(item.id)} data-testid={`food-choice-${item.id}`}>{item.img && <img src={item.img} alt="" loading="lazy"/>}{item.name} · {data.inventory[item.id] || 0}</button>)}
               </div>}
               <div className="pet-actions">
                 <button className="action-button" onClick={() => performNeed('hunger')} disabled={!ITEMS.some((item) => item.effect === 'hunger' && (data.inventory[item.id] || 0) > 0)} data-testid="button-feed"><Utensils/>Füttern · {data.inventory[selectedFood] || 0}</button>
