@@ -26,6 +26,7 @@ const BACKUP_KEY_66 = dataModule.BACKUP_KEY_66;
 const BACKUP_KEY_67 = dataModule.BACKUP_KEY_67;
 const BACKUP_KEY_68 = dataModule.BACKUP_KEY_68;
 const BACKUP_KEY_69 = dataModule.BACKUP_KEY_69;
+const BACKUP_KEY_70 = dataModule.BACKUP_KEY_70;
 const questBuild = await build({
   entryPoints: ['artifacts/tamascottchi/src/game/questEngine.ts'],
   bundle: true, write: false, format: 'esm', platform: 'node',
@@ -189,13 +190,18 @@ test('best score survives even when older records are no longer in history', () 
   const data = normalize({ ...initialData(), highscores: { catch: 900 }, records: [{ id: 'newer', game: 'catch', score: 10, date: Date.now() }] });
   assert.equal(data.highscores.catch, 900);
 });
-test('returning after several days does not penalize needs or possessions', () => {
+test('needs change during multi-day absences without losing possessions or character progress', () => {
   const characterPoints = { verspielt: 900, neugierig: 800, verschlafen: 700, frech: 600, anhaenglich: 500 };
-  const old = { ...initialData(), characterPoints, lastUpdated: Date.now() - 7 * 86400000 };
+  const old = {
+    ...initialData(), characterPoints, lastUpdated: Date.now() - 7 * 86400000,
+    personality: { ...initialData().personality, verspielt: -8, anhaenglich: 112 },
+  };
   const next = normalize(old);
-  assert.deepEqual(next.needs, old.needs);
+  assert.deepEqual(next.needs, { hunger: 0, glueck: 0, energie: 0, sauberkeit: 0 });
   assert.equal(next.coins, old.coins);
   assert.deepEqual(next.characterPoints, characterPoints, 'character points never decay during absence');
+  assert.equal(next.personality.verspielt, 0);
+  assert.equal(next.personality.anhaenglich, 100);
 });
 test('version 2.0 gets a separate untouched 2.1 backup', () => {
   storage.clear();
@@ -367,6 +373,22 @@ test('schema 14 migration preserves unlocked forms and migrates legacy personali
   assert.equal(next.evolutionStage, 4);
   assert.equal(next.activeEvolutionStage, 2);
   assert.deepEqual(next.owned, old.owned);
+});
+test('schema 15 sleep migrates to an eight-hour offline cycle and keeps a raw backup', () => {
+  storage.clear();
+  const start = Date.now();
+  const old = {
+    ...initialData(), saveSchema: 15, room: 'Schlafzimmer',
+    lastUpdated: start, sleepUntil: start + 60_000,
+    needs: { hunger: 100, glueck: 100, energie: 30, sauberkeit: 100 },
+  };
+  delete old.sleepStartedAt;
+  const raw = JSON.stringify(old);
+  storage.set(STORE_KEY, raw);
+  const migrated = loadData();
+  assert.equal(storage.get(BACKUP_KEY_70), raw);
+  assert.equal(migrated.sleepStartedAt, migrated.sleepUntil - 60_000);
+  assert.ok(migrated.needs.energie >= 30 && migrated.needs.energie <= 100);
 });
 test('the ten uploaded transparent form images map to stages in the requested order', () => {
   const source = readFileSync('artifacts/tamascottchi/src/game/evolutionArtwork.ts', 'utf8');
@@ -1114,6 +1136,59 @@ test('character points share one server-enforced 100-point cap and cooldown acro
   const capped = economy.awardCharacterActivity(lastPoint.characterPoints, lastPoint.daily, 'rest-complete', undefined, now + 30_000);
   assert.equal(capped.ok, false);
   assert.equal(capped.reason, 'daily-cap');
+});
+
+test('needs simulate realistic offline decay and a complete eight-hour sleep', () => {
+  const start = Date.parse('2026-05-01T20:00:00Z');
+  const eightHours = 8 * 60 * 60 * 1000;
+  const slept = economy.simulatePetNeeds(
+    { hunger: 100, glueck: 100, energie: 30, sauberkeit: 100 },
+    start,
+    start + eightHours,
+    start,
+    start + eightHours,
+  );
+  assert.deepEqual(slept, { hunger: 45, glueck: 90, energie: 100, sauberkeit: 85 });
+
+  const twoDays = economy.simulatePetNeeds(
+    { hunger: 80, glueck: 70, energie: 60, sauberkeit: 90 },
+    start,
+    start + 48 * 60 * 60 * 1000,
+  );
+  assert.deepEqual(twoDays, { hunger: 0, glueck: 10, energie: 0, sauberkeit: 0 });
+  assert.ok(Object.values(twoDays).every((value) => value >= 0 && value <= 100));
+});
+
+test('normalizing an offline save applies elapsed sleep time once', () => {
+  const sleepMs = 8 * 60 * 60 * 1000;
+  const now = Date.now();
+  const start = now - sleepMs;
+  const restored = normalize({
+    ...initialData(), saveSchema: SAVE_SCHEMA, room: 'Schlafzimmer',
+    lastUpdated: start, sleepStartedAt: start, sleepUntil: now,
+    needs: { hunger: 100, glueck: 100, energie: 30, sauberkeit: 100 },
+  });
+  assert.equal(restored.needs.hunger, 45);
+  assert.equal(restored.needs.glueck, 90);
+  assert.equal(restored.needs.sauberkeit, 85);
+  assert.equal(restored.needs.energie, 100);
+  assert.equal(restored.lastUpdated >= now, true);
+});
+
+test('character progress slows when care needs are low without changing the daily cap', () => {
+  const now = Date.parse('2026-02-10T12:00:00Z');
+  const points = economy.normalizeCharacterPoints(undefined);
+  const daily = economy.normalizeCharacterDailyProgress(undefined, now);
+  const caredFor = economy.awardCharacterActivity(points, daily, 'feeding', undefined, now, {
+    hunger: 90, glueck: 90, energie: 90, sauberkeit: 90,
+  });
+  const neglected = economy.awardCharacterActivity(points, daily, 'feeding', undefined, now, {
+    hunger: 10, glueck: 20, energie: 30, sauberkeit: 40,
+  });
+  assert.equal(caredFor.ok && caredFor.points, 2);
+  assert.equal(neglected.ok && neglected.points, 1);
+  assert.equal(caredFor.ok && caredFor.daily.earned, 2);
+  assert.equal(neglected.ok && neglected.daily.earned, 1);
 });
 
 test('character-point daily totals reset at Berlin midnight and cooldown timestamps stay bounded', () => {

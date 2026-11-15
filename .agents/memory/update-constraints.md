@@ -9,11 +9,11 @@ Bestehendes tamascottchi erweitern, keine neue Website erstellen. Vorhandene Fun
 
 **How to apply:** Speicheränderungen rückwärtskompatibel ausführen und vor Migration den alten Spielstand sichern.
 
-Das Spiel darf den Nutzer nicht bestrafen, wenn er mehrere Tage nicht online war.
+Bedürfnisse entwickeln sich nach echter Zeit weiter, auch wenn das Spiel mehrere Tage geschlossen ist; Scottchi darf dadurch nicht sterben.
 
-**Why:** Der Nutzer verlangt einen freundlichen Tagesablauf ohne Abwesenheitsstrafe.
+**Why:** Die spätere Überarbeitung des Bedürfnissystems verlangt ausdrücklich Offline-Simulation, ohne Tod des Haustiers.
 
-**How to apply:** Offline-Zeiten und inaktive Browser-Tabs dürfen bei mehrtägiger Abwesenheit keine nachträglichen Bedürfnisverluste verursachen.
+**How to apply:** Beim Laden einmalig anhand gespeicherter Zeitstempel simulieren und alle Werte auf 0–100 begrenzen; längere Offline-Zeit darf Bedürfnisse senken, aber keine Besitztümer oder Charakterpunkte löschen.
 
 Multiplayer zunächst analysieren und nicht ohne Zustimmung vollständig implementieren. Vor kostenpflichtigen Diensten oder größerer Multiplayer-Infrastruktur Lösungen, Kosten und Einschränkungen erklären. Keine unmoderierten öffentlichen Chats; bevorzugt Freundescodes und feste Interaktionen.
 

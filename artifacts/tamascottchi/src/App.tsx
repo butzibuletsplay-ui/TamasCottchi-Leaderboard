@@ -17,7 +17,7 @@ import { EvolutionPage } from './game/EvolutionPage';
 import { EVOLUTION_STAGES, selectUnlockedEvolution, type EvolutionPurchaseResult } from './game/evolution';
 import { AimLayer, FlyingToy, type Point, type Throw } from './game/ToyPlay';
 import {
-  FAVORITE_TOY, FOOD_LINES, IDLE_CLASS, IDLE_LINES, PHASE_INFO, SURPRISES, TOY_LINES, TRAITS, absenceDecay, dayPhase, dominant, hasCharacter, nudge,
+  FAVORITE_TOY, FOOD_LINES, IDLE_CLASS, IDLE_LINES, PHASE_INFO, SURPRISES, TOY_LINES, TRAITS, dayPhase, dominant, hasCharacter, nudge,
   type Trait,
 } from './game/personality';
 import {
@@ -51,16 +51,17 @@ import {
   CHEST_UNLOCK_LEVEL, MAX_PLAYER_XP, MINIGAME_DAILY_TASK_TARGET, MINIGAME_DAILY_XP_CAP, applyMinigameRound,
   chestKeyPrice, claimMinigameDailyChest, minigameDailyChestChances, minigameDailyCoinCap,
   CHARACTER_DAILY_POINT_CAP, CHARACTER_TOY_TRAITS, CHARACTER_TRAIT_IDS, normalizeCharacterDailyProgress,
-  type CharacterActivityId, type CharacterToyId,
+  simulatePetNeeds, type CharacterActivityId, type CharacterToyId,
   normalizeMinigameDailyState, playerLevelProgress,
 } from '@workspace/game-economy';
 type PetData = FullPetData;
 
 type CloudLink = { userId: string; revision: number; fingerprint: string };
 type CloudSyncStatus = 'offline' | 'checking' | 'unlinked' | 'syncing' | 'synced' | 'conflict' | 'error';
-const NEEDS: { id: NeedKey; name: string; icon: typeof Heart }[] = [
+const NEEDS: { id: NeedKey | 'zuneigung'; name: string; icon: typeof Heart }[] = [
   { id: 'hunger', name: 'Sattheit', icon: Utensils }, { id: 'glueck', name: 'Laune', icon: Heart },
   { id: 'energie', name: 'Energie', icon: Activity }, { id: 'sauberkeit', name: 'Sauberkeit', icon: Sparkles },
+  { id: 'zuneigung', name: 'Zuneigung', icon: Users },
 ];
 const DAILY_GOALS: { id: keyof DailyProgress; title: string; detail: string; target: number; rewardCoins: number; rewardXp: number }[] = [
   { id: 'feeds', title: 'Snack-Zeit', detail: 'Füttere Scottchi dreimal', target: 3, rewardCoins: 8, rewardXp: 10 },
@@ -93,6 +94,15 @@ function applyNeeds(needs: PetData['needs'], delta: Partial<Record<NeedKey, numb
   const out = { ...needs };
   for (const [k, v] of Object.entries(delta) as [NeedKey, number][]) out[k] = clamp(out[k] + v);
   return out;
+}
+
+function advanceCareData(data: PetData, timestamp: number): PetData {
+  if (timestamp <= data.lastUpdated) return data;
+  return {
+    ...data,
+    lastUpdated: timestamp,
+    needs: simulatePetNeeds(data.needs, data.lastUpdated, timestamp, data.sleepStartedAt, data.sleepUntil),
+  };
 }
 
 function ItemIcon({ item }: { item: Item }) {
@@ -146,7 +156,11 @@ function Game({ initial }: { initial: PetData }) {
   const [data, setDataState] = useState<PetData>(initial);
   const setData = useCallback((update: PetData | ((current: PetData) => PetData)) => {
     setDataState((current) => {
-      const next = typeof update === 'function' ? update(current) : update;
+      const timestamp = Date.now();
+      const currentWithElapsedNeeds = advanceCareData(current, timestamp);
+      const next = typeof update === 'function'
+        ? update(currentWithElapsedNeeds)
+        : advanceCareData(update, timestamp);
       const xp = Math.max(0, Math.min(MAX_PLAYER_XP, next.xp));
       return xp === next.xp ? next : { ...next, xp };
     });
@@ -179,8 +193,8 @@ function Game({ initial }: { initial: PetData }) {
   const chestActionBusy = useRef(new Set<string>());
   const chestRequestIds = useRef(new Map<string, string>());
   const characterActionNoticeShown = useRef(false);
-  const activeNapUntilRef = useRef<number | null>(null);
-  const napCompletionTimer = useRef<number | null>(null);
+  const completedSleepUntilRef = useRef<number | null>(null);
+  const awardCharacterActivityRef = useRef<(activity: CharacterActivityId, toyId?: CharacterToyId) => Promise<boolean>>(async () => false);
   const [page, setPage] = useState('home');
   const [closetTab, setClosetTab] = useState<'wardrobe' | 'evolution'>('wardrobe');
   const [shopTab, setShopTab] = useState<Item['type'] | 'keys'>('food');
@@ -457,50 +471,41 @@ function Game({ initial }: { initial: PetData }) {
   useEffect(() => {
     void preloadAll(CORE_SPRITES).then(() => Object.values(BACKGROUNDS).forEach((b) => void preloadImage(b.src)));
   }, []);
-  // need decay + daily reset + sleep regen in one interval
+  // Recompute elapsed real time on a steady interval and immediately on return to the tab.
   useEffect(() => {
-    const id = window.setInterval(() => {
-      if (document.visibilityState !== 'visible') return;
-      setNow(Date.now());
+    const refreshCare = () => {
+      const timestamp = Date.now();
+      setNow(timestamp);
+      const current = dataRef.current;
+      const completedSleep = current.sleepUntil !== null
+        && current.sleepStartedAt !== null
+        && current.sleepUntil <= timestamp
+        && current.sleepUntil - current.sleepStartedAt >= 8 * 60 * 60 * 1000;
+      if (completedSleep && cloudLinkRef.current && completedSleepUntilRef.current !== current.sleepUntil) {
+        completedSleepUntilRef.current = current.sleepUntil;
+        window.setTimeout(() => { void awardCharacterActivityRef.current('rest-complete'); }, 0);
+      }
       setData((old) => {
-        let cur = old;
-        if (cur.missionsDate !== today()) cur = { ...cur, daily: { feeds: 0, games: 0, baths: 0, pets: 0, coins: 0 }, missions: {}, missionsDate: today() };
-        const elapsed = Date.now() - cur.lastUpdated;
-        if (elapsed >= 240000) {
-          // Long gaps preserve needs; only active, short intervals cause decay.
-          const evening = ['abend', 'nacht'].includes(dayPhase());
-          const needs = Object.fromEntries(Object.entries(cur.needs).map(([k, v]) => [k, clamp(absenceDecay(v, elapsed * (evening && k === 'energie' && elapsed < 1200000 ? 1.5 : 1)))])) as PetData['needs'];
-          cur = { ...cur, lastUpdated: Date.now(), needs };
+        let next = advanceCareData(old, timestamp);
+        if (next.sleepUntil !== null && next.sleepUntil <= timestamp) {
+          next = { ...next, sleepUntil: null, sleepStartedAt: null, settings: { ...next.settings, lampOn: true } };
         }
-        return cur;
-      });
-    }, 10000);
-    return () => window.clearInterval(id);
-  }, []);
-  // hidden tab: freeze the clock while away, then apply the same capped absence rule on return
-  useEffect(() => {
-    const onVis = () => {
-      if (document.visibilityState !== 'visible') { setData((old) => ({ ...old, routine: { ...old.routine, lastSeen: Date.now() } })); return; }
-      setNow(Date.now());
-      setData((old) => {
-        const away = Date.now() - old.lastUpdated;
-        if (away < 240000) return old;
-        return { ...old, lastUpdated: Date.now(), needs: Object.fromEntries(Object.entries(old.needs).map(([k, v]) => [k, clamp(absenceDecay(v, away))])) as PetData['needs'] };
+        if (next.missionsDate !== today()) {
+          next = { ...next, daily: { feeds: 0, games: 0, baths: 0, pets: 0, coins: 0 }, missions: {}, missionsDate: today() };
+        }
+        return next;
       });
     };
-    document.addEventListener('visibilitychange', onVis);
-    return () => document.removeEventListener('visibilitychange', onVis);
-  }, []);
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      setData((old) => {
-        if (!old.sleepUntil) return old;
-        if (old.room !== 'Schlafzimmer' || Date.now() >= old.sleepUntil) return { ...old, sleepUntil: null };
-        const gain = old.owned.includes('teddy') ? 7 : 5;
-        return { ...old, needs: { ...old.needs, energie: clamp(old.needs.energie + gain) } };
-      });
-    }, 10000);
-    return () => window.clearInterval(id);
+    refreshCare();
+    const interval = window.setInterval(refreshCare, 60_000);
+    const onVisibility = () => { if (document.visibilityState === 'visible') refreshCare(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    const clock = window.setInterval(() => setNow(Date.now()), 10_000);
+    return () => {
+      window.clearInterval(interval);
+      window.clearInterval(clock);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, []);
 
   const level = levelFor(data.xp);
@@ -885,6 +890,7 @@ function Game({ initial }: { initial: PetData }) {
       }
     })) ?? false;
   }
+  awardCharacterActivityRef.current = awardCharacterActivity;
   async function purchaseChestKeyAction(tier: RewardChestTier): Promise<boolean> {
     const actionKey = `key:${tier}`;
     if (chestActionBusy.current.has(actionKey)) return false;
@@ -1055,7 +1061,8 @@ function Game({ initial }: { initial: PetData }) {
       const bowl = data.owned.includes('bowl') ? 1.25 : 1;
       setData((old) => advanceDaily({
         ...old, inventory: { ...old.inventory, [food.id]: Math.max(0, (old.inventory[food.id] || 0) - 1) },
-        needs: applyNeeds({ ...old.needs, hunger: clamp(old.needs.hunger + (food.amount || 12) * bowl) }, food.effects || {}), xp: old.xp + 9, stats: { ...old.stats, care: old.stats.care + 1 },
+        needs: applyNeeds({ ...old.needs, hunger: clamp(old.needs.hunger + (food.amount || 12) * bowl) }, food.effects || {}),
+        personality: nudge(old.personality, 'anhaenglich', 0.5), xp: old.xp + 9, stats: { ...old.stats, care: old.stats.care + 1 },
       }, 'feeds'));
       void awardCharacterActivity('feeding');
       showPetAction('eating', showsTrait ? FOOD_LINES[trait] : `Mmmh, ${food.name.toLowerCase()}!`, 2000);
@@ -1067,12 +1074,14 @@ function Game({ initial }: { initial: PetData }) {
       if (data.needs.sauberkeit >= 100) { notify('Scottchi ist schon blitzsauber.'); return; }
       setData((old) => advanceDaily({
         ...old, inventory: { ...old.inventory, soap: Math.max(0, (old.inventory.soap || 0) - 1) },
-        needs: { ...old.needs, sauberkeit: clamp(old.needs.sauberkeit + 35) }, xp: old.xp + 10, stats: { ...old.stats, care: old.stats.care + 1 },
+        needs: { ...old.needs, sauberkeit: clamp(old.needs.sauberkeit + 35) },
+        personality: nudge(old.personality, 'anhaenglich', 0.7), xp: old.xp + 10, stats: { ...old.stats, care: old.stats.care + 1 },
       }, 'baths'));
       void awardCharacterActivity('bathing');
       showPetAction('washing', 'Blasen! Blasen! Das kitzelt.');
       notify('Schaumwolke! Scottchi ist wieder sauber.'); sound(760); return;
     }
+    if (dataRef.current.needs.glueck >= 100) { notify('Scottchi ist schon rundum glücklich und braucht gerade keine Tobepause.'); return; }
     if (data.needs.energie < 10) { notify('Scottchi braucht erst eine Pause.'); return; }
     setData((old) => ({ ...old, needs: { ...old.needs, glueck: clamp(old.needs.glueck + 12), energie: clamp(old.needs.energie - 4) }, xp: old.xp + 4, stats: { ...old.stats, care: old.stats.care + 1 } }));
     void awardCharacterActivity('playful-interaction');
@@ -1081,12 +1090,19 @@ function Game({ initial }: { initial: PetData }) {
   }
   function pet() {
     if (sleeping) { showPetAction('sleeping', 'Zzz… nur noch fünf Minuten.'); return; }
-    setData((old) => advanceDaily({ ...old, needs: { ...old.needs, glueck: clamp(old.needs.glueck + 8) }, xp: old.xp + 4, stats: { ...old.stats, care: old.stats.care + 1 } }, 'pets'));
-    void awardCharacterActivity('cuddle');
+    const canImproveMood = dataRef.current.needs.glueck < 100;
+    setData((old) => advanceDaily({
+      ...old,
+      needs: { ...old.needs, glueck: clamp(old.needs.glueck + (canImproveMood ? 8 : 0)) },
+      xp: old.xp + (canImproveMood ? 4 : 0),
+      stats: { ...old.stats, care: old.stats.care + 1 },
+    }, 'pets'));
+    if (canImproveMood) void awardCharacterActivity('cuddle');
     const lines = ['Das kitzelt!', 'Was guckst du?', 'Wuff oder so!', 'Ich bin eine Kreatur.', 'Was passiert hier eigentlich?', 'Ich habe existenzielle Fragen.'];
     const pool = showsTrait ? [...lines.slice(0, 3), ...IDLE_LINES[trait]] : lines;
-    showPetAction('petting', pool[Math.floor(Math.random() * pool.length)]); grow('anhaenglich', 0.7);
-    notify(`${data.name} freut sich.`); sound(650);
+    showPetAction('petting', pool[Math.floor(Math.random() * pool.length)]);
+    if (canImproveMood) grow('anhaenglich', 0.7);
+    notify(canImproveMood ? `${data.name} freut sich.` : `${data.name} genießt die Nähe, ist aber schon ganz glücklich.`); sound(650);
   }
   function playToy(id: string) {
     const use = TOY_USE[id];
@@ -1267,18 +1283,10 @@ function Game({ initial }: { initial: PetData }) {
     });
     notify('Kompletter Stil angezogen.'); sound(820);
   }
-  function cancelActiveNap() {
-    activeNapUntilRef.current = null;
-    if (napCompletionTimer.current !== null) {
-      window.clearTimeout(napCompletionTimer.current);
-      napCompletionTimer.current = null;
-    }
-  }
   function changeRoom(room: Room) {
     setAim(null);
     const changedRoom = dataRef.current.room !== room;
-    if (room !== 'Schlafzimmer' && activeNapUntilRef.current) cancelActiveNap();
-    setData((old) => ({ ...old, room, sleepUntil: room === 'Schlafzimmer' ? old.sleepUntil : null, xp: old.xp + (old.missions.room ? 0 : 8), stats: { ...old.stats, rooms: old.stats.rooms + 1 }, missions: { ...old.missions, room: true },
+    setData((old) => ({ ...old, room, sleepUntil: room === 'Schlafzimmer' ? old.sleepUntil : null, sleepStartedAt: room === 'Schlafzimmer' ? old.sleepStartedAt : null, xp: old.xp + (old.missions.room ? 0 : 8), stats: { ...old.stats, rooms: old.stats.rooms + 1 }, missions: { ...old.missions, room: true },
       visitedRooms: old.visitedRooms.includes(room) ? old.visitedRooms : [...old.visitedRooms, room], personality: old.room === room ? old.personality : nudge(old.personality, 'neugierig', 0.4) }));
     if (changedRoom) void awardCharacterActivity('room-explore');
     sound(520);
@@ -1286,23 +1294,15 @@ function Game({ initial }: { initial: PetData }) {
   function sleep() {
     if (data.room !== 'Schlafzimmer') { notify('Scottchi kann nur im Schlafzimmer schlafen.'); return; }
     if (sleeping) {
-      cancelActiveNap();
-      setData((old) => ({ ...old, sleepUntil: null, settings: { ...old.settings, lampOn: true } }));
+      setData((old) => ({ ...old, sleepUntil: null, sleepStartedAt: null, settings: { ...old.settings, lampOn: true } }));
       showPetAction('idle', 'Morgen! Was gibt es?'); notify('Scottchi ist wieder wach.'); sound(500); return;
     }
-    cancelActiveNap();
-    const sleepUntil = Date.now() + 60000;
-    activeNapUntilRef.current = sleepUntil;
-    napCompletionTimer.current = window.setTimeout(() => {
-      if (activeNapUntilRef.current !== sleepUntil) return;
-      activeNapUntilRef.current = null;
-      napCompletionTimer.current = null;
-      void awardCharacterActivity('rest-complete');
-    }, 60000);
-    setData((old) => ({ ...old, sleepUntil, settings: { ...old.settings, lampOn: false }, xp: old.xp + 2, personality: nudge(old.personality, 'verschlafen', 1) }));
+    const sleepStartedAt = Date.now();
+    const sleepUntil = sleepStartedAt + 8 * 60 * 60 * 1000;
+    setData((old) => ({ ...old, sleepUntil, sleepStartedAt, settings: { ...old.settings, lampOn: false }, xp: old.xp + 2, personality: nudge(old.personality, 'verschlafen', 1) }));
     setNow(Date.now() + 1);
     showPetAction('sleeping', 'Zzz…');
-    notify(`${data.name} schläft jetzt eine Runde${data.owned.includes('teddy') ? ' mit dem Teddy' : ''}.`); sound(420);
+    notify(`${data.name} schläft jetzt acht Stunden${data.owned.includes('teddy') ? ' mit dem Teddy' : ''}.`); sound(420);
   }
 
   async function purchaseEvolution(): Promise<EvolutionPurchaseResult> {
@@ -1581,18 +1581,21 @@ function Game({ initial }: { initial: PetData }) {
             <section className="panel need-panel">
               <div className="panel-head"><h2 className="panel-title">{data.name}s Wohlgefühl</h2><span className={`mood-tag mood-${mood}`} data-testid="status-mood">{({ default: 'Entspannt', happy: 'Glücklich', hungry: 'Hungrig', tired: 'Müde', dirty: 'Schmutzig', sad: 'Traurig', excited: 'Aufgedreht' } as const)[mood]}</span></div>
               <div className="routine-strip" data-testid="routine-strip"><strong>{PHASE_INFO[phase].name}</strong><span>{PHASE_INFO[phase].tip}</span></div>
-              {NEEDS.map(({ id, name, icon: Icon }) => <div className="need-row" key={id} data-testid={`need-${id}`}>
-                <div className="need-icon"><Icon/></div><div><div className="need-label">{name}</div><div className="meter"><div className={`meter-fill ${data.needs[id] < 30 ? 'low' : data.needs[id] < 55 ? 'mid' : ''}`} style={{ transform: `scaleX(${data.needs[id] / 100})` }}/></div></div><div className="need-value">{data.needs[id]}%</div>
-              </div>)}
+              {NEEDS.map(({ id, name, icon: Icon }) => {
+                const value = id === 'zuneigung' ? clamp(data.personality.anhaenglich) : data.needs[id];
+                return <div className="need-row" key={id} data-testid={`need-${id}`} title={id === 'zuneigung' ? 'Zuneigung wächst durch regelmäßiges Füttern, Baden und Kraulen.' : undefined}>
+                  <div className="need-icon"><Icon/></div><div><div className="need-label">{name}</div><div className="meter"><div className={`meter-fill ${id !== 'zuneigung' && value < 30 ? 'low' : id !== 'zuneigung' && value < 55 ? 'mid' : ''}`} style={{ transform: `scaleX(${value / 100})` }}/></div></div><div className="need-value">{Math.round(value)}%</div>
+                </div>;
+              })}
               {data.room === 'Küche' && <div className="room-controls" style={{ position: 'static', flexWrap: 'wrap', margin: '0 0 3px' }} aria-label="Futter auswählen">
                 {ITEMS.filter((item) => item.type === 'food' && item.effect === 'hunger').map((item) => <button key={item.id} className={`room-chip food-choice-chip ${selectedFood === item.id ? 'selected' : ''}`} disabled={!data.inventory[item.id]} onClick={() => setSelectedFood(item.id)} data-testid={`food-choice-${item.id}`}>{item.img && <img src={item.img} alt="" loading="lazy"/>}{item.name} · {data.inventory[item.id] || 0}</button>)}
               </div>}
               <div className="pet-actions">
-                <button className="action-button" onClick={() => performNeed('hunger')} disabled={!ITEMS.some((item) => item.effect === 'hunger' && (data.inventory[item.id] || 0) > 0)} data-testid="button-feed"><Utensils/>Füttern · {data.inventory[selectedFood] || 0}</button>
+                <button className="action-button" onClick={() => performNeed('hunger')} disabled={data.needs.hunger >= 100 || !ITEMS.some((item) => item.effect === 'hunger' && (data.inventory[item.id] || 0) > 0)} data-testid="button-feed"><Utensils/>Füttern · {data.inventory[selectedFood] || 0}</button>
                 <button className="action-button" onClick={() => performNeed('glueck')} data-testid="button-play-care"><Dumbbell/>Toben</button>
                 <button className="action-button" onClick={() => performNeed('sauberkeit')} data-testid="button-bath"><Bath/>Baden {data.inventory.soap ? `· ${data.inventory.soap}` : ''}</button>
                 <button className="action-button" onClick={pet} data-testid="button-cuddle"><Heart/>Kraulen</button>
-                {data.room === 'Schlafzimmer' && <button className="action-button" onClick={sleep} data-testid="button-sleep"><Moon size={15}/>{sleeping ? 'Aufwachen' : 'Schlafen'}</button>}
+                {data.room === 'Schlafzimmer' && <button className="action-button" onClick={sleep} data-testid="button-sleep"><Moon size={15}/>{sleeping ? 'Aufwachen' : 'Schlafen · 8 Std.'}</button>}
               </div>
               {!ownedToys.length && <p className="subline">Spielzeug aus dem Laden erscheint direkt im Zimmer und lässt sich antippen.</p>}
               <div className="traits" data-testid="panel-personality">

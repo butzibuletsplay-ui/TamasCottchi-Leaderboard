@@ -60,13 +60,3 @@ export const PHASE_INFO: Record<DayPhase, { name: string; line: string; tip: str
   abend: { name: 'Abend', line: 'Langsam werde ich müde…', tip: 'Das Schlafzimmer wird gemütlich. Zeit für Ruhe.' },
   nacht: { name: 'Nacht', line: 'Psst. Eigentlich ist Schlafenszeit.', tip: 'Im Schlafzimmer erholt sich Scottchi am besten.' },
 };
-
-/**
- * No punishment for being away. Short absences (incl. hidden tabs) decay normally;
- * long absences preserve needs unchanged, so returning after days never incurs a penalty.
- */
-export function absenceDecay(value: number, elapsedMs: number) {
-  const ticks = Math.floor(Math.max(0, elapsedMs) / 240000);
-  if (elapsedMs <= 20 * 60000) return Math.max(0, value - ticks);
-  return value;
-}

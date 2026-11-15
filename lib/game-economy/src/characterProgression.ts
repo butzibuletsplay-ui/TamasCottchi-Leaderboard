@@ -137,6 +137,7 @@ export function awardCharacterActivity(
   activity: CharacterActivityId,
   toyId: CharacterToyId | undefined,
   timestamp: number,
+  needsInput?: Partial<{ hunger: number; glueck: number; energie: number; sauberkeit: number }>,
 ): CharacterActivityResult {
   const daily = normalizeCharacterDailyProgress(dailyInput, timestamp);
   if (daily.earned >= CHARACTER_DAILY_POINT_CAP) return { ok: false, reason: 'daily-cap', daily };
@@ -153,7 +154,13 @@ export function awardCharacterActivity(
   if (!trait) return { ok: false, reason: 'invalid-activity', daily };
 
   const characterPoints = normalizeCharacterPoints(pointsInput);
-  const points = Math.min(CHARACTER_POINTS_PER_ACTIVITY, CHARACTER_DAILY_POINT_CAP - daily.earned);
+  const needs = needsInput
+    ? [needsInput.hunger, needsInput.glueck, needsInput.energie, needsInput.sauberkeit]
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+    : [];
+  const careAverage = needs.length ? needs.reduce((total, value) => total + Math.min(100, Math.max(0, value)), 0) / needs.length : 100;
+  const careAdjustedPoints = careAverage < 70 ? 1 : CHARACTER_POINTS_PER_ACTIVITY;
+  const points = Math.min(careAdjustedPoints, CHARACTER_DAILY_POINT_CAP - daily.earned);
   return {
     ok: true,
     trait,

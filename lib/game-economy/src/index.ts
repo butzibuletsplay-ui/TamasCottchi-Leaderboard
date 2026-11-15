@@ -1,4 +1,5 @@
 export * from './characterProgression';
+export * from './petNeeds';
 export const CHEST_TIERS = ['common', 'uncommon', 'rare', 'epic', 'legendary'] as const;
 export type RewardChestTier = (typeof CHEST_TIERS)[number];
 export const RARITIES = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary'] as const;

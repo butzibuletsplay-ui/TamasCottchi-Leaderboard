@@ -1,13 +1,13 @@
 import type { Mood } from './assets';
 import { hatUrl, itemAsset, neckUrl, outfitUrl, toyUrl } from './assets';
 import type { GameId } from './engine';
-import { absenceDecay, initialPersonality, type Personality } from './personality';
+import { initialPersonality, type Personality } from './personality';
 import { worldDayKey, worldWeekKey } from './worldClock';
 import { COLLECTION_ITEMS, COLLECTION_ITEM_LINKS } from './collectionWorld';
 import { CONSUMABLE_TOY_IDS } from './toyRules';
 import {
   CHEST_TIERS, MAX_PLAYER_XP, MINIGAME_REWARD_DIVISORS, createMinigameDailyState, migrateLegacyPlayerXp,
-  normalizeMinigameDailyState, playerLevelForXp, rewardForMinigame, type MinigameDailyState, type RewardChestTier,
+  normalizeMinigameDailyState, playerLevelForXp, rewardForMinigame, simulatePetNeeds, type MinigameDailyState, type RewardChestTier,
 } from '@workspace/game-economy';
 import {
   normalizeCharacterDailyProgress, normalizeCharacterPoints,
@@ -34,7 +34,7 @@ export type PetData = {
   version: number; saveSchema?: number; economyVersion?: number; name: string; needs: Record<NeedKey, number>; lastUpdated: number;
   coins: number; xp: number; inventory: Record<string, number>; owned: string[];
   equipped: string[]; room: Room; roomItems: string[]; activeBackground: string; records: GameRecord[];
-  sleepUntil: number | null;
+  sleepUntil: number | null; sleepStartedAt: number | null;
   stats: { games: number; catches: number; taps: number; care: number; rooms: number; purchases: number; toys: number };
   daily: DailyProgress; missions: Record<string, boolean>; claimedAchievements: string[]; missionsDate: string;
   minigameDaily: MinigameDailyState;
@@ -122,7 +122,8 @@ export const BACKUP_KEY_66 = 'tamascottchi-save-v1-backup-before-6.6';
 export const BACKUP_KEY_67 = 'tamascottchi-save-v1-backup-before-6.7';
 export const BACKUP_KEY_68 = 'tamascottchi-save-v1-backup-before-6.8';
 export const BACKUP_KEY_69 = 'tamascottchi-save-v1-backup-before-6.9';
-export const SAVE_SCHEMA = 15;
+export const BACKUP_KEY_70 = 'tamascottchi-save-v1-backup-before-7.0';
+export const SAVE_SCHEMA = 16;
 export const LOCATIONS = [
   { id: 'park', name: 'Scottchi Park', level: 1, stageLevel: 1, point: { x: 25, y: 29 }, desc: 'Der erste Spaziergang: Wege, Wiesen und verlorene Knochen.' },
   { id: 'city', name: 'Scottchi City', level: 35, stageLevel: 5, point: { x: 45, y: 53 }, desc: 'Ein lebendiger Platz für kleine Besorgungen.' },
@@ -310,7 +311,7 @@ export const today = () => new Date().toLocaleDateString('de-DE');
 export const initialData = (): FullPetData => ({
     version: 1, saveSchema: SAVE_SCHEMA, name: 'Wuschel', needs: { hunger: 78, glueck: 83, energie: 72, sauberkeit: 88 },
   lastUpdated: Date.now(), coins: 55, xp: 0, inventory: { kibble: 2, soap: 1 }, owned: [], equipped: [],
-  room: 'Wohnzimmer', roomItems: [], activeBackground: 'classic', records: [], sleepUntil: null,
+  room: 'Wohnzimmer', roomItems: [], activeBackground: 'classic', records: [], sleepUntil: null, sleepStartedAt: null,
   stats: { games: 0, catches: 0, taps: 0, care: 0, rooms: 0, purchases: 0, toys: 0 },
   daily: { feeds: 0, games: 0, baths: 0, pets: 0, coins: 0 },
   minigameDaily: createMinigameDailyState(Date.now()),
@@ -343,13 +344,28 @@ const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite
 export function normalize(parsed: Partial<PetData>): FullPetData {
   const d = initialData();
   const now = Date.now();
-  const away = Math.max(0, now - num(parsed.lastUpdated, now));
-  const decay = (v: number) => absenceDecay(v, away);
+  const lastUpdated = Math.max(0, num(parsed.lastUpdated, now));
   const sameDay = parsed.missionsDate === today();
   const records = Array.isArray(parsed.records) ? parsed.records.filter((r) => r && typeof r.score === 'number') : [];
   const highscores: PetData['highscores'] = { ...(parsed.highscores || {}) };
   for (const r of records) highscores[r.game] = Math.max(highscores[r.game] || 0, r.score);
   const needs = parsed.needs || d.needs;
+  const savedSleepUntil = Number.isFinite(parsed.sleepUntil) && parsed.sleepUntil! > 0 ? parsed.sleepUntil! : null;
+  const sleepStartedAt = savedSleepUntil === null || parsed.room !== 'Schlafzimmer'
+    ? null
+    : Number.isFinite(parsed.sleepStartedAt)
+      ? Math.min(savedSleepUntil, Math.max(0, parsed.sleepStartedAt!))
+      : savedSleepUntil - ((parsed.saveSchema || 0) < SAVE_SCHEMA ? 60_000 : 8 * 60 * 60 * 1000);
+  const careNeeds = simulatePetNeeds({
+    hunger: num(needs.hunger, d.needs.hunger),
+    glueck: num(needs.glueck, d.needs.glueck),
+    energie: num(needs.energie, d.needs.energie),
+    sauberkeit: num(needs.sauberkeit, d.needs.sauberkeit),
+  }, lastUpdated, now, sleepStartedAt, savedSleepUntil);
+  const savedPersonality = { ...d.personality, ...(parsed.personality || {}) };
+  const personality = Object.fromEntries(
+    Object.entries(savedPersonality).map(([trait, value]) => [trait, Math.max(0, Math.min(100, num(value, 0)))]),
+  ) as Personality;
   const inventory = Object.fromEntries(Object.entries(parsed.inventory || d.inventory).map(([id, count]) => [id, Math.max(0, Math.floor(num(count, 0)))]));
   const collectionIds = [...new Set([
     ...(Array.isArray(parsed.collectionIds) ? parsed.collectionIds : []),
@@ -421,10 +437,9 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
     characterProgressVersion: 1,
     name: typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.slice(0, 18) : d.name,
     coins: Math.max(0, num(parsed.coins, d.coins)), xp: normalizedXp,
-    needs: {
-      hunger: clamp(decay(num(needs.hunger, d.needs.hunger))), glueck: clamp(decay(num(needs.glueck, d.needs.glueck))),
-      energie: clamp(decay(num(needs.energie, d.needs.energie))), sauberkeit: clamp(decay(num(needs.sauberkeit, d.needs.sauberkeit))),
-    },
+    needs: careNeeds,
+    sleepUntil: savedSleepUntil,
+    sleepStartedAt,
     inventory,
     owned: Array.isArray(parsed.owned) ? [...new Set(parsed.owned)] : [],
     equipped: Array.isArray(parsed.equipped) ? parsed.equipped : [],
@@ -439,7 +454,7 @@ export function normalize(parsed: Partial<PetData>): FullPetData {
     settings: { ...d.settings, ...parsed.settings },
     highscores, challenges: { ...(parsed.challenges || {}) },
     lastUpdated: now, missionsDate: today(),
-    personality: { ...d.personality, ...(parsed.personality || {}) },
+    personality,
     visitedRooms: [...new Set([...(Array.isArray(parsed.visitedRooms) ? parsed.visitedRooms : []), ROOM_LIST.includes(parsed.room as Room) ? parsed.room as Room : d.room])].filter((r) => ROOM_LIST.includes(r)),
     routine: { ...d.routine, ...(parsed.routine || {}), lastSeen: num(parsed.routine?.lastSeen, num(parsed.lastUpdated, now)) },
     stylesWorn: Array.isArray(parsed.stylesWorn) ? parsed.stylesWorn : [],
@@ -545,6 +560,7 @@ export function loadData(): FullPetData {
     if ((parsed.saveSchema || 0) < 13 && !localStorage.getItem(BACKUP_KEY_67)) localStorage.setItem(BACKUP_KEY_67, raw);
     if ((parsed.saveSchema || 0) < 14 && !localStorage.getItem(BACKUP_KEY_68)) localStorage.setItem(BACKUP_KEY_68, raw);
     if ((parsed.saveSchema || 0) < 15 && !localStorage.getItem(BACKUP_KEY_69)) localStorage.setItem(BACKUP_KEY_69, raw);
+    if ((parsed.saveSchema || 0) < SAVE_SCHEMA && !localStorage.getItem(BACKUP_KEY_70)) localStorage.setItem(BACKUP_KEY_70, raw);
     return normalize(parsed);
   } catch (cause) {
     // Never replace an unreadable save with a new game through the autosave effect.

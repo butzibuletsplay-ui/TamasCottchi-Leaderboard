@@ -63,7 +63,7 @@ import {
 } from "@workspace/game-economy";
 
 const router: IRouter = Router();
-const CURRENT_SAVE_SCHEMA = 15;
+const CURRENT_SAVE_SCHEMA = 16;
 const friendCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const allowedRooms = new Set([
   "Wohnzimmer",
@@ -242,6 +242,14 @@ function normalizeEconomySave(input: JsonRecord, now: number): JsonRecord {
   );
   const evolutionStage = Math.max(1, Math.min(10, integer(save.evolutionStage, 1)));
   const activeEvolutionStage = Math.max(1, Math.min(evolutionStage, integer(save.activeEvolutionStage, evolutionStage)));
+  const sleepUntil = typeof save.sleepUntil === "number" && Number.isFinite(save.sleepUntil) && save.sleepUntil > 0
+    ? save.sleepUntil
+    : null;
+  const sleepStartedAt = sleepUntil === null || save.room !== "Schlafzimmer"
+    ? null
+    : typeof save.sleepStartedAt === "number" && Number.isFinite(save.sleepStartedAt)
+      ? Math.min(sleepUntil, Math.max(0, save.sleepStartedAt))
+      : Math.max(0, sleepUntil - (integer(save.saveSchema) < CURRENT_SAVE_SCHEMA ? 60_000 : 8 * 60 * 60 * 1000));
   const characterPoints = normalizeCharacterPoints(save.characterPoints, save.personality);
   const characterDaily = normalizeCharacterDailyProgress(save.characterDaily, now);
   const day = worldDayKey(now);
@@ -251,6 +259,8 @@ function normalizeEconomySave(input: JsonRecord, now: number): JsonRecord {
     coins: integer(save.coins),
     xp,
     saveSchema: CURRENT_SAVE_SCHEMA,
+    sleepUntil,
+    sleepStartedAt,
     evolutionStage,
     activeEvolutionStage,
     characterPoints,
@@ -839,7 +849,10 @@ router.post(
       return;
     }
     const result = await runEconomyAction(playerId(res), requestId, "character-points-awarded", (save, now) => {
-      const award = awardCharacterActivity(save.characterPoints, save.characterDaily, activity, toyId, now);
+      const savedNeeds = save.needs && typeof save.needs === "object" && !Array.isArray(save.needs)
+        ? save.needs as Partial<{ hunger: number; glueck: number; energie: number; sauberkeit: number }>
+        : undefined;
+      const award = awardCharacterActivity(save.characterPoints, save.characterDaily, activity, toyId, now, savedNeeds);
       if (!award.ok) {
         const message = award.reason === "cooldown"
           ? "Warte noch kurz, bevor du weitere Charakterpunkte sammelst."
