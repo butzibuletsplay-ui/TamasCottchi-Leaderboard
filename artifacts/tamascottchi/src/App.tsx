@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useAuth, useUser } from '@clerk/react';
 import { useQueryClient } from '@tanstack/react-query';
+import { Link } from 'wouter';
 import {
   Activity, Award, Backpack, Bath, BookOpen, Check, CircleHelp, Coins, Download, Dumbbell, Gamepad2, Gift, Hammer, Heart, Home, House, KeyRound,
   Medal, Moon, Play, Plus, Settings, Shirt, ShoppingBag, Sparkles, Star, Target, Trophy,
@@ -21,7 +22,7 @@ import {
   type Trait,
 } from './game/personality';
 import {
-  CHALLENGES, COLLECTIONS, GAMES, ITEMS, PLAYER_LEVEL_MILESTONES, ROOM_BG, ROOM_LIST, STORE_KEY, STYLE_SETS, SaveLoadError, assertSave, clamp, initialData, itemById, levelFor, loadData,
+  CHALLENGES, COLLECTIONS, GAMES, ITEMS, PLAYER_LEVEL_MILESTONES, ROOM_BG, ROOM_LIST, STYLE_SETS, assertSave, clamp, initialData, itemById, levelFor,
   moodFor, normalize, today, type DailyProgress, type FullPetData, type GameRecord, type Item, type NeedKey, type RewardChestTier, type Room,
 } from './game/data';
 import { craftItem } from './game/crafting';
@@ -40,6 +41,7 @@ import {
   usePurchaseOnlineChestKey, usePurchaseOnlineEvolution, useUpdateOnlineSave,
 } from '@workspace/api-client-react';
 import { OnlinePage } from './game/OnlinePage';
+import { CloudSaveGate } from './game/CloudSaveGate';
 import { buyChestKey, CHEST_DEFINITIONS, CHEST_TIERS, openRewardChest } from './game/rewardChests';
 import type { ChestOpenReward } from './game/rewardChests';
 import {
@@ -113,46 +115,33 @@ function ItemIcon({ item }: { item: Item }) {
 const TOY_TRAIT: Record<string, Trait> = { ball: 'verspielt', 'bone-toy': 'verspielt', duck: 'frech', rope: 'frech', frisbee: 'neugierig', teddy: 'anhaenglich', shampoo: 'anhaenglich' };
 const ownsAll = (owned: string[], ids: string[]) => ids.every((id) => owned.includes(id));
 
-function SaveError({ error }: { error: SaveLoadError }) {
-  const [confirm, setConfirm] = useState(false);
-  const download = () => {
-    const blob = new Blob([error.raw], { type: 'application/json' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'tamascottchi-unlesbarer-spielstand.json'; a.click(); URL.revokeObjectURL(a.href);
-  };
-  const startFresh = () => {
-    localStorage.setItem(`tamascottchi-unreadable-save-${Date.now()}`, error.raw);
-    localStorage.removeItem(STORE_KEY);
-    window.location.reload();
-  };
-  return <div className="app-shell save-error" data-testid="save-error">
-    <div className="brand"><span className="brand-mark">t</span>tamascottchi</div>
-    <section className="dialog" style={{ margin: '40px auto' }}>
-      <h2>Spielstand nicht lesbar</h2>
-      <p data-testid="text-save-error">{error.message}</p>
-      <p>Nichts wurde gelöscht. Lade die Datei herunter, bevor du etwas anderes tust.</p>
-      <div className="dialog-actions">
-        <button className="button" onClick={download} data-testid="button-download-broken-save"><Download size={14}/> Rohdaten sichern</button>
-        <button className="button ghost" onClick={() => window.location.reload()} data-testid="button-retry-load">Erneut versuchen</button>
-        {confirm ? <button className="button orange" onClick={startFresh} data-testid="button-confirm-fresh">Ja, neu starten (Kopie bleibt im Browser)</button>
-          : <button className="button orange" onClick={() => setConfirm(true)} data-testid="button-start-fresh">Neu anfangen…</button>}
-      </div>
-    </section>
-  </div>;
-}
-
 function App() {
   const lab = import.meta.env.DEV ? new URLSearchParams(window.location.search) : null;
-  const [loaded] = useState<{ data?: PetData; error?: SaveLoadError }>(() => {
-    try { return { data: loadData() }; } catch (e) { return { error: e instanceof SaveLoadError ? e : new SaveLoadError(String(e), localStorage.getItem(STORE_KEY) || '') }; }
-  });
+  const { isSignedIn } = useAuth();
+  const { user, isLoaded } = useUser();
   if (import.meta.env.DEV && lab && (lab.get('outfitEditor') === '1' || lab.get('outfitGallery') === '1')) {
     return <OutfitLab initialMode={lab.get('outfitEditor') === '1' ? 'editor' : 'gallery'}/>;
   }
-  if (loaded.error || !loaded.data) return <SaveError error={loaded.error!}/>;
-  return <Game initial={loaded.data}/>;
+  if (!isLoaded) return <CloudGateMessage title="Konto wird geprüft" message="tamascottchi lädt deinen Zugang …"/>;
+  if (!isSignedIn || !user) return <CloudGateMessage title="Dein Spielstand lebt in der Cloud" message="Melde dich an, um deinen Spielstand zu laden und geräteübergreifend weiterzuspielen.">
+    <Link href="/sign-in" className="button orange" data-testid="link-required-sign-in">Anmelden oder Konto anlegen</Link>
+  </CloudGateMessage>;
+  const playerName = user.firstName || user.primaryEmailAddress?.emailAddress?.split('@')[0] || 'Scottchi-Fan';
+  return <CloudSaveGate key={user.id} userId={user.id} playerName={playerName}>
+    {(save) => <Game initial={save.data} cloudRevision={save.revision} cloudUserId={save.userId}/>}
+  </CloudSaveGate>;
 }
 
-function Game({ initial }: { initial: PetData }) {
+function CloudGateMessage({ title, message, children }: { title: string; message: string; children?: ReactNode }) {
+  return <main className="app-shell save-error">
+    <div className="brand"><span className="brand-mark">t</span>tamascottchi</div>
+    <section className="dialog" style={{ maxWidth: 560, margin: '40px auto', padding: 28 }}>
+      <h2>{title}</h2><p>{message}</p>{children}
+    </section>
+  </main>;
+}
+
+function Game({ initial, cloudRevision, cloudUserId }: { initial: PetData; cloudRevision: number; cloudUserId: string }) {
   const [data, setDataState] = useState<PetData>(initial);
   const setData = useCallback((update: PetData | ((current: PetData) => PetData)) => {
     setDataState((current) => {
@@ -185,10 +174,12 @@ function Game({ initial }: { initial: PetData }) {
   const claimOnlineMinigameChest = useClaimOnlineMinigameDailyChest();
   const earnOnlineCharacterPoints = useEarnOnlineCharacterPoints();
   const purchaseOnlineEvolution = usePurchaseOnlineEvolution();
-  const [cloudLink, setCloudLink] = useState<CloudLink | null>(null);
+  const [cloudLink, setCloudLink] = useState<CloudLink | null>(() => onlineUserId === cloudUserId
+    ? { userId: cloudUserId, revision: cloudRevision, fingerprint: saveFingerprint(initial) }
+    : null);
   const cloudLinkRef = useRef<CloudLink | null>(null);
   cloudLinkRef.current = cloudLink;
-  const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>('offline');
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>('synced');
   const cloudSyncBusy = useRef(false);
   const chestActionBusy = useRef(new Set<string>());
   const chestRequestIds = useRef(new Map<string, string>());
@@ -220,22 +211,13 @@ function Game({ initial }: { initial: PetData }) {
   const dragDecor = useRef<{ id: string; pointerId: number } | null>(null);
   const [fileText, setFileText] = useState('');
   const [now, setNow] = useState(Date.now());
+  const [networkOnline, setNetworkOnline] = useState(() => navigator.onLine);
   const fileRef = useRef<HTMLInputElement>(null);
   const soundContext = useRef<AudioContext | null>(null);
   const timers = useRef<Record<string, number | undefined>>({});
   const toyCooldown = useRef<Record<string, number>>({});
   const toyUsePending = useRef<Set<string>>(new Set());
   const rewardedSessions = useRef<Set<string>>(new Set());
-
-  useEffect(() => {
-    if (!onlineUserId) {
-      setCloudLink(null);
-      setCloudSyncStatus('offline');
-      return;
-    }
-    setCloudLink(null);
-    setCloudSyncStatus('checking');
-  }, [onlineUserId]);
 
   useEffect(() => {
     let active = true;
@@ -267,19 +249,8 @@ function Game({ initial }: { initial: PetData }) {
     if (!remote.saveData) {
       setCloudLink(null);
       cloudLinkRef.current = null;
-      setCloudSyncStatus('unlinked');
+      setCloudSyncStatus('error');
       return;
-    }
-
-    const stored = localStorage.getItem(`tamascottchi-cloud-link:${onlineUserId}`);
-    let marker: CloudLink | null = null;
-    try {
-      const parsed = stored ? JSON.parse(stored) as Partial<CloudLink> : null;
-      if (parsed && parsed.userId === onlineUserId && Number.isInteger(parsed.revision) && typeof parsed.fingerprint === 'string') {
-        marker = parsed as CloudLink;
-      }
-    } catch {
-      marker = null;
     }
 
     if (cloudLink?.userId === onlineUserId && cloudLink.revision > remote.revision) return;
@@ -289,21 +260,18 @@ function Game({ initial }: { initial: PetData }) {
       setCloudSyncStatus('conflict');
       return;
     }
-    if (marker && marker.revision === remote.revision) {
-      setCloudLink(marker);
-      cloudLinkRef.current = marker;
+    if (cloudLink?.userId === onlineUserId && cloudLink.revision === remote.revision) {
       setCloudSyncStatus('synced');
     } else {
       setCloudLink(null);
       cloudLinkRef.current = null;
-      setCloudSyncStatus(marker ? 'conflict' : 'unlinked');
+      setCloudSyncStatus('conflict');
     }
   }, [onlineUserId, onlineProfileQuery.data, onlineSaveQuery.data, cloudLink]);
 
   const linkCloudToCurrentSave = (revision: number, snapshot: PetData = data) => {
     if (!onlineUserId) return;
     const link = { userId: onlineUserId, revision, fingerprint: saveFingerprint(snapshot) };
-    localStorage.setItem(`tamascottchi-cloud-link:${onlineUserId}`, JSON.stringify(link));
     cloudLinkRef.current = link;
     setCloudLink(link);
     setCloudSyncStatus('synced');
@@ -340,7 +308,6 @@ function Game({ initial }: { initial: PetData }) {
         data: { expectedRevision: link.revision, saveData: snapshot },
       });
       const nextLink = { userId: onlineUserId, revision: saved.revision, fingerprint };
-      localStorage.setItem(`tamascottchi-cloud-link:${onlineUserId}`, JSON.stringify(nextLink));
       cloudLinkRef.current = nextLink;
       setCloudLink(nextLink);
       setCloudSyncStatus('synced');
@@ -422,7 +389,6 @@ function Game({ initial }: { initial: PetData }) {
         data: { expectedRevision: cloudLink.revision, saveData: snapshot },
       }).then((result) => {
         const nextLink = { userId: onlineUserId, revision: result.revision, fingerprint };
-        localStorage.setItem(`tamascottchi-cloud-link:${onlineUserId}`, JSON.stringify(nextLink));
         cloudLinkRef.current = nextLink;
         setCloudLink(nextLink);
         setCloudSyncStatus('synced');
@@ -453,10 +419,16 @@ function Game({ initial }: { initial: PetData }) {
 
   useEffect(() => {
     const onOnline = () => {
+      setNetworkOnline(true);
       if (onlineUserId) void onlineSaveQuery.refetch();
     };
+    const onOffline = () => setNetworkOnline(false);
     window.addEventListener('online', onOnline);
-    return () => window.removeEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
   }, [onlineUserId, onlineSaveQuery.refetch]);
 
   const later = useCallback((key: string, fn: () => void, ms: number) => {
@@ -465,8 +437,6 @@ function Game({ initial }: { initial: PetData }) {
   }, []);
   useEffect(() => () => { Object.values(timers.current).forEach((t) => window.clearTimeout(t)); }, []);
 
-  // autosave
-  useEffect(() => { localStorage.setItem(STORE_KEY, JSON.stringify(data)); }, [data]);
   // preload character sprites + room backgrounds so mood/room swaps never flash
   useEffect(() => {
     void preloadAll(CORE_SPRITES).then(() => Object.values(BACKGROUNDS).forEach((b) => void preloadImage(b.src)));
@@ -1383,15 +1353,11 @@ function Game({ initial }: { initial: PetData }) {
     } catch { notify('Datei ist kein gültiger tamascottchi-Spielstand.'); }
   }
   function resetGame() {
-    localStorage.removeItem(STORE_KEY);
-    if (onlineUserId) localStorage.removeItem(`tamascottchi-cloud-link:${onlineUserId}`);
-    setCloudLink(null);
-    setCloudSyncStatus(onlineUserId ? 'unlinked' : 'offline');
     setData(initialData());
     setPage('home');
     setActiveGame(null);
     setModal(null);
-    notify(onlineUserId ? 'Neuer lokaler Spielstand gestartet. Die Cloud-Sicherung bleibt unverändert.' : 'Neuer Spielstand gestartet.');
+    notify('Neuer Spielstand wird in der Cloud gespeichert.');
   }
 
   const nav = [

@@ -124,6 +124,11 @@ export const BACKUP_KEY_68 = 'tamascottchi-save-v1-backup-before-6.8';
 export const BACKUP_KEY_69 = 'tamascottchi-save-v1-backup-before-6.9';
 export const BACKUP_KEY_70 = 'tamascottchi-save-v1-backup-before-7.0';
 export const SAVE_SCHEMA = 16;
+const LEGACY_LOCAL_SAVE_KEYS = [
+  STORE_KEY, BACKUP_KEY, BACKUP_KEY_21, BACKUP_KEY_30, BACKUP_KEY_40, BACKUP_KEY_60, BACKUP_KEY_61,
+  BACKUP_KEY_62, BACKUP_KEY_63, BACKUP_KEY_64, BACKUP_KEY_65, BACKUP_KEY_66, BACKUP_KEY_67,
+  BACKUP_KEY_68, BACKUP_KEY_69, BACKUP_KEY_70,
+];
 export const LOCATIONS = [
   { id: 'park', name: 'Scottchi Park', level: 1, stageLevel: 1, point: { x: 25, y: 29 }, desc: 'Der erste Spaziergang: Wege, Wiesen und verlorene Knochen.' },
   { id: 'city', name: 'Scottchi City', level: 35, stageLevel: 5, point: { x: 45, y: 53 }, desc: 'Ein lebendiger Platz für kleine Besorgungen.' },
@@ -538,6 +543,34 @@ export function assertSave(v: unknown): asserts v is Partial<PetData> {
 }
 
 export class SaveLoadError extends Error { raw: string; constructor(message: string, raw: string, cause?: unknown) { super(message, { cause }); this.raw = raw; } }
+
+/** Reads the former browser save without creating any new local backup or mutating it. */
+export function readLegacyLocalSave(): FullPetData | null {
+  const raw = localStorage.getItem(STORE_KEY);
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    assertSave(parsed);
+    return normalize(parsed);
+  } catch (cause) {
+    throw new SaveLoadError(
+      `Dein bisheriger Spielstand konnte nicht gelesen werden (${(cause as Error)?.message || 'unbekannter Fehler'}). Er wurde nicht verändert.`,
+      raw,
+      cause,
+    );
+  }
+}
+
+/** Removes legacy game progress only after it has been safely loaded from the cloud. */
+export function clearLegacyLocalSaves(): void {
+  for (const key of LEGACY_LOCAL_SAVE_KEYS) localStorage.removeItem(key);
+  for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+    const key = localStorage.key(index);
+    if (key?.startsWith('tamascottchi-unreadable-save-') || key?.startsWith('tamascottchi-cloud-link:')) {
+      localStorage.removeItem(key);
+    }
+  }
+}
 
 export function loadData(): FullPetData {
   const raw = localStorage.getItem(STORE_KEY);
