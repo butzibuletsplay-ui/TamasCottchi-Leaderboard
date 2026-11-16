@@ -102,7 +102,7 @@ function AuthPage({ mode, children }: { mode: 'signin' | 'signup'; children: Rea
         <div className="ts-auth__story-copy">
           <p className="ts-auth__kicker"><Sparkles size={15} /> EIN PLÄTZCHEN FÜR EUCH ZWEI</p>
           <h1>{isSignIn ? <>Schön, dass<br />du wieder da bist.</> : <>Ein kleines Zuhause<br />für deinen Scottchi.</>}</h1>
-          <p>Dein Spielstand bleibt bei dir. Richte dein Profil ein und sichere deinen Fortschritt online.</p>
+        <p>Richte dein Profil ein und sichere deinen gesamten Spielfortschritt in der Cloud.</p>
         </div>
         <div className="ts-auth__promise">
           <span className="ts-auth__promise-icon"><ShieldCheck size={19} /></span>
@@ -125,10 +125,10 @@ function AuthPage({ mode, children }: { mode: 'signin' | 'signup'; children: Rea
           <div className="ts-auth__form-heading">
             <p>{isSignIn ? 'DEIN SPIEL WARTET' : 'LOS GEHT’S'}</p>
             <h2>{isSignIn ? 'Anmelden' : 'Konto anlegen'}</h2>
-            <span>{isSignIn ? 'Melde dich an und mach dort weiter, wo ihr aufgehört habt.' : 'Ein Konto genügt, um dein Profil und deinen Spielstand zu sichern.'}</span>
+          <span>{isSignIn ? 'Melde dich an und mach dort weiter, wo ihr aufgehört habt.' : 'Ein Konto genügt, um dein Profil und deinen Spielstand sicher in der Cloud zu speichern.'}</span>
           </div>
           <div className="ts-auth__clerk">{children}</div>
-          <p className="ts-auth__fineprint"><Heart size={13} /> Offline spielen geht weiterhin – auch ohne Konto.</p>
+          <p className="ts-auth__fineprint"><Heart size={13} /> Eine Anmeldung und Internetverbindung sind zum Spielen nötig.</p>
         </div>
       </section>
     </main>

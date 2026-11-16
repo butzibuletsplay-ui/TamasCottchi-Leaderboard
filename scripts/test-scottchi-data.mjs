@@ -11,7 +11,7 @@ const compiled = await build({
   bundle: true, write: false, format: 'esm', platform: 'node',
   define: { 'import.meta.env.BASE_URL': '"/"' },
 });
-const { initialData, normalize, loadData, moodFor, rewardFor, STORE_KEY, BACKUP_KEY, BACKUP_KEY_21, SAVE_SCHEMA } =
+const { initialData, normalize, loadData, readLegacyLocalSave, clearLegacyLocalSaves, moodFor, rewardFor, STORE_KEY, BACKUP_KEY, BACKUP_KEY_21, SAVE_SCHEMA } =
   await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
 const worldBuild = await build({
   entryPoints: ['artifacts/tamascottchi/src/game/collectionWorld.ts', 'artifacts/tamascottchi/src/game/data.ts'],
@@ -93,7 +93,23 @@ const storage = new Map();
 globalThis.localStorage = {
   getItem: (key) => storage.get(key) ?? null,
   setItem: (key, value) => storage.set(key, value),
+  removeItem: (key) => storage.delete(key),
+  key: (index) => [...storage.keys()][index] ?? null,
+  get length() { return storage.size; },
 };
+
+test('legacy cloud migration reads without making a backup and clears all browser saves only after success', () => {
+  storage.clear();
+  const raw = JSON.stringify({ ...initialData(), coins: 987 });
+  storage.set(STORE_KEY, raw);
+  assert.equal(readLegacyLocalSave().coins, 987);
+  assert.equal(storage.has(BACKUP_KEY), false, 'migration must not make another offline save');
+  storage.set(BACKUP_KEY, raw);
+  storage.set('tamascottchi-unreadable-save-old', raw);
+  storage.set('tamascottchi-cloud-link:user', '{"revision":1}');
+  clearLegacyLocalSaves();
+  assert.equal(storage.size, 0);
+});
 
 test('legacy possessions, currency, achievements and records survive normalization', () => {
   const legacy = {

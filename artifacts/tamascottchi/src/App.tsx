@@ -181,6 +181,7 @@ function Game({ initial, cloudRevision, cloudUserId }: { initial: PetData; cloud
   cloudLinkRef.current = cloudLink;
   const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>('synced');
   const cloudSyncBusy = useRef(false);
+  const cloudSavePending = useRef(false);
   const chestActionBusy = useRef(new Set<string>());
   const chestRequestIds = useRef(new Map<string, string>());
   const characterActionNoticeShown = useRef(false);
@@ -235,7 +236,7 @@ function Game({ initial, cloudRevision, cloudUserId }: { initial: PetData; cloud
           setServerClockOffsetMs(serverTime + (receivedAt - startedAt) / 2 - receivedAt);
         }
       } catch {
-        // Keep the last successful estimate; local play still works while offline.
+        // Keep the last successful estimate; the cloud gate blocks play while offline.
       }
     };
     void syncServerClock();
@@ -286,9 +287,9 @@ function Game({ initial, cloudRevision, cloudUserId }: { initial: PetData; cloud
       assertSave(restored);
       setData(restored);
       linkCloudToCurrentSave(revision, restored);
-      setToast('Cloud-Spielstand wurde auf diesem Gerät wiederhergestellt.');
+      setToast('Cloud-Spielstand wurde für diese Sitzung geladen.');
     } catch {
-      setToast('Die Cloud-Sicherung passt nicht zu dieser Spielversion. Dein lokaler Spielstand bleibt erhalten.');
+      setToast('Die Cloud-Sicherung passt nicht zu dieser Spielversion. Der Cloud-Stand wurde nicht verändert.');
     }
   };
 
@@ -330,6 +331,10 @@ function Game({ initial, cloudRevision, cloudUserId }: { initial: PetData; cloud
       return false;
     } finally {
       cloudSyncBusy.current = false;
+      if (cloudSavePending.current) {
+        cloudSavePending.current = false;
+        window.setTimeout(() => { void syncCloudBeforeEconomy(); }, 0);
+      }
     }
   };
 
@@ -382,7 +387,10 @@ function Game({ initial, cloudRevision, cloudUserId }: { initial: PetData; cloud
     const fingerprint = saveFingerprint(snapshot);
     if (fingerprint === cloudLink.fingerprint) return;
     const timer = window.setTimeout(() => {
-      if (cloudSyncBusy.current) return;
+      if (cloudSyncBusy.current) {
+        cloudSavePending.current = true;
+        return;
+      }
       cloudSyncBusy.current = true;
       setCloudSyncStatus('syncing');
       void updateOnlineSave.mutateAsync({
@@ -412,10 +420,24 @@ function Game({ initial, cloudRevision, cloudUserId }: { initial: PetData; cloud
         }
       }).finally(() => {
         cloudSyncBusy.current = false;
+        if (cloudSavePending.current) {
+          cloudSavePending.current = false;
+          window.setTimeout(() => { void syncCloudBeforeEconomy(); }, 0);
+        }
       });
     }, 1800);
     return () => window.clearTimeout(timer);
   }, [data, onlineUserId, onlineProfileQuery.data, onlineSaveQuery.data, cloudLink, updateOnlineSave.mutateAsync, queryClient]);
+
+  useEffect(() => {
+    if (!cloudLink || saveFingerprint(data) === cloudLink.fingerprint) return;
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warnBeforeLeaving);
+    return () => window.removeEventListener('beforeunload', warnBeforeLeaving);
+  }, [data, cloudLink]);
 
   useEffect(() => {
     const onOnline = () => {
@@ -499,6 +521,7 @@ function Game({ initial, cloudRevision, cloudUserId }: { initial: PetData; cloud
   const xpProgress = levelProgress.percent;
   const playerTitle = [...PLAYER_LEVEL_MILESTONES].reverse()
     .find((milestone) => milestone.playerTitle && data.claimedAchievements.includes(milestone.id))?.playerTitle || 'Scottchi-Fan';
+  const cloudBlocked = !networkOnline || ['error', 'conflict', 'unlinked'].includes(cloudSyncStatus);
   const topScore = useMemo(() => [...data.records].sort((a, b) => b.score - a.score).slice(0, 10), [data.records]);
   const notify = useCallback((message: string) => { setToast(message); later('toast', () => setToast(''), 2400); }, [later]);
   useEffect(() => {
@@ -1352,12 +1375,43 @@ function Game({ initial, cloudRevision, cloudUserId }: { initial: PetData; cloud
       setData(normalize(value)); setModal(null); setFileText(''); notify('Spielstand geladen.');
     } catch { notify('Datei ist kein gültiger tamascottchi-Spielstand.'); }
   }
-  function resetGame() {
-    setData(initialData());
+  async function resetGame() {
+    const cloud = cloudLinkRef.current;
+    if (!onlineUserId || !cloud) {
+      notify('Der Cloud-Spielstand ist nicht verbunden. Bitte stelle zuerst die Verbindung her.');
+      return;
+    }
+    const fresh = initialData();
+    dataRef.current = fresh;
+    setData(fresh);
     setPage('home');
     setActiveGame(null);
     setModal(null);
-    notify('Neuer Spielstand wird in der Cloud gespeichert.');
+    cloudSyncBusy.current = true;
+    setCloudSyncStatus('syncing');
+    try {
+      await updateOnlineSave.mutateAsync({ data: { expectedRevision: cloud.revision, saveData: fresh } });
+      const refreshed = await onlineSaveQuery.refetch();
+      if (!refreshed.data?.saveData) throw new Error('Cloud-Spielstand konnte nicht erneut geladen werden.');
+      const restored = normalize(refreshed.data.saveData as Partial<PetData>);
+      if (refreshed.data.saveData.minigameDaily && typeof refreshed.data.saveData.minigameDaily === 'object') {
+        restored.minigameDaily = refreshed.data.saveData.minigameDaily as PetData['minigameDaily'];
+      }
+      assertSave(restored);
+      dataRef.current = restored;
+      setData(restored);
+      linkCloudToCurrentSave(refreshed.data.revision, restored);
+      notify('Neuer Cloud-Spielstand wurde gespeichert.');
+    } catch {
+      setCloudSyncStatus('error');
+      notify('Zurücksetzen konnte nicht sicher in der Cloud gespeichert werden.');
+    } finally {
+      cloudSyncBusy.current = false;
+      if (cloudSavePending.current) {
+        cloudSavePending.current = false;
+        window.setTimeout(() => { void syncCloudBeforeEconomy(); }, 0);
+      }
+    }
   }
 
   const nav = [
@@ -1537,7 +1591,7 @@ function Game({ initial, cloudRevision, cloudUserId }: { initial: PetData; cloud
         <div className="side-note"><strong>Level {level} · {playerTitle}</strong><div className="progress-track"><span style={{ width: `${xpProgress}%` }}/></div><div style={{ marginTop: 7 }}>{levelProgress.isMaxLevel ? 'Maximallevel erreicht' : `${levelProgress.earned} / ${levelProgress.required} XP bis zum nächsten Level`}</div></div>
       </aside>
       <main className="main">
-        {!activeGame && page !== 'online' && <div className="main-head"><div><div className="eyebrow">{page === 'home' ? 'DEIN ZUHAUSE' : 'TAMASCOTTCHI 6.2'}</div><h1>{page === 'home' ? `Hallo, ${data.name}.` : page === 'shop' ? 'Der kleine Laden' : page === 'world' ? 'Scottchi World' : page === 'collections' ? 'Scottchi Collections' : page === 'games' ? 'Spielzeit!' : page === 'closet' ? 'Kleiderschrank' : page === 'leaderboard' ? 'Bestenliste' : page === 'inventory' ? 'Inventar' : page === 'crafting' ? 'Werkstatt' : page === 'journal' ? 'Scottchis Tagebuch' : page === 'help' ? 'Hilfe & Spielstart' : 'Erfolge'}</h1><div className="subline">{page === 'home' ? 'Tippe Scottchi an, wirf Spielzeug, wechsle das Zimmer.' : page === 'leaderboard' ? 'Nur deine Ergebnisse auf diesem Gerät.' : 'Ein gemütlicher Ort für Scottchi und dich.'}</div></div>
+                {!activeGame && page !== 'online' && <div className="main-head"><div><div className="eyebrow">{page === 'home' ? 'DEIN ZUHAUSE' : 'TAMASCOTTCHI 6.2'}</div><h1>{page === 'home' ? `Hallo, ${data.name}.` : page === 'shop' ? 'Der kleine Laden' : page === 'world' ? 'Scottchi World' : page === 'collections' ? 'Scottchi Collections' : page === 'games' ? 'Spielzeit!' : page === 'closet' ? 'Kleiderschrank' : page === 'leaderboard' ? 'Bestenliste' : page === 'inventory' ? 'Inventar' : page === 'crafting' ? 'Werkstatt' : page === 'journal' ? 'Scottchis Tagebuch' : page === 'help' ? 'Hilfe & Spielstart' : 'Erfolge'}</h1><div className="subline">{page === 'home' ? 'Tippe Scottchi an, wirf Spielzeug, wechsle das Zimmer.' : page === 'leaderboard' ? 'Deine persönlichen Ergebnisse aus der Cloud.' : 'Ein gemütlicher Ort für Scottchi und dich.'}</div></div>
           {page === 'home' && <button className="button small" onClick={() => { setNameDraft(data.name); setModal('name'); }} data-testid="button-rename">Name ändern</button>}
         </div>}
 
@@ -1675,7 +1729,7 @@ function Game({ initial, cloudRevision, cloudUserId }: { initial: PetData; cloud
 
         {page === 'leaderboard' && <div className="page-grid">
           <section className="panel"><div className="panel-head"><h2 className="panel-title">Persönliche Bestwerte</h2><Medal size={18}/></div>{GAMES.map((g) => <div className="leaderboard-row" key={g.id} data-testid={`highscore-${g.id}`}><span className="rank"><Trophy size={14}/></span><strong>{g.name}</strong><strong>{data.highscores[g.id] || 0} Pkt.</strong><button className="button small" onClick={() => openGame(g.id)} data-testid={`button-beat-${g.id}`}>Schlagen</button></div>)}</section>
-          <section className="panel"><div className="panel-head"><h2 className="panel-title">Deine stärksten Runden</h2><Trophy size={18}/></div><div className="side-note" style={{ margin: '0 0 12px' }}><strong>Geräte-lokale Bestenliste</strong>Hier stehen nur echte Spielrunden aus diesem Browser. Es gibt keine Online-Spieler und keinen Serverabgleich.</div>{topScore.length ? topScore.map((r, i) => <div className="leaderboard-row" key={r.id} data-testid={`score-row-${i}`}><span className="rank">#{i + 1}</span><div><strong>{GAMES.find((g) => g.id === r.game)?.name}</strong><div className="score-game">{new Date(r.date).toLocaleDateString('de-DE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</div></div><strong>{r.score} Pkt.</strong><Medal size={16}/></div>) : <div className="empty-state"><Trophy size={28}/><p>Noch keine Ergebnisse. Spiel eine Runde, deine echten Punkte erscheinen hier.</p><button className="button orange" onClick={() => setPage('games')} data-testid="button-play-first">Zu den Spielen</button></div>}</section>
+          <section className="panel"><div className="panel-head"><h2 className="panel-title">Deine stärksten Runden</h2><Trophy size={18}/></div><div className="side-note" style={{ margin: '0 0 12px' }}><strong>Deine Cloud-Bestenliste</strong>Hier stehen deine persönlichen Spielrunden. Andere Spieler:innen und eine öffentliche Rangliste gibt es nicht.</div>{topScore.length ? topScore.map((r, i) => <div className="leaderboard-row" key={r.id} data-testid={`score-row-${i}`}><span className="rank">#{i + 1}</span><div><strong>{GAMES.find((g) => g.id === r.game)?.name}</strong><div className="score-game">{new Date(r.date).toLocaleDateString('de-DE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</div></div><strong>{r.score} Pkt.</strong><Medal size={16}/></div>) : <div className="empty-state"><Trophy size={28}/><p>Noch keine Ergebnisse. Spiel eine Runde, deine echten Punkte erscheinen hier.</p><button className="button orange" onClick={() => setPage('games')} data-testid="button-play-first">Zu den Spielen</button></div>}</section>
         </div>}
 
         {page === 'achievements' && <>
@@ -1694,14 +1748,30 @@ function Game({ initial, cloudRevision, cloudUserId }: { initial: PetData; cloud
       <div className="setting-row"><div><strong>Spielklänge</strong><small>Werden direkt im Browser erzeugt</small></div><button className={`switch ${data.settings.sound ? 'on' : ''}`} onClick={() => setData((old) => ({ ...old, settings: { ...old.settings, sound: !old.settings.sound } }))} aria-label="Spielklänge umschalten" data-testid="switch-sound">{data.settings.sound ? <Volume2 size={14}/> : <VolumeX size={14}/>}</button></div>
       <div className="setting-row"><div><strong>Hintergrundmusik</strong><small>Eine leise, selbst erzeugte Melodie</small></div><button className={`switch ${data.settings.music ? 'on' : ''}`} onClick={() => setData((old) => ({ ...old, settings: { ...old.settings, music: !old.settings.music } }))} aria-label="Hintergrundmusik umschalten" data-testid="switch-music">{data.settings.music ? <Volume2 size={14}/> : <VolumeX size={14}/>}</button></div>
       <label className="setting-row volume-row"><span><strong>Lautstärke</strong><small>{data.settings.volume}%</small></span><input type="range" min="0" max="100" value={data.settings.volume} aria-label="Lautstärke" data-testid="input-volume" onChange={(e) => setData((old) => ({ ...old, settings: { ...old.settings, volume: Number(e.target.value) } }))}/></label>
-      <div className="setting-row"><div><strong>Spielstand exportieren</strong><small>Versionierter JSON-Spielstand</small></div><button className="button small" onClick={exportSave} data-testid="button-export"><Download size={14}/> Export</button></div>
-      <div className="setting-row"><div><strong>Spielstand importieren</strong><small>Vorhandene tamascottchi-JSON laden</small></div><button className="button small" onClick={() => setModal('import')} data-testid="button-import"><Plus size={14}/> Import</button></div>
-      <div className="setting-row"><div><strong>Neu anfangen</strong><small>Löscht diesen lokalen Spielstand</small></div><button className="button small orange" onClick={() => setModal('reset')} data-testid="button-reset">Zurücksetzen</button></div>
-      <p className="subline">Autospeicherung ist aktiv. Dein Spielstand bleibt auf diesem Gerät. Vor dem 2.0-Update wurde eine Sicherung angelegt.</p>
+      <div className="setting-row"><div><strong>Cloud-Stand exportieren</strong><small>Eine manuelle Sicherungsdatei herunterladen</small></div><button className="button small" onClick={exportSave} data-testid="button-export"><Download size={14}/> Export</button></div>
+      <div className="setting-row"><div><strong>Cloud-Stand importieren</strong><small>Eine JSON-Datei in deinen Cloud-Spielstand laden</small></div><button className="button small" onClick={() => setModal('import')} data-testid="button-import"><Plus size={14}/> Import</button></div>
+      <div className="setting-row"><div><strong>Neu anfangen</strong><small>Setzt deinen Cloud-Spielstand zurück</small></div><button className="button small orange" onClick={() => setModal('reset')} data-testid="button-reset">Zurücksetzen</button></div>
+      <p className="subline">Dein Spielfortschritt wird mit deinem Konto in der Cloud gespeichert. Es gibt keinen lokalen Autosave.</p>
     </div></section></div>}
     {modal === 'name' && <div className="dialog-backdrop" onClick={() => setModal(null)}><section className="dialog" onClick={(e) => e.stopPropagation()}><h2>Wie soll Scottchi heißen?</h2><input className="input" value={nameDraft} maxLength={18} onChange={(e) => setNameDraft(e.target.value)} data-testid="input-pet-name"/><div className="dialog-actions"><button className="button ghost" onClick={() => setModal(null)} data-testid="button-cancel-rename">Abbrechen</button><button className="button orange" onClick={() => { setData((old) => ({ ...old, name: nameDraft.trim() || 'Wuschel' })); setModal(null); }} data-testid="button-save-name">Speichern</button></div></section></div>}
     {modal === 'import' && <div className="dialog-backdrop" onClick={() => setModal(null)}><section className="dialog" onClick={(e) => e.stopPropagation()}><h2>Spielstand importieren</h2><p>Wähle die JSON-Datei, die du zuvor exportiert hast.</p><input ref={fileRef} type="file" accept="application/json,.json" className="input" data-testid="input-import-file" onChange={(e) => { const file = e.target.files?.[0]; if (file) void file.text().then(setFileText); }}/><div className="dialog-actions"><button className="button ghost" onClick={() => setModal(null)} data-testid="button-cancel-import">Abbrechen</button><button className="button orange" onClick={importSave} disabled={!fileText} data-testid="button-confirm-import">Spielstand laden</button></div></section></div>}
-    {modal === 'reset' && <div className="dialog-backdrop" onClick={() => setModal(null)}><section className="dialog" onClick={(e) => e.stopPropagation()}><h2>Wirklich von vorn?</h2><p>Scottchi, Münzen, Ergebnisse und alle Gegenstände auf diesem Gerät werden gelöscht. Diese Aktion lässt sich nicht rückgängig machen.</p><div className="dialog-actions"><button className="button ghost" onClick={() => setModal(null)} data-testid="button-cancel-reset">Abbrechen</button><button className="button orange" onClick={resetGame} data-testid="button-confirm-reset">Spielstand löschen</button></div></section></div>}
+    {modal === 'reset' && <div className="dialog-backdrop" onClick={() => setModal(null)}><section className="dialog" onClick={(e) => e.stopPropagation()}><h2>Wirklich von vorn?</h2><p>Dein Cloud-Spielstand wird durch einen neuen ersetzt. Diese Aktion lässt sich nicht rückgängig machen; serverseitig geschützte Belohnungen bleiben erhalten.</p><div className="dialog-actions"><button className="button ghost" onClick={() => setModal(null)} data-testid="button-cancel-reset">Abbrechen</button><button className="button orange" onClick={resetGame} data-testid="button-confirm-reset">Spielstand zurücksetzen</button></div></section></div>}
+    {cloudBlocked && page !== 'online' && <div role="alertdialog" aria-modal="true" data-testid="cloud-save-blocker" style={{ position: 'fixed', inset: 0, zIndex: 10000, display: 'grid', placeItems: 'center', padding: 20, background: 'rgba(36, 26, 21, .72)' }}>
+      <section className="dialog" style={{ width: 'min(560px, 100%)', padding: 28 }}>
+        <h2>{!networkOnline ? 'Internetverbindung fehlt' : cloudSyncStatus === 'conflict' ? 'Cloud-Stand hat sich geändert' : 'Cloud-Speicherung unterbrochen'}</h2>
+        <p>{!networkOnline
+          ? 'Damit kein Fortschritt nur auf diesem Gerät entsteht, ist das Spielen pausiert, bis die Verbindung wieder da ist.'
+          : cloudSyncStatus === 'conflict'
+            ? 'Öffne die Cloud-Übersicht und wähle, welchen Stand du fortsetzen möchtest.'
+            : 'Dein Fortschritt wird nicht lokal zwischengespeichert. Prüfe die Cloud-Verbindung, bevor du weiterspielst.'}</p>
+        <div className="dialog-actions">
+          {networkOnline && cloudSyncStatus !== 'conflict' && <button className="button orange" onClick={() => {
+            void onlineSaveQuery.refetch().then(() => syncCloudBeforeEconomy());
+          }} data-testid="button-retry-cloud-save">Erneut synchronisieren</button>}
+          <button className="button" onClick={() => setPage('online')} data-testid="button-open-cloud-settings">Cloud-Spielstand prüfen</button>
+        </div>
+      </section>
+    </div>}
     {toast && <div className="toast" role="status" data-testid="status-toast">{toast}</div>}
   </div>;
 }

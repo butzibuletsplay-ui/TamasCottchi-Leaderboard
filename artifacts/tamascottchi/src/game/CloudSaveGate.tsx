@@ -4,7 +4,7 @@ import {
   getGetOnlineProfileQueryKey, getGetOnlineSaveQueryKey,
   useCreateOnlineProfile, useGetOnlineProfile, useGetOnlineSave, useUpdateOnlineSave,
 } from '@workspace/api-client-react';
-import { assertSave, clearLegacyLocalSaves, initialData, normalize, readLegacyLocalSave, SaveLoadError, type FullPetData } from './data';
+import { assertSave, clearLegacyLocalSaves, initialData, levelFor, normalize, readLegacyLocalSave, SaveLoadError, type FullPetData } from './data';
 
 type CloudReadySave = { data: FullPetData; revision: number; userId: string };
 type CloudGateState =
@@ -39,6 +39,7 @@ export function CloudSaveGate({
     catch (error) { return { data: null, error: error instanceof SaveLoadError ? error : new SaveLoadError(String(error), '') }; }
   });
   const [state, setState] = useState<CloudGateState>({ kind: 'loading', message: 'Dein Cloud-Konto wird geprüft …' });
+  const [retryCount, setRetryCount] = useState(0);
   const busy = useRef(false);
 
   useEffect(() => {
@@ -48,7 +49,8 @@ export function CloudSaveGate({
     const profileErrorStatus = statusCode(profileQuery.error);
     if (profileQuery.isError && profileErrorStatus === 404) {
       busy.current = true;
-      const safePlayerName = cleanProfileName(playerName) || 'Scottchi-Fan';
+      const candidateName = cleanProfileName(playerName);
+      const safePlayerName = candidateName.length >= 2 ? candidateName : 'Scottchi-Fan';
       const petName = legacy.data?.name || 'Wuschel';
       void createProfile.mutateAsync({ data: { playerName: safePlayerName, petName } })
         .then(async () => {
@@ -116,16 +118,28 @@ export function CloudSaveGate({
   }, [
     createProfile, legacy, playerName, profileQuery.data, profileQuery.error, profileQuery.isError,
     profileQuery.isLoading, profileQuery.refetch, queryClient, saveQuery.data, saveQuery.error,
-    saveQuery.isError, saveQuery.isLoading, saveQuery.refetch, state.kind, updateSave, userId,
+    saveQuery.isError, saveQuery.isLoading, saveQuery.refetch, state.kind, updateSave, userId, retryCount,
   ]);
 
-  const useCloudSave = () => {
+  const useCloudSave = async () => {
     if (state.kind !== 'choose' && state.kind !== 'invalid-local') return;
-    const cloud = state.cloud;
-    const revision = state.revision;
-    if (!cloud) return;
-    clearLegacyLocalSaves();
-    setState({ kind: 'ready', save: { data: cloud, revision, userId } });
+    const previous = state;
+    if (!previous.cloud || busy.current) return;
+    busy.current = true;
+    setState({ kind: 'loading', message: 'Der aktuelle Cloud-Spielstand wird geladen …' });
+    try {
+      const refreshed = await saveQuery.refetch();
+      if (!refreshed.data?.saveData) throw new Error('Der Cloud-Spielstand ist nicht mehr verfügbar.');
+      const cloud = restoreSave(refreshed.data.saveData);
+      clearLegacyLocalSaves();
+      setState({ kind: 'ready', save: { data: cloud, revision: refreshed.data.revision, userId } });
+    } catch (error) {
+      setState(previous.kind === 'choose'
+        ? { ...previous, error: errorMessage(error, 'Der Cloud-Spielstand konnte nicht geladen werden.') }
+        : { ...previous, error: errorMessage(error, 'Der Cloud-Spielstand konnte nicht geladen werden.') });
+    } finally {
+      busy.current = false;
+    }
   };
 
   const uploadLocalSave = async () => {
@@ -142,7 +156,10 @@ export function CloudSaveGate({
       clearLegacyLocalSaves();
       setState({ kind: 'ready', save: { data: saved, revision: refreshed.data.revision, userId } });
     } catch (error) {
-      setState({ kind: 'choose', local, cloud: state.cloud, revision, error: errorMessage(error, 'Der Spielstand wurde nicht übertragen. Beide Versionen bleiben erhalten.') });
+      const refreshed = await saveQuery.refetch().catch(() => undefined);
+      const cloud = refreshed?.data?.saveData ? restoreSave(refreshed.data.saveData) : state.cloud;
+      const latestRevision = refreshed?.data?.revision ?? revision;
+      setState({ kind: 'choose', local, cloud, revision: latestRevision, error: errorMessage(error, 'Der Spielstand wurde nicht übertragen. Beide Versionen bleiben erhalten.') });
     } finally {
       busy.current = false;
     }
@@ -173,8 +190,10 @@ export function CloudSaveGate({
   };
 
   const retry = async () => {
+    if (busy.current) return;
     setState({ kind: 'loading', message: 'Die Cloud-Verbindung wird erneut geprüft …' });
     await Promise.all([profileQuery.refetch(), saveQuery.refetch()]);
+    setRetryCount((count) => count + 1);
     setState({ kind: 'loading', message: 'Dein Cloud-Spielstand wird vorbereitet …' });
   };
 
@@ -234,11 +253,11 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 function cleanProfileName(value: string): string {
-  return value.normalize('NFKC').trim().replace(/\s+/g, ' ').slice(0, 24);
+  return value.normalize('NFKC').trim().replace(/[^\p{L}\p{N} _.-]/gu, '').replace(/\s+/g, ' ').slice(0, 24);
 }
 
 function saveLevel(data: FullPetData): number {
-  return Math.max(1, Math.floor(Math.sqrt(Math.max(0, data.xp) / 20)) + 1);
+  return levelFor(data.xp);
 }
 
 function downloadRawSave(raw: string): void {

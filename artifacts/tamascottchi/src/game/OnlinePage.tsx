@@ -161,13 +161,12 @@ export function OnlinePage({ localSave, onRestoreCloud, onCloudLinked, syncStatu
     }
     onRestoreCloud(cloudData, cloud.revision);
     setBackedUp((items) => items.filter((item) => item !== 'local'));
-    setToast('Cloud-Spielstand wurde lokal wiederhergestellt.');
+    setToast('Cloud-Spielstand wurde für diese Sitzung geladen.');
   };
 
   const confirmDelete = async () => {
     try {
       await deleteAccount.mutateAsync();
-      if (user?.id) localStorage.removeItem(`tamascottchi-cloud-link:${user.id}`);
       queryClient.clear();
       await signOut({ redirectUrl: `${import.meta.env.BASE_URL.replace(/\/$/, '')}/` || '/' });
     } catch {
@@ -196,8 +195,8 @@ export function OnlinePage({ localSave, onRestoreCloud, onCloudLinked, syncStatu
       <section className="on-card on-locked">
         <span className="on-icon on-icon--clay"><LockKeyhole size={23} /></span>
         <p className="on-eyebrow">DEIN ONLINE-PLÄTZCHEN</p>
-        <h1>Dein Spiel bleibt offline spielbar.</h1>
-        <p>Mit einem Konto kannst du ein Profil anlegen und deinen Spielstand in der Cloud sichern. Freund:innen verbinden und besuchen kommt erst in einer späteren Phase.</p>
+        <h1>Dein Spielstand wird in der Cloud gespeichert.</h1>
+        <p>Melde dich an, um deinen Fortschritt zu laden und weiterzuspielen. Freund:innen verbinden und besuchen kommt erst in einer späteren Phase.</p>
         <Link href="/sign-in" className="on-button on-button--primary" data-testid="link-online-sign-in">Anmelden oder Konto anlegen</Link>
       </section>
     </OnlineFrame>;
@@ -213,7 +212,7 @@ export function OnlinePage({ localSave, onRestoreCloud, onCloudLinked, syncStatu
         <div className="on-top__heading">
           <p className="on-eyebrow">DEIN KLEINES ONLINE-ZUHAUSE</p>
           <h1>Profil &amp; Spielstand</h1>
-          <p>Alles Wichtige an einem Ort. Dein Spiel funktioniert weiterhin auch ohne Internet.</p>
+          <p>Dein Spielfortschritt wird mit diesem Konto gesichert und auf deinen Geräten synchronisiert.</p>
         </div>
         <div className="on-session">
           <span className="on-avatar">{(user?.firstName?.[0] || user?.emailAddresses?.[0]?.emailAddress?.[0] || 'T').toUpperCase()}</span>
@@ -265,15 +264,15 @@ export function OnlinePage({ localSave, onRestoreCloud, onCloudLinked, syncStatu
 
           <div className="on-section-heading">
             <div><p className="on-eyebrow">SICHER WEITER SPIELEN</p><h2>Dein Spielstand</h2></div>
-            <span className="on-local-pill"><span /> Lokal bleibt lokal</span>
+          <span className="on-local-pill"><span /> Cloud-Spielstand</span>
           </div>
           {syncStatus !== 'offline' && <div className={`on-sync-banner on-sync-banner--${syncStatus}`} role="status" data-testid={`status-cloud-sync-${syncStatus}`}>
             <Cloud size={16} />
-            <span>{syncStatus === 'checking' ? 'Cloud-Verbindung wird geprüft …' : syncStatus === 'unlinked' ? 'Wähle, welchen Spielstand dieses Gerät verwenden soll.' : syncStatus === 'syncing' ? 'Dein Fortschritt wird sicher in der Cloud gespeichert …' : syncStatus === 'synced' ? 'Änderungen auf diesem Gerät werden automatisch gesichert.' : syncStatus === 'conflict' ? 'Die Cloud-Version hat sich auf einem anderen Gerät geändert. Bitte vergleiche die Spielstände.' : 'Verbindung unterbrochen. Der lokale Spielstand bleibt sicher.'}</span>
+            <span>{syncStatus === 'checking' ? 'Cloud-Verbindung wird geprüft …' : syncStatus === 'unlinked' ? 'Wähle, welchen Spielstand du in der Cloud behalten möchtest.' : syncStatus === 'syncing' ? 'Dein Fortschritt wird sicher in der Cloud gespeichert …' : syncStatus === 'synced' ? 'Änderungen werden automatisch in der Cloud gesichert.' : syncStatus === 'conflict' ? 'Die Cloud-Version hat sich auf einem anderen Gerät geändert. Bitte vergleiche die Spielstände.' : 'Verbindung unterbrochen. Spielen ist pausiert, bis die Cloud wieder erreichbar ist.'}</span>
           </div>}
           {saveQuery.isLoading ? <OnlineSaveLoading /> : saveQuery.isError ? (
             <div className="on-alert on-alert--warm" role="status" data-testid="status-cloud-load-error">
-              <Cloud size={18} /><div><strong>Cloud-Spielstand gerade nicht erreichbar.</strong><span>Dein lokaler Fortschritt bleibt sicher und unverändert.</span></div>
+              <Cloud size={18} /><div><strong>Cloud-Spielstand gerade nicht erreichbar.</strong><span>Es wird nichts lokal gespeichert. Stelle die Verbindung wieder her, bevor du weiterspielst.</span></div>
               <button type="button" className="on-text-button" onClick={() => void saveQuery.refetch()} data-testid="button-retry-cloud"><RefreshCw size={15} /> Erneut laden</button>
             </div>
           ) : cloud ? (
@@ -284,13 +283,13 @@ export function OnlinePage({ localSave, onRestoreCloud, onCloudLinked, syncStatu
                 <span className={`on-cloud-status ${hasCloud ? 'is-ready' : ''}`}><span />{hasCloud ? 'Gesichert' : 'Noch leer'}</span>
               </div>
               <div className="on-save-compare">
-                <SaveSummary title="Auf diesem Gerät" name={localSave.name} level={localLevel} revision={null} updatedAt={null} />
+                <SaveSummary title="Aktuelle Sitzung" name={localSave.name} level={localLevel} revision={null} updatedAt={null} />
                 <div className="on-compare-mark"><ArrowLeft size={16} /><span>oder</span><ArrowDownToLine size={16} /></div>
                 <SaveSummary title="In der Cloud" name={getSaveName(cloudData)} level={getSaveLevel(cloudData)} revision={cloud.revision} updatedAt={cloud.updatedAt} empty={!hasCloud} />
               </div>
               {!hasCloud ? (
                 <div className="on-cloud-actions">
-                  <p>Es gibt noch keine Cloud-Sicherung. Speichere eine Kopie deines aktuellen lokalen Fortschritts.</p>
+                  <p>Es gibt noch keine Cloud-Sicherung. Übertrage den aktuellen Spielstand einmalig in die Cloud.</p>
                   <button type="button" className="on-button on-button--primary" onClick={() => setConflict(true)} disabled={busy} data-testid="button-start-cloud-backup"><Upload size={16} /> Lokalen Spielstand sichern</button>
                 </div>
               ) : (
@@ -331,7 +330,7 @@ export function OnlinePage({ localSave, onRestoreCloud, onCloudLinked, syncStatu
       ) : (
         <section className="on-card on-empty">
           <span className="on-icon on-icon--sage"><Cloud size={22} /></span><h2>Profil wird vorbereitet</h2>
-          <p>Dein Online-Profil konnte noch nicht angelegt werden. Dein lokaler Spielstand bleibt unberührt.</p>
+          <p>Dein Online-Profil konnte noch nicht angelegt werden. Prüfe die Verbindung und versuche es erneut.</p>
           <button type="button" className="on-button on-button--soft" onClick={() => void profileQuery.refetch()} data-testid="button-retry-profile-empty"><RefreshCw size={15} /> Erneut versuchen</button>
         </section>
       )}
@@ -339,7 +338,7 @@ export function OnlinePage({ localSave, onRestoreCloud, onCloudLinked, syncStatu
       {lastError && <div className="on-alert on-alert--error" role="alert" data-testid="status-online-mutation-error"><AlertCircle size={18} /><span>{errorMessage(lastError)}</span><button type="button" onClick={() => { void profileQuery.refetch(); void saveQuery.refetch(); }}>Erneut laden</button></div>}
 
       <section className="on-account-actions">
-        <div><p className="on-eyebrow">KONTO &amp; DATENSCHUTZ</p><h3>Du entscheidest, was bleibt.</h3><p>Das Löschen entfernt dein Online-Profil und die Cloud-Sicherung. Deine lokale Datei auf diesem Gerät wird nicht gelöscht.</p></div>
+        <div><p className="on-eyebrow">KONTO &amp; DATENSCHUTZ</p><h3>Du entscheidest, was bleibt.</h3><p>Das Löschen entfernt dein Online-Profil und den Cloud-Spielstand. Exportierte Sicherungsdateien musst du selbst löschen.</p></div>
         <div className="on-account-actions__buttons">
           {!accountConfirm ? <button type="button" className="on-button on-button--danger-outline" onClick={() => setAccountConfirm(true)} data-testid="button-open-delete-account"><Trash2 size={15} /> Konto löschen</button> : (
             <div className="on-delete-confirm" role="alertdialog" aria-label="Konto löschen bestätigen">
@@ -351,7 +350,7 @@ export function OnlinePage({ localSave, onRestoreCloud, onCloudLinked, syncStatu
         </div>
       </section>
 
-      <footer className="on-footer"><span><ShieldCheck size={15} /> Dein Konto schützt dein Profil, nicht deinen Offline-Zugang.</span><span>Profil erstellt {profile ? formatDate(profile.createdAt) : '—'}</span></footer>
+      <footer className="on-footer"><span><ShieldCheck size={15} /> Anmeldung und Internet sind zum Spielen erforderlich.</span><span>Profil erstellt {profile ? formatDate(profile.createdAt) : '—'}</span></footer>
       {busy && <div className="on-progress" role="status" data-testid="status-online-saving"><span className="on-progress__bar" />Änderung wird sicher gespeichert …</div>}
       {toast && <div className="on-toast" role="status" data-testid="status-online-success">{toast}</div>}
     </OnlineFrame>
